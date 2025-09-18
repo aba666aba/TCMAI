@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class TCMDataScraper:
     """中药数据爬虫类"""
     
-    def __init__(self, delay_range: tuple = (1, 3), max_retries: int = 3):
+    def __init__(self, delay_range: tuple = (1, 3), max_retries: int = 50):
         """
         初始化爬虫
         
@@ -230,8 +230,8 @@ class TCMDataScraper:
             links = soup.find_all('a', href=True)
             for link in links:
                 href = link['href']
-                # 检查链接是否指向药材详情页 (以数字结尾的.html)
-                if re.match(r'/yaocai/[a-z]+/\d+\.html', href):
+                # 检查链接是否指向药材详情页
+                if re.match(r'/yaocai/(?:[a-z]+/)?[a-zA-Z0-9_]+\.html', href):
                     full_url = urljoin(self.base_url, href)
                     herb_links.append(full_url)
             
@@ -239,20 +239,39 @@ class TCMDataScraper:
             herb_links = list(set(herb_links))
             
             logger.info(f"在分类 {category_url} 中找到 {len(herb_links)} 个药材链接")
+            # 随机等待 1~3 分钟再爬取下一个分类
+            wait_time = random.uniform(120, 180)
+            logger.info(f"等待 {wait_time:.1f} 秒后再开始爬取分类 {category_url} 内的药材...")
+            remaining = wait_time
+            while remaining > 0:
+                sleep_time = min(30, remaining)
+                time.sleep(sleep_time)
+                remaining -= sleep_time
+                logger.info(f"爬取分类等待剩余 {remaining:.1f} 秒")
             
             # 爬取每个药材的信息
             for i, herb_url in enumerate(herb_links):
                 if len(herbs_data) >= max_herbs:
                     break
-                    
+
                 # 爬取单个药材信息
                 herb_data = self.scrape_single_herb(herb_url)
                 if herb_data and herb_data.get("name"):
                     herbs_data.append(herb_data)
                     logger.info(f"已爬取药材: {herb_data['name']}")
+
+                    # 每个药材爬取完后随机等待 1~3 分钟
+                    wait_time = random.uniform(180, 300)
+                    logger.info(f"等待 {wait_time:.1f} 秒后继续爬取下一个药材...")
+                    remaining = wait_time
+                    while remaining > 0:
+                        sleep_time = min(30, remaining)
+                        time.sleep(sleep_time)
+                        remaining -= sleep_time
+                        logger.info(f"爬取药材等待剩余 {remaining:.1f} 秒")
                 else:
                     logger.warning(f"爬取药材失败: {herb_url}")
-                
+
                 # 显示进度
                 if (len(herbs_data) > 0) and (len(herbs_data) % 10 == 0):
                     logger.info(f"已爬取 {len(herbs_data)} 个药材")
@@ -285,17 +304,21 @@ class TCMDataScraper:
 def main():
     """主函数，用于测试爬虫功能"""
     # 创建爬虫实例
-    scraper = TCMDataScraper(delay_range=(1, 2))
-    
+    scraper = TCMDataScraper(delay_range=(1, 10))
+
     # 爬取数据
     herbs_data = scraper.scrape_all_herbs(max_herbs=50)
-    
-    # 保存数据到当前目录
-    output_file = os.path.join(os.path.dirname(__file__), "tcm_herbs_data.json") if __file__ else "tcm_herbs_data.json"
+
+    # 构建保存路径：当前脚本目录下的 data/raw 文件夹
+    base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+    output_folder = os.path.join(base_dir, "data", "raw")
+    os.makedirs(output_folder, exist_ok=True)  # 自动创建目录
+
+    # 文件名可以固定，也可以加时间戳
+    output_file = os.path.join(output_folder, "tcm_herbs_data.json")
+
+    # 保存数据
     scraper.save_to_json(herbs_data, output_file)
-    
-    # 打印结果
-    print(json.dumps(herbs_data, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
