@@ -27,6 +27,18 @@ except ImportError as e:
     SCRAPER_AVAILABLE = False
     
 try:
+    from tcm_prescription_scraper_fixed import TCMPrescriptionScraper
+    PRESCRIPTION_SCRAPER_AVAILABLE = True
+except ImportError as e:
+    try:
+        from tcm_prescription_scraper import TCMPrescriptionScraper
+        PRESCRIPTION_SCRAPER_AVAILABLE = True
+    except ImportError as e2:
+        print(f"警告: 无法导入tcm_prescription_scraper模块: {e}")
+        print(f"也无法导入tcm_prescription_scraper_fixed模块: {e2}")
+        PRESCRIPTION_SCRAPER_AVAILABLE = False
+    
+try:
     from tcm_data_cleaner import TCMDataCleaner
     CLEANER_AVAILABLE = True
 except ImportError as e:
@@ -86,25 +98,27 @@ class TCMDataCollectionPipeline:
         """
         return {
             "scraper": {
-                "delay_range": [2, 5],
-                "max_retries": 3,
-                "max_herbs": 1000
+                "delay_range": [0.5, 2],
+                "max_retries": 5,
+                "max_herbs": 1000,
+                "max_prescriptions": 1000
             },
             "cleaner": {
                 "min_name_length": 1,
                 "max_name_length": 50
             },
             "data_paths": {
-                "raw_data": "data/raw/tcm_herbs_data.json",
-                "cleaned_data": "data/cleaned/tcm_herbs_cleaned.json",
+                "raw_herbs_data": "data/raw/tcm_herbs_data.json",
+                "raw_prescriptions_data": "data/raw/tcm_prescriptions_data.json",
+                "cleaned_data": "data/cleaned/tcm_data_cleaned.json",
                 "kg_data": "data/kg/tcm_kg_data.json",
                 "train_data": "data/train/tcm_train_data.json"
             }
         }
     
-    def run_scraper(self, max_herbs: int = None) -> bool:
+    def run_herbs_scraper(self, max_herbs: int = None) -> bool:
         """
-        运行爬虫采集数据
+        运行药材爬虫采集数据
         
         Args:
             max_herbs (int): 最大采集药材数量
@@ -112,11 +126,11 @@ class TCMDataCollectionPipeline:
         Returns:
             bool: 是否成功
         """
-        logger.info("开始运行爬虫采集数据...")
+        logger.info("开始运行药材爬虫采集数据...")
         
         # 检查爬虫模块是否可用
         if not SCRAPER_AVAILABLE:
-            logger.error("爬虫模块不可用，请检查tcm_scraper.py文件是否存在且正确实现")
+            logger.error("药材爬虫模块不可用，请检查tcm_scraper.py文件是否存在且正确实现")
             return False
             
         try:
@@ -138,16 +152,86 @@ class TCMDataCollectionPipeline:
             herbs_data = self.scraper.scrape_all_herbs(max_herbs=max_herbs)
             
             # 保存原始数据
-            raw_data_path = self.config["data_paths"]["raw_data"]
+            raw_data_path = self.config["data_paths"]["raw_herbs_data"]
             os.makedirs(os.path.dirname(raw_data_path), exist_ok=True)
             
             self.scraper.save_to_json(herbs_data, raw_data_path)
-            logger.info(f"爬虫采集完成，共获得 {len(herbs_data)} 条数据，已保存到 {raw_data_path}")
+            logger.info(f"药材爬虫采集完成，共获得 {len(herbs_data)} 条数据，已保存到 {raw_data_path}")
             
             return True
         except Exception as e:
-            logger.error(f"爬虫运行失败: {e}")
+            logger.error(f"药材爬虫运行失败: {e}")
             return False
+            
+    def run_prescriptions_scraper(self, max_prescriptions: int = None) -> bool:
+        """
+        运行药方爬虫采集数据
+        
+        Args:
+            max_prescriptions (int): 最大采集药方数量
+            
+        Returns:
+            bool: 是否成功
+        """
+        logger.info("开始运行药方爬虫采集数据...")
+        
+        # 检查药方爬虫模块是否可用
+        if not PRESCRIPTION_SCRAPER_AVAILABLE:
+            logger.error("药方爬虫模块不可用，请检查tcm_prescription_scraper.py文件是否存在且正确实现")
+            return False
+            
+        try:
+            # 创建爬虫实例
+            scraper_config = self.config.get("scraper", {})
+            delay_range = tuple(scraper_config.get("delay_range", [0.5, 2]))
+            max_retries = scraper_config.get("max_retries", 5)
+            max_workers = scraper_config.get("max_workers", 5)
+            
+            prescription_scraper = TCMPrescriptionScraper(
+                delay_range=delay_range,
+                max_retries=max_retries,
+                max_workers=max_workers
+            )
+            
+            # 设置最大采集数量
+            if max_prescriptions is None:
+                max_prescriptions = scraper_config.get("max_prescriptions", 1000)
+            
+            # 爬取数据
+            prescriptions_data = prescription_scraper.scrape_all_prescriptions(max_prescriptions=max_prescriptions)
+            
+            # 保存原始数据
+            raw_data_path = self.config["data_paths"]["raw_prescriptions_data"]
+            os.makedirs(os.path.dirname(raw_data_path), exist_ok=True)
+            
+            prescription_scraper.save_to_json(prescriptions_data, raw_data_path)
+            logger.info(f"药方爬虫采集完成，共获得 {len(prescriptions_data)} 条数据，已保存到 {raw_data_path}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"药方爬虫运行失败: {e}")
+            return False
+            
+    def run_scraper(self, max_herbs: int = None, max_prescriptions: int = None) -> bool:
+        """
+        运行爬虫采集数据（药材和药方）
+        
+        Args:
+            max_herbs (int): 最大采集药材数量
+            max_prescriptions (int): 最大采集药方数量
+            
+        Returns:
+            bool: 是否成功
+        """
+        logger.info("开始运行爬虫采集数据（药材和药方）...")
+        
+        # 运行药材爬虫
+        herbs_success = self.run_herbs_scraper(max_herbs)
+        
+        # 运行药方爬虫
+        prescriptions_success = self.run_prescriptions_scraper(max_prescriptions)
+        
+        return herbs_success and prescriptions_success
     
     def run_cleaner(self) -> bool:
         """
@@ -171,24 +255,40 @@ class TCMDataCollectionPipeline:
                 max_name_length=cleaner_config.get("max_name_length", 50)
             )
             
-            # 加载原始数据
-            raw_data_path = self.config["data_paths"]["raw_data"]
-            if not os.path.exists(raw_data_path):
-                logger.error(f"原始数据文件不存在: {raw_data_path}")
+            # 加载原始药材数据
+            raw_herbs_data_path = self.config["data_paths"]["raw_herbs_data"]
+            if not os.path.exists(raw_herbs_data_path):
+                logger.error(f"原始药材数据文件不存在: {raw_herbs_data_path}")
                 return False
             
-            with open(raw_data_path, 'r', encoding='utf-8') as f:
-                raw_data = json.load(f)
+            with open(raw_herbs_data_path, 'r', encoding='utf-8') as f:
+                raw_herbs_data = json.load(f)
             
-            # 清洗数据
-            cleaned_data = self.cleaner.clean_herb_data(raw_data)
+            # 清洗药材数据
+            cleaned_herbs_data = self.cleaner.clean_herb_data(raw_herbs_data)
+            
+            # 加载原始药方数据（如果存在）
+            raw_prescriptions_data_path = self.config["data_paths"]["raw_prescriptions_data"]
+            cleaned_prescriptions_data = []
+            if os.path.exists(raw_prescriptions_data_path):
+                with open(raw_prescriptions_data_path, 'r', encoding='utf-8') as f:
+                    raw_prescriptions_data = json.load(f)
+                
+                # 清洗药方数据
+                cleaned_prescriptions_data = self.cleaner.clean_prescription_data(raw_prescriptions_data)
+            
+            # 整合清洗后的数据
+            cleaned_data = {
+                "herbs": cleaned_herbs_data,
+                "prescriptions": cleaned_prescriptions_data
+            }
             
             # 保存清洗后的数据
             cleaned_data_path = self.config["data_paths"]["cleaned_data"]
             os.makedirs(os.path.dirname(cleaned_data_path), exist_ok=True)
             
             self.cleaner.save_to_json(cleaned_data, cleaned_data_path)
-            logger.info(f"数据清洗完成，清洗后剩余 {len(cleaned_data)} 条数据，已保存到 {cleaned_data_path}")
+            logger.info(f"数据清洗完成，清洗后药材 {len(cleaned_herbs_data)} 条，药方 {len(cleaned_prescriptions_data)} 条，已保存到 {cleaned_data_path}")
             
             return True
         except Exception as e:
@@ -217,24 +317,20 @@ class TCMDataCollectionPipeline:
             # 初始化知识图谱数据结构
             kg_data = {
                 "herbs": [],
+                "prescriptions": [],
                 "symptoms": [],
                 "diseases": [],
                 "effects": [],
                 "relations": []
             }
             
-            # 如果是列表格式，直接使用
-            if isinstance(cleaned_data, list):
-                kg_data["herbs"] = cleaned_data
-            # 如果是字典格式，提取各个部分
-            elif isinstance(cleaned_data, dict):
-                kg_data["herbs"] = cleaned_data.get("herbs", [])
-                kg_data["symptoms"] = cleaned_data.get("symptoms", [])
-                kg_data["diseases"] = cleaned_data.get("diseases", [])
-                kg_data["effects"] = cleaned_data.get("effects", [])
-                
-                # 构建实体间的关系
-                self._build_entity_relations(kg_data)
+            # 提取各个部分
+            kg_data["herbs"] = cleaned_data.get("herbs", [])
+            kg_data["prescriptions"] = cleaned_data.get("prescriptions", [])
+            # TODO: 从药材和药方数据中提取症状、疾病、功效等信息
+            
+            # 构建实体间的关系
+            self._build_entity_relations(kg_data)
             
             # 保存知识图谱数据
             kg_data_path = self.config["data_paths"]["kg_data"]
@@ -259,6 +355,11 @@ class TCMDataCollectionPipeline:
         Returns:
             List[Dict[str, Any]]: 示例处方数据
         """
+        # 如果已有真实药方数据，直接使用
+        prescriptions = kg_data.get("prescriptions", [])
+        if prescriptions:
+            return prescriptions
+            
         # TODO: 实现真实的处方生成逻辑
         # 这里应该基于真实的中医药理论和知识图谱中的实体关系来生成处方
         # 目前保留示例代码，但需要根据实际需求修改
@@ -313,9 +414,9 @@ class TCMDataCollectionPipeline:
             # 准备训练数据（这里简化处理，实际应用中可能需要更复杂的处理）
             train_data = {
                 "herbs": kg_data.get("herbs", []),
+                "prescriptions": kg_data.get("prescriptions", []),
                 "symptoms": kg_data.get("symptoms", []),
                 "relations": kg_data.get("relations", []),
-                "prescriptions": self._generate_sample_prescriptions(kg_data)
             }
             
             # 保存训练数据
@@ -365,12 +466,13 @@ class TCMDataCollectionPipeline:
             return False
 
 
-    def run_full_pipeline(self, max_herbs: int = None) -> bool:
+    def run_full_pipeline(self, max_herbs: int = None, max_prescriptions: int = None) -> bool:
         """
         运行完整的数据采集和处理流水线
         
         Args:
             max_herbs (int): 最大采集药材数量
+            max_prescriptions (int): 最大采集药方数量
             
         Returns:
             bool: 是否成功
@@ -378,7 +480,7 @@ class TCMDataCollectionPipeline:
         logger.info("开始运行完整的数据采集和处理流水线...")
         
         # 1. 运行爬虫
-        if not self.run_scraper(max_herbs):
+        if not self.run_scraper(max_herbs, max_prescriptions):
             logger.error("爬虫运行失败，流水线中断")
             return False
         
@@ -405,6 +507,7 @@ def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="中药数据采集和处理流水线")
     parser.add_argument("--max-herbs", type=int, help="最大采集药材数量")
+    parser.add_argument("--max-prescriptions", type=int, help="最大采集药方数量")
     parser.add_argument("--skip-training", action="store_true", help="跳过模型训练")
     parser.add_argument("--only-scrape", action="store_true", help="仅运行爬虫")
     parser.add_argument("--config", default="config.json", help="配置文件路径")
@@ -417,10 +520,10 @@ def main():
     # 根据参数决定运行哪些步骤
     if args.only_scrape:
         # 仅运行爬虫
-        success = pipeline.run_scraper(args.max_herbs)
+        success = pipeline.run_scraper(args.max_herbs, args.max_prescriptions)
     else:
         # 运行完整流水线
-        success = pipeline.run_full_pipeline(args.max_herbs)
+        success = pipeline.run_full_pipeline(args.max_herbs, args.max_prescriptions)
         
         # 如果不跳过训练且流水线成功，则启动训练
         if success and not args.skip_training:

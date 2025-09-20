@@ -196,6 +196,49 @@ class TCMDataCleaner:
         
         logger.info(f"清洗完成，有效数据 {len(cleaned_data)} 条")
         return cleaned_data
+        
+    def clean_prescription_data(self, raw_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        清洗药方数据
+        
+        Args:
+            raw_data (List[Dict[str, Any]]): 原始药方数据列表
+            
+        Returns:
+            List[Dict[str, Any]]: 清洗后的药方数据列表
+        """
+        cleaned_data = []
+        
+        for prescription in raw_data:
+            try:
+                # 创建清洗后的药方数据
+                cleaned_prescription = {
+                    "prescription_id": self._generate_prescription_id(prescription),
+                    "name": self._clean_name(prescription.get("name", "")),
+                    "pinyin": self._clean_pinyin(prescription.get("pinyin", "")),
+                    "english_name": self._clean_english_name(prescription.get("english_name", "")),
+                    "source": self._clean_source(prescription.get("source", "")),
+                    "composition": self._clean_composition(prescription.get("composition", [])),
+                    "dosage": self._clean_dosage(prescription.get("dosage", "")),
+                    "indications": self._clean_indications(prescription.get("indications", "")),
+                    "excerpt": self._clean_excerpt(prescription.get("excerpt", "")),
+                    "diseases": self._clean_diseases(prescription.get("diseases", [])),
+                    "description": self._clean_description(prescription.get("description", "")),
+                    "url": prescription.get("url", ""),
+                }
+                
+                # 验证必要字段
+                if self._validate_prescription_data(cleaned_prescription):
+                    cleaned_data.append(cleaned_prescription)
+                else:
+                    logger.warning(f"药方数据验证失败，跳过: {cleaned_prescription['name']}")
+                    
+            except Exception as e:
+                logger.error(f"清洗药方数据失败: {prescription.get('name', '未知')}, 错误: {e}")
+                continue
+        
+        logger.info(f"药方数据清洗完成，有效数据 {len(cleaned_data)} 条")
+        return cleaned_data
     
     def _generate_herb_id(self, herb: Dict[str, Any]) -> str:
         """
@@ -213,6 +256,23 @@ class TCMDataCleaner:
         # 简单哈希处理
         hash_part = hash(name) % 10000
         return f"HERB_{pinyin_part}_{hash_part:04d}"
+        
+    def _generate_prescription_id(self, prescription: Dict[str, Any]) -> str:
+        """
+        生成药方唯一ID
+        
+        Args:
+            prescription (Dict[str, Any]): 药方数据
+            
+        Returns:
+            str: 药方唯一ID
+        """
+        name = prescription.get("name", "")
+        # 使用名称的拼音首字母和部分数字作为ID
+        pinyin_part = self._get_pinyin_initials(prescription.get("pinyin", ""))
+        # 简单哈希处理
+        hash_part = hash(name) % 10000
+        return f"PRESC_{pinyin_part}_{hash_part:04d}"
     
     def _get_pinyin_initials(self, pinyin: str) -> str:
         """
@@ -449,21 +509,132 @@ class TCMDataCleaner:
         cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\u3000\s\-\，\、\,\;]', '', contraindication).strip()
         return re.sub(r'\s+', ' ', cleaned)
     
-    def _clean_description(self, description: str) -> str:
+    def _clean_source(self, source: str) -> str:
         """
-        清洗描述信息
+        清洗来源信息
         
         Args:
-            description (str): 原始描述信息
+            source (str): 原始来源信息
             
         Returns:
-            str: 清洗后的描述信息
+            str: 清洗后的来源信息
         """
-        if not description:
+        if not source:
             return ""
         # 去除多余空格和特殊字符
-        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\u3000\s\-\，\、\,\;\.\。\!\！\?\？]', '', description).strip()
+        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\u3000\s\-\，\、\,\;]', '', source).strip()
         return re.sub(r'\s+', ' ', cleaned)
+        
+    def _clean_composition(self, composition: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """
+        清洗组成成分
+        
+        Args:
+            composition (List[Dict[str, str]]): 原始组成成分列表
+            
+        Returns:
+            List[Dict[str, str]]: 清洗后的组成成分列表
+        """
+        if not composition:
+            return []
+            
+        cleaned_composition = []
+        for item in composition:
+            if isinstance(item, dict):
+                cleaned_item = {
+                    "name": self._clean_name(item.get("name", "")),
+                    "dosage": self._clean_dosage_text(item.get("dosage", ""))
+                }
+                # 只有当名称不为空时才添加
+                if cleaned_item["name"]:
+                    cleaned_composition.append(cleaned_item)
+                    
+        return cleaned_composition
+        
+    def _clean_dosage_text(self, dosage: str) -> str:
+        """
+        清洗用量文本
+        
+        Args:
+            dosage (str): 原始用量文本
+            
+        Returns:
+            str: 清洗后的用量文本
+        """
+        if not dosage:
+            return ""
+        # 去除多余空格和特殊字符，保留数字、单位和常见中文字符
+        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\u3000\s\-\，\、\,\;克gG]', '', dosage).strip()
+        return re.sub(r'\s+', ' ', cleaned)
+        
+    def _clean_dosage(self, dosage: str) -> str:
+        """
+        清洗用法用量信息
+        
+        Args:
+            dosage (str): 原始用法用量信息
+            
+        Returns:
+            str: 清洗后的用法用量信息
+        """
+        if not dosage:
+            return ""
+        # 去除多余空格和特殊字符
+        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\u3000\s\-\，\、\,\;\.\。\!\！\?\？克gG]', '', dosage).strip()
+        return re.sub(r'\s+', ' ', cleaned)
+        
+    def _clean_indications(self, indications: str) -> str:
+        """
+        清洗功能主治信息
+        
+        Args:
+            indications (str): 原始功能主治信息
+            
+        Returns:
+            str: 清洗后的功能主治信息
+        """
+        if not indications:
+            return ""
+        # 去除多余空格和特殊字符
+        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\u3000\s\-\，\、\,\;\.\。\!\！\?\？]', '', indications).strip()
+        return re.sub(r'\s+', ' ', cleaned)
+        
+    def _clean_excerpt(self, excerpt: str) -> str:
+        """
+        清洗摘录信息
+        
+        Args:
+            excerpt (str): 原始摘录信息
+            
+        Returns:
+            str: 清洗后的摘录信息
+        """
+        if not excerpt:
+            return ""
+        # 去除多余空格和特殊字符
+        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\u3000\s\-\，\、\,\;\.\。\!\！\?\？]', '', excerpt).strip()
+        return re.sub(r'\s+', ' ', cleaned)
+        
+    def _clean_diseases(self, diseases: List[str]) -> List[str]:
+        """
+        清洗相关疾病列表
+        
+        Args:
+            diseases (List[str]): 原始相关疾病列表
+            
+        Returns:
+            List[str]: 清洗后的相关疾病列表
+        """
+        if not diseases:
+            return []
+            
+        cleaned_diseases = []
+        for disease in diseases:
+            cleaned_disease = self._clean_name(disease)
+            if cleaned_disease and cleaned_disease != "未知":
+                cleaned_diseases.append(cleaned_disease)
+                
+        return cleaned_diseases
     
     def _clean_image_url(self, image_url: str) -> str:
         """
@@ -523,6 +694,30 @@ class TCMDataCleaner:
         # 检查名称是否有效
         if herb["name"] == "未知":
             logger.warning("药材名称无效")
+            return False
+            
+        return True
+        
+    def _validate_prescription_data(self, prescription: Dict[str, Any]) -> bool:
+        """
+        验证药方数据完整性
+        
+        Args:
+            prescription (Dict[str, Any]): 药方数据
+            
+        Returns:
+            bool: 验证是否通过
+        """
+        # 检查必要字段
+        required_fields = ["prescription_id", "name"]
+        for field in required_fields:
+            if not prescription.get(field):
+                logger.warning(f"缺少必要字段: {field}")
+                return False
+        
+        # 检查名称是否有效
+        if prescription["name"] == "未知":
+            logger.warning("药方名称无效")
             return False
             
         return True
