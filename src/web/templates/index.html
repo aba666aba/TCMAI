@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中医药智能问答系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- 导航栏 -->
+        <nav class="navbar">
+            <div class="logo">
+                <span class="tcm-icon">🌿</span>
+                <h1>中医药智能问答系统</h1>
+            </div>
+            <ul class="nav-links">
+                <li><a href="/" class="active">首页</a></li>
+                <li><a href="/history">历史记录</a></li>
+                <li><a href="/about">关于</a></li>
+            </ul>
+        </nav>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 输入区域 -->
+            <section class="input-section">
+                <h2>请输入您的问题或症状</h2>
+                
+                <!-- 模式选择 -->
+                <div class="mode-selector">
+                    <span class="mode-label">回答模式：</span>
+                    <label class="mode-option">
+                        <input type="radio" name="answerMode" value="fast" checked>
+                        <span class="mode-icon">⚡</span>
+                        <span class="mode-name">快速模式</span>
+                        <span class="mode-desc">知识库匹配，秒级响应</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="answerMode" value="ai">
+                        <span class="mode-icon">🧠</span>
+                        <span class="mode-name">AI 思考模式</span>
+                        <span class="mode-desc">大模型推理，更深入分析（约 5-10 秒）</span>
+                    </label>
+                </div>
+                
+                <div class="input-wrapper">
+                    <textarea
+                        id="queryInput"
+                        placeholder="例如：我最近感觉乏力、食欲不振，有什么调理建议？"
+                        rows="4"
+                    ></textarea>
+                    <div class="symptom-tags">
+                        <span class="tag" data-symptom="乏力">乏力</span>
+                        <span class="tag" data-symptom="食欲不振">食欲不振</span>
+                        <span class="tag" data-symptom="失眠">失眠</span>
+                        <span class="tag" data-symptom="头痛">头痛</span>
+                        <span class="tag" data-symptom="咳嗽">咳嗽</span>
+                        <span class="tag" data-symptom="腹痛">腹痛</span>
+                        <span class="tag" data-symptom">腹泻</span>
+                        <span class="tag" data-symptom="便秘">便秘</span>
+                    </div>
+                    <button id="submitBtn" class="submit-btn">
+                        <span>🔍</span> 提交查询
+                    </button>
+                </div>
+            </section>
+
+            <!-- 回答区域 -->
+            <section class="answer-section" id="answerSection" style="display: none;">
+                <h2>智能回答</h2>
+                <div class="answer-content">
+                    <div class="loading" id="loading" style="display: none;">
+                        <div class="spinner"></div>
+                        <p id="loadingText">正在分析您的问题，请稍候...</p>
+                        <div class="loading-tips" id="loadingTips" style="display: none;">
+                            <p>🧠 AI 正在思考中...</p>
+                            <div class="thinking-steps">
+                                <span class="step done">✓ 理解问题</span>
+                                <span class="step done">✓ 检索知识库</span>
+                                <span class="step active">⟳ 推理分析</span>
+                                <span class="step">○ 生成回答</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="result" id="resultContent" style="display: none;">
+                        <div class="answer-text" id="answerText"></div>
+                        <div class="knowledge-box" id="knowledgeBox" style="display: none;">
+                            <h3>相关知识</h3>
+                            <div id="knowledgeContent"></div>
+                        </div>
+                        <div class="disclaimer">
+                            <strong>免责声明：</strong>
+                            <span id="disclaimerText">本回答仅供参考，不构成医疗诊断或治疗建议。如有健康问题请咨询专业医疗机构。</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 页脚 -->
+        <footer class="footer">
+            <p>
+                <span>🌿</span>
+                © 2026 中医药智能问答系统 | 开发者：李俊贤、王子璇、周洪宇、刘丁夺
+                <span>🌿</span>
+            </p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

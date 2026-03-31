@@ -1,0 +1,96 @@
+# 中医药智能问答系统 - Git 忽略文件
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志文件
+*.log
+data/logs/
+
+# 数据库文件（SQLite）
+*.db
+!data/tcm_knowledge.db.txt
+
+# 模型文件（通常较大）
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# 配置文件（含敏感信息）
+config.json
+*.env
+.env.local
+.env.production
+
+# 导出文件
+exports/
+*.csv
+*.xlsx
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.bak
+
+# 测试覆盖率
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# 文档构建
+docs/_build/
+docs/.doctrees/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+
+# 其他
+*.orig
+*.rej
