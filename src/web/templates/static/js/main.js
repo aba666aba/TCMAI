@@ -3,6 +3,38 @@
  * 原创功能：症状输入校验、问答交互、Markdown 渲染
  */
 
+// 获取 CSRF token 的工具函数
+function getCsrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute('content') : '';
+}
+
+// XSS 防护：HTML 转义函数
+function escapeHtml(text) {
+    if (typeof text !== 'string') return text;
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+// XSS 防护：基础 HTML 净化函数
+function basicSanitize(html) {
+    if (typeof html !== 'string') return html;
+    // 移除 script 标签
+    html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+    // 移除 on* 事件处理器
+    html = html.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '');
+    html = html.replace(/\bon\w+\s*=\s*[^\s>]*/gi, '');
+    // 移除 javascript: 协议
+    html = html.replace(/javascript\s*:/gi, '');
+    return html;
+}
+
 // DOM 元素
 const queryInput = document.getElementById('queryInput');
 const submitBtn = document.getElementById('submitBtn');
@@ -71,6 +103,8 @@ class SymptomValidator {
     }
 
     // 提取症状
+    // 注意：症状关键词列表需与后端 src/core/fallback.py 中的 detect_symptoms() 保持同步
+    // 前端提取用于 UI 展示，后端检测用于实际分析
     extractSymptoms(text) {
         const symptoms = [];
         for (const keyword of this.symptomKeywords) {
@@ -213,7 +247,7 @@ function showError(message) {
     errorBox.innerHTML = `
         <div class="error-icon">⚠️</div>
         <h3>出错了</h3>
-        <p>${message}</p>
+        <p>${escapeHtml(message)}</p>
         <button onclick="document.getElementById('errorBox').style.display='none'" class="close-error">关闭</button>
     `;
     const resultContainer = document.getElementById('resultContent');
@@ -230,7 +264,7 @@ function displayResult(data) {
     // 渲染回答
     if (data.answer && typeof data.answer === 'string') {
         const renderedAnswer = MarkdownRenderer.render(data.answer);
-        answerText.innerHTML = renderedAnswer;
+        answerText.innerHTML = basicSanitize(renderedAnswer);
     } else {
         answerText.innerHTML = '<p>抱歉，没有获取到有效回答。</p>';
     }
@@ -253,7 +287,7 @@ function displayResult(data) {
         }
         
         if (knowledgeText && knowledgeText !== '暂无相关知识') {
-            knowledgeContent.innerHTML = MarkdownRenderer.render(knowledgeText);
+            knowledgeContent.innerHTML = basicSanitize(MarkdownRenderer.render(knowledgeText));
             knowledgeBox.style.display = 'block';
         } else {
             knowledgeBox.style.display = 'none';
@@ -293,6 +327,11 @@ function formatKnowledgeArray(arr) {
 // 格式化对象类型的知识
 function formatKnowledgeObject(obj) {
     if (!obj) return '';
+    
+    // 兼容后端统一类型后的文本包装格式
+    if (obj.display_text && typeof obj.display_text === 'string') {
+        return obj.display_text;
+    }
     
     let text = '';
     

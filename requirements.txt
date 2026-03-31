@@ -3,6 +3,8 @@
 
 # Web 框架
 Flask>=2.0.0
+Flask-WTF>=1.0.0
+Flask-Limiter>=3.0.0
 
 # 数据处理（可选）
 # numpy>=1.19.0

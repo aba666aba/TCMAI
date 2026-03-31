@@ -91,6 +91,8 @@ def detect_symptoms(query: str) -> List[str]:
     Returns:
         检测到的症状列表
     """
+    # 注意：症状关键词列表需与前端 src/web/templates/static/js/main.js 中的
+    # extractSymptoms() 方法保持同步。后端检测用于实际分析，前端提取用于 UI 展示。
     detected = []
     query_lower = query.lower()
 

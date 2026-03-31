@@ -9,7 +9,13 @@ Flask 应用启动文件
 """
 
 from flask import Flask, render_template, request, jsonify
+from pathlib import Path
+from typing import List, Dict, Any
 import logging
+import os
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 from core.knowledge_base import KnowledgeBase
 from core.symptom_analysis import SymptomAnalyzer
 from core.result_verify import ResultVerifier
@@ -83,6 +89,34 @@ def create_app(config: dict = None) -> Flask:
     # 优化配置：禁用模板自动重载，启用缓存
     app.config['TEMPLATES_AUTO_RELOAD'] = False
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 3600  # 静态文件缓存 1 小时
+    app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 请求体最大 1MB
+
+    # CSRF 防护配置
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'tcm-dev-secret-key-change-in-prod')
+    app.config['WTF_CSRF_ENABLED'] = True
+    csrf = CSRFProtect(app)
+
+    # 速率限制配置
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=[],  # 不设全局限制
+        storage_uri="memory://"
+    )
+
+    # 自定义超限响应
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        return jsonify({
+            'success': False,
+            'error': '请求过于频繁，请稍后再试'
+        }), 429
+
+    # 为前端页面设置 CSRF token Cookie
+    @app.after_request
+    def set_csrf_cookie(response):
+        response.set_cookie('csrf_token', generate_csrf())
+        return response
 
     # 加载配置
     if config:
@@ -109,24 +143,26 @@ def create_app(config: dict = None) -> Flask:
     import os
     from datetime import datetime
 
-    history_file = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'history.json')
+    # 使用 pathlib.Path 规范化路径，防止路径遍历攻击
+    DATA_DIR = Path(__file__).parent.parent.parent / 'data'
+    HISTORY_FILE = (DATA_DIR / 'history.json').resolve()
 
-    def load_history():
+    def load_history() -> List[Dict[str, Any]]:
         """加载历史记录"""
-        if not os.path.exists(history_file):
+        if not HISTORY_FILE.exists():
             return []
         try:
-            with open(history_file, 'r', encoding='utf-8') as f:
+            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"加载历史记录失败：{e}")
             return []
 
-    def save_history(history):
+    def save_history(history: List[Dict[str, Any]]) -> None:
         """保存历史记录"""
         try:
-            os.makedirs(os.path.dirname(history_file), exist_ok=True)
-            with open(history_file, 'w', encoding='utf-8') as f:
+            HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
                 json.dump(history, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"保存历史记录失败：{e}")
@@ -150,6 +186,8 @@ def create_app(config: dict = None) -> Flask:
         return render_template('about.html')
 
     @app.route('/api/query', methods=['POST'])
+    @csrf.exempt
+    @limiter.limit("10/minute")
     def query():
         """
         处理问答请求
@@ -170,13 +208,40 @@ def create_app(config: dict = None) -> Flask:
             }
         """
         data = request.get_json()
+        
+        # 请求验证
+        if data is None:
+            return jsonify({
+                'success': False,
+                'error': '请求数据无效，需要 JSON 格式'
+            }), 400
+        
         query_text = data.get('query', '')
         symptoms = data.get('symptoms', [])
         answer_mode = data.get('mode', 'fast')  # 默认快速模式
+        
+        # 查询文本长度校验（1-1000 字符）
+        if not query_text or len(query_text) < 1 or len(query_text) > 1000:
+            return jsonify({
+                'success': False,
+                'error': '查询内容长度需在 1-1000 字符之间'
+            }), 400
+        
+        # 症状列表校验
+        if not isinstance(symptoms, list):
+            return jsonify({
+                'success': False,
+                'error': '症状参数需为列表格式'
+            }), 400
+        
+        if len(symptoms) > 20:
+            return jsonify({
+                'success': False,
+                'error': '症状列表最多支持 20 项'
+            }), 400
 
         logger.info(f"收到查询请求：{query_text[:50]}... [模式：{answer_mode}]")
-        logger.info(f"模型对象：{model}")
-        logger.info(f"模型可用：{model.model_available if hasattr(model, 'model_available') else 'N/A'}")
+        logger.info(f"模型状态：{'可用' if hasattr(model, 'model_available') and model.model_available else '不可用'}")
 
         try:
             # 症状分析
@@ -231,6 +296,12 @@ def create_app(config: dict = None) -> Flask:
             history_data.append(history_item)
             save_history(history_data)
 
+            # 数据类型统一：确保 knowledge 始终为对象类型
+            if isinstance(knowledge, str):
+                knowledge = {'display_text': knowledge, 'type': 'text'}
+            elif isinstance(knowledge, dict):
+                knowledge['type'] = 'object'
+
             return jsonify({
                 'success': True,
                 'answer': answer,
@@ -260,6 +331,7 @@ def create_app(config: dict = None) -> Flask:
                 }), 500
 
     @app.route('/api/history', methods=['GET'])
+    @csrf.exempt
     def get_history():
         """获取历史记录"""
         try:
@@ -277,6 +349,7 @@ def create_app(config: dict = None) -> Flask:
             }), 500
 
     @app.route('/api/history/<int:item_id>', methods=['DELETE'])
+    @csrf.exempt
     def delete_history_item(item_id):
         """删除单条历史记录"""
         try:
@@ -303,6 +376,7 @@ def create_app(config: dict = None) -> Flask:
             }), 500
 
     @app.route('/api/history', methods=['DELETE'])
+    @csrf.exempt
     def clear_history():
         """清空所有历史记录"""
         try:
@@ -321,6 +395,8 @@ def create_app(config: dict = None) -> Flask:
             }), 500
 
     @app.route('/api/export', methods=['POST'])
+    @csrf.exempt
+    @limiter.limit("5/minute")
     def export():
         """导出查询结果"""
         try:

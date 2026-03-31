@@ -23,6 +23,15 @@ sys.path.insert(0, os.path.join(TCMAI_ROOT, 'src'))
 # 设置环境变量，供其他模块使用
 os.environ['TCMAI_ROOT'] = TCMAI_ROOT
 
+# 端口配置：优先从环境变量读取，默认值 5000
+_port_str = os.environ.get('FLASK_PORT', '5000')
+try:
+    PORT = int(_port_str)
+except ValueError:
+    print(f"[警告] 环境变量 FLASK_PORT='{_port_str}' 非法，已回退为默认端口 5000")
+    PORT = 5000
+HOST = os.environ.get('FLASK_HOST', '0.0.0.0')
+
 from web.app import create_app
 
 # 配置日志输出，让用户能看到启动进度
@@ -60,22 +69,22 @@ if __name__ == '__main__':
         print("[3/3] 正在启动 Web 服务器...")
         print()
         print("-" * 50)
-        print("  服务器地址：http://localhost:5000")
+        print(f"  服务器地址：http://localhost:{PORT}")
         print("  按 Ctrl+C 可停止服务器")
         print("-" * 50)
         print()
         print("[OK] 系统启动完成！")
         print()
         
-        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+        app.run(host=HOST, port=PORT, debug=False, threaded=True)
         
     except Exception as e:
         print()
         print("[错误] 系统启动失败：" + str(e))
         print()
-        print("可能的原因:")
+        print("可能的原因：")
         print("  1. 模型文件不存在，请检查 models/ 目录")
-        print("  2. 端口 5000 被占用")
+        print(f"  2. 端口 {PORT} 被占用")
         print("  3. 依赖包未安装，请运行：pip install -r requirements.txt")
         print()
         logger.error(f"启动异常：{e}", exc_info=True)
