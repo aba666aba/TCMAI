@@ -27,11 +27,15 @@ function basicSanitize(html) {
     if (typeof html !== 'string') return html;
     // 移除 script 标签
     html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+    // 移除危险标签：iframe, embed, object, form, input, button
+    html = html.replace(/<(iframe|embed|object|form|input|button)\b[^<]*(?:(?!<\/\1>)<[^<]*)*<\/\1>/gi, '');
+    html = html.replace(/<(iframe|embed|object|form|input|button)\b[^>]*\/?>/gi, '');
     // 移除 on* 事件处理器
     html = html.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '');
     html = html.replace(/\bon\w+\s*=\s*[^\s>]*/gi, '');
-    // 移除 javascript: 协议
+    // 移除 javascript: 和 data:text/html 协议
     html = html.replace(/javascript\s*:/gi, '');
+    html = html.replace(/data:text\/html[^"'>\s]*/gi, '');
     return html;
 }
 
@@ -431,7 +435,8 @@ submitBtn.addEventListener('click', async () => {
         const response = await fetch('/api/query', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
             },
             body: JSON.stringify({
                 query: query,

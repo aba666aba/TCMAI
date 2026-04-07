@@ -64,6 +64,23 @@ class SymptomAnalyzer:
             '腹痛': '消化系统',
             '腹泻': '消化系统',
             '便秘': '消化系统',
+            '心悸': '心血管系统',
+            '头晕': '头部症状',
+            '发热': '全身症状',
+            '恶寒': '全身症状',
+            '胁痛': '消化系统',
+            '自汗': '全身症状',
+            '恶心呕吐': '消化系统',
+            '畏寒': '全身症状',
+            '手足心热': '全身症状',
+            '口干': '全身症状',
+            '腰膝酸软': '全身症状',
+            '盗汗': '全身症状',
+            '耳鸣': '头部症状',
+            '健忘': '精神症状',
+            '气短': '呼吸系统',
+            '腹胀': '消化系统',
+            '胃痛': '消化系统',
         }
         
         # 证型判断规则（简化示例）
@@ -173,6 +190,12 @@ class SymptomAnalyzer:
         for syndrome_name, rule in self.syndrome_rules.items():
             # 计算匹配度
             matched = [s for s in rule['symptoms'] if s in symptom_names]
+            
+            # 空列表检查：如果 rule['symptoms'] 为空，跳过该证型并记录警告日志
+            if not rule['symptoms']:
+                logger.warning(f"证型 '{syndrome_name}' 的症状列表为空，跳过该证型")
+                continue
+            
             confidence = len(matched) / len(rule['symptoms'])
             
             if confidence >= 0.5:  # 匹配度超过 50%

@@ -43,8 +43,15 @@ class KnowledgeBase:
             if tcmi_root:
                 db_path = os.path.join(tcmi_root, 'data', 'tcm_knowledge.db')
             else:
-                # 回退：使用相对路径
-                db_path = Path(__file__).parent.parent.parent / "data" / "tcm_knowledge.db"
+                # 回退：使用相对路径，支持正常运行和 PyInstaller 打包后的情况
+                import sys
+                if getattr(sys, 'frozen', False):
+                    # PyInstaller 打包后的情况：exe 所在目录
+                    base_path = Path(sys.executable).parent
+                else:
+                    # 正常 Python 运行：从当前文件向上回溯到项目根目录
+                    base_path = Path(__file__).parent.parent.parent
+                db_path = base_path / "data" / "tcm_knowledge.db"
 
         self.db_path = str(db_path)
         self.conn = None
@@ -107,15 +114,19 @@ class KnowledgeBase:
         if not self.conn:
             return {'herbs': [], 'formulas': [], 'patent_medicines': [], 'folk_remedies': [], 'efficacy': []}
 
-        results = {
-            'herbs': self._search_herbs(query),
-            'formulas': self._search_formulas(query),
-            'patent_medicines': self._search_patent_medicines(query),
-            'folk_remedies': self._search_folk_remedies(query),
-            'efficacy': self._search_efficacy(query)
-        }
-
-        return results
+        try:
+            results = {
+                'herbs': self._search_herbs(query),
+                'formulas': self._search_formulas(query),
+                'patent_medicines': self._search_patent_medicines(query),
+                'folk_remedies': self._search_folk_remedies(query),
+                'efficacy': self._search_efficacy(query)
+            }
+            return results
+        except Exception as e:
+            logger.error(f"知识库搜索失败：{e}")
+            # 异常时返回空结果字典而非 None
+            return {'herbs': [], 'formulas': [], 'patent_medicines': [], 'folk_remedies': [], 'efficacy': []}
 
     def _search_herbs(self, keyword: str) -> List[Dict]:
         """
@@ -504,10 +515,6 @@ class KnowledgeBase:
             # 4. 使用参数化查询，防止 SQL 注入
             # ==========================================
             
-            # 安全的 SQL 条件模板（硬编码，不包含任何用户输入）
-            SAFE_CONDITION_TEMPLATE = "indications LIKE ?"
-            # 用于验证条件的正则表达式模式
-            SAFE_CONDITION_PATTERN = re.compile(r'^[a-zA-Z_]+\s+LIKE\s+\?$')
             # 单个症状的最大长度限制
             MAX_SYMPTOM_LENGTH = 100
             # 症状数量的最大限制
@@ -517,7 +524,8 @@ class KnowledgeBase:
             filtered_symptoms = symptoms[:MAX_SYMPTOMS_COUNT]
             
             # 构建症状匹配条件
-            conditions = []
+            # 安全设计：condition_str 完全由代码生成，不包含任何用户输入
+            # 用户输入只通过参数化查询的 params 传递
             params = []
             for symptom in filtered_symptoms:
                 # 类型检查：确保症状是字符串类型
@@ -534,21 +542,16 @@ class KnowledgeBase:
                 if not symptom.strip():
                     continue
                 
-                # 使用安全的硬编码模板
-                conditions.append(SAFE_CONDITION_TEMPLATE)
+                # 用户输入只作为参数，不直接拼接到 SQL
                 params.append(f'%{symptom}%')
             
             # 如果没有有效的症状条件，返回空结果
-            if not conditions:
+            if not params:
                 return []
             
-            # 防御性校验：验证每个 condition 仅包含预期的安全模式
-            for condition in conditions:
-                if not SAFE_CONDITION_PATTERN.match(condition):
-                    logger.error(f"检测到非预期的 SQL 条件模式：{condition}")
-                    return []
-            
-            condition_str = ' OR '.join(conditions)
+            # condition_str 完全由代码生成，使用安全的硬编码模板
+            # 不包含任何用户输入，防止 SQL 注入
+            condition_str = ' OR '.join(['indications LIKE ?'] * len(params))
             
             # 查询方剂（使用参数化查询，params 中的用户输入不会被解释为 SQL）
             cursor.execute(f"""

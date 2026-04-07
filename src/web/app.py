@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import List, Dict, Any
 import logging
 import os
+import threading
+import concurrent.futures
+import time
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect, generate_csrf
@@ -143,8 +146,25 @@ def create_app(config: dict = None) -> Flask:
     import os
     from datetime import datetime
 
+    # Bug 8 修复：创建历史记录操作锁，防止 ID 竞态条件
+    history_lock = threading.Lock()
+
     # 使用 pathlib.Path 规范化路径，防止路径遍历攻击
     DATA_DIR = Path(__file__).parent.parent.parent / 'data'
+    DATA_DIR = DATA_DIR.resolve()
+    
+    # Bug 9 修复：数据目录路径安全验证
+    # 确保解析后的路径仍在项目根目录内
+    try:
+        project_root = Path(__file__).parent.parent.parent.resolve()
+        # 验证 DATA_DIR 是否在项目根目录内
+        DATA_DIR.relative_to(project_root)
+    except ValueError:
+        # 路径超出项目根目录，回退到默认路径
+        logger.error(f"数据目录路径安全检查失败：{DATA_DIR} 超出项目根目录，使用默认路径")
+        DATA_DIR = Path(__file__).parent.parent.parent / 'data'
+        DATA_DIR = DATA_DIR.resolve()
+    
     HISTORY_FILE = (DATA_DIR / 'history.json').resolve()
 
     def load_history() -> List[Dict[str, Any]]:
@@ -260,13 +280,28 @@ def create_app(config: dict = None) -> Flask:
             if answer_mode == 'ai' and model.model_available:
                 # AI 模式：使用大模型推理
                 logger.info(f"开始 AI 模型推理...")
-                answer = model.infer(query_text, str(kb_result))
+                
+                # Bug 7 修复：模型推理添加超时机制
+                # 使用 ThreadPoolExecutor 包装 infer 调用，设置 10 秒超时
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(model.infer, query_text, str(kb_result))
+                        answer = future.result(timeout=10)  # 10 秒超时
+                except concurrent.futures.TimeoutError:
+                    logger.warning("AI 模型推理超时（10秒），切换到快速模式")
+                    answer = None
+                    mode = 'fast'
+                except Exception as infer_error:
+                    logger.error(f"AI 模型推理异常：{str(infer_error)}")
+                    answer = None
+                    mode = 'fast'
+                
                 logger.info(f"模型推理结果：{answer[:50] if answer else 'None'}...")
                 
-                if answer is None:
+                if answer is None and mode != 'fast':
                     logger.info("AI 模型输出无效，切换到快速模式")
                     mode = 'fast'
-                else:
+                elif answer is not None:
                     # 结果校验
                     verified_result = verifier.verify(answer, kb_result)
                     answer = verified_result['answer']
@@ -285,16 +320,20 @@ def create_app(config: dict = None) -> Flask:
                 mode = 'fast'
 
             # 保存历史记录
-            history_item = {
-                'id': len(history_data) + 1,
-                'query': query_text,
-                'symptoms': symptoms,
-                'answer': answer,
-                'timestamp': datetime.now().isoformat(),
-                'mode': mode  # 记录回答模式
-            }
-            history_data.append(history_item)
-            save_history(history_data)
+            # Bug 8 修复：使用锁保护 ID 生成和记录写入，防止竞态条件
+            with history_lock:
+                # 使用最大 ID + 1 避免删除后 ID 重复
+                max_id = max((item['id'] for item in history_data), default=0)
+                history_item = {
+                    'id': max_id + 1,
+                    'query': query_text,
+                    'symptoms': symptoms,
+                    'answer': answer,
+                    'timestamp': datetime.now().isoformat(),
+                    'mode': mode  # 记录回答模式
+                }
+                history_data.append(history_item)
+                save_history(history_data)
 
             # 数据类型统一：确保 knowledge 始终为对象类型
             if isinstance(knowledge, str):
@@ -352,10 +391,10 @@ def create_app(config: dict = None) -> Flask:
     @csrf.exempt
     def delete_history_item(item_id):
         """删除单条历史记录"""
+        nonlocal history_data
         try:
-            nonlocal history_data
             original_count = len(history_data)
-            history_data = [item for item in history_data if item['id'] != item_id]
+            history_data[:] = [item for item in history_data if item['id'] != item_id]
 
             if len(history_data) < original_count:
                 save_history(history_data)
@@ -379,9 +418,9 @@ def create_app(config: dict = None) -> Flask:
     @csrf.exempt
     def clear_history():
         """清空所有历史记录"""
+        nonlocal history_data
         try:
-            nonlocal history_data
-            history_data = []
+            history_data.clear()
             save_history(history_data)
             return jsonify({
                 'success': True,

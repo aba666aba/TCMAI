@@ -2,6 +2,12 @@
  * 历史记录页面交互脚本
  */
 
+// 获取 CSRF token 的工具函数
+function getCsrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute('content') : '';
+}
+
 // DOM 元素
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
@@ -112,16 +118,26 @@ function viewDetail(item) {
 
 // 搜索功能
 searchBtn.addEventListener('click', () => {
-    const keyword = searchInput.value.trim().toLowerCase();
-    if (!keyword) {
+    const rawKeyword = searchInput.value.trim();
+    if (!rawKeyword) {
         loadHistory();
         return;
     }
-    
-    const filtered = history_data.filter(item =>
-        item.query.toLowerCase().includes(keyword) ||
-        item.answer.toLowerCase().includes(keyword)
-    );
+
+    // 判断是否为中文（包含中文字符）
+    const isChinese = /[\u4e00-\u9fa5]/.test(rawKeyword);
+    const keyword = isChinese ? rawKeyword : rawKeyword.toLowerCase();
+
+    const filtered = history_data.filter(item => {
+        if (isChinese) {
+            // 中文：原始文本匹配
+            return item.query.includes(keyword) || item.answer.includes(keyword);
+        } else {
+            // 英文：大小写不敏感匹配
+            return item.query.toLowerCase().includes(keyword) ||
+                   item.answer.toLowerCase().includes(keyword);
+        }
+    });
     renderHistory(filtered);
 });
 
@@ -133,7 +149,10 @@ async function deleteHistory(id) {
 
     try {
         const response = await fetch(`/api/history/${id}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': getCsrfToken()
+            }
         });
 
         const data = await response.json();
@@ -200,7 +219,10 @@ clearBtn.addEventListener('click', async () => {
     
     try {
         const response = await fetch('/api/history', {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': getCsrfToken()
+            }
         });
         
         const data = await response.json();

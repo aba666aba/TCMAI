@@ -18,7 +18,13 @@ from typing import Dict, List, Tuple
 import torch
 
 # 添加项目路径
-PROJECT_ROOT = Path(__file__).parent.parent
+# 支持正常运行和 PyInstaller 打包后的情况
+if getattr(sys, 'frozen', False):
+    # PyInstaller 打包后的情况
+    PROJECT_ROOT = Path(sys.executable).parent.parent
+else:
+    # 正常 Python 运行
+    PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tcm_recommender.data_loader import TCMDataLoader
@@ -89,7 +95,7 @@ class TCMRecommender:
         self.model.load_state_dict(checkpoint['model_state_dict'])
         logger.info(f"模型已加载：{path}")
     
-    def parse_symptoms(self, symptom_text: str) -> List[int]:
+    def parse_symptoms(self, symptom_text: str) -> Tuple[List[int], List[str], List[str]]:
         """
         解析症状文本
         
@@ -97,7 +103,7 @@ class TCMRecommender:
             symptom_text: 症状文本（空格或逗号分隔）
         
         Returns:
-            症状 ID 列表
+            三元组：(症状 ID 列表, 有效症状名称列表, 未识别症状列表)
         """
         # 分割症状
         separators = [' ', ',', '，', '、', ';', '；']
@@ -108,18 +114,24 @@ class TCMRecommender:
         
         # 转换为 ID
         symptom_ids = []
-        unknown = []
+        valid_symptoms = []
+        unknown_symptoms = []
         for symp in symptoms:
             if symp in self.symptom_to_id:
                 symptom_ids.append(self.symptom_to_id[symp])
+                valid_symptoms.append(symp)
             else:
-                unknown.append(symp)
+                unknown_symptoms.append(symp)
         
-        if unknown:
-            logger.warning(f"未知症状：{unknown}")
-            logger.info(f"支持的症状：{list(self.symptom_to_id.keys())}")
+        if unknown_symptoms:
+            logger.warning(f"未知症状：{unknown_symptoms}")
         
-        return symptom_ids
+        # 如果所有症状都无效，记录警告日志
+        if symptoms and not symptom_ids:
+            logger.warning(f"所有症状都无效，输入症状：{symptoms}")
+            logger.info(f"支持的症状示例：{list(self.symptom_to_id.keys())[:10]}...")
+        
+        return symptom_ids, valid_symptoms, unknown_symptoms
     
     def recommend(
         self,
@@ -139,7 +151,12 @@ class TCMRecommender:
             推荐结果字典
         """
         if not symptoms:
-            return {'error': '无有效症状'}
+            return {
+                'error': '无有效症状',
+                'herbs': [],
+                'formulas': [],
+                'suggestion': f'支持的症状示例：{", ".join(list(self.symptom_to_id.keys())[:10])}...'
+            }
         
         # 准备输入
         symptom_tensor = torch.tensor([symptoms], dtype=torch.long).to(self.device)
@@ -330,11 +347,13 @@ def main():
     )
     
     # 解析症状
-    symptom_ids = recommender.parse_symptoms(args.symptoms)
+    symptom_ids, valid_symptoms, unknown_symptoms = recommender.parse_symptoms(args.symptoms)
     
     if not symptom_ids:
         print("❌ 无有效症状，请检查输入")
-        print(f"支持的症状：{list(recommender.symptom_to_id.keys())}")
+        if unknown_symptoms:
+            print(f"未识别的症状：{unknown_symptoms}")
+        print(f"支持的症状示例：{list(recommender.symptom_to_id.keys())[:10]}...")
         return
     
     # 推荐

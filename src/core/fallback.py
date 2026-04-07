@@ -288,7 +288,7 @@ def is_model_output_valid(output: str) -> bool:
         return False
 
     # 检查是否有大量重复字符
-    if len(output) > 10:
+    if len(output) >= 10:
         # 检查连续重复字符
         if re.search(r'(.)\1{4,}', output):
             return False
@@ -299,6 +299,12 @@ def is_model_output_valid(output: str) -> bool:
                 segment = output[i:i + length]
                 if segment * 3 in output:
                     return False
+
+        # 检查唯一字符比例（检测重复字符过多的无效输出）
+        unique_chars = set(output)
+        unique_ratio = len(unique_chars) / len(output)
+        if unique_ratio < 0.3:  # 唯一字符占比低于30%，判定为无效输出
+            return False
 
     # 检查是否包含乱码字符
     if re.search(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', output):
