@@ -1,27 +1,5 @@
-# 中医药智能问答系统 - 依赖库清单
+# 中医药智能问答系统 - 桌面版依赖
 # 安装命令：pip install -r requirements.txt
 
-# Web 框架
-Flask>=2.0.0
-Flask-WTF>=1.0.0
-Flask-Limiter>=3.0.0
-
-# 数据处理（可选）
-# numpy>=1.19.0
-
-# 截图功能（可选）
-# mss>=9.0.0
-# Pillow>=9.0.0
-
-# 数据库（可选，SQLite 已内置）
-# pymysql>=1.0.0
-
-# 开发工具（可选）
-# pytest>=6.0.0
-# black>=21.0.0
-# flake8>=3.9.0
-
-# 注意：
-# - 已移除 torch（AI 模型已禁用）
-# - 已移除 transformers（AI 模型已禁用）
-# 系统当前使用基于知识库的快速模式，不需要 AI 依赖
+# 当前桌面版主要使用 Python 标准库 tkinter 构建界面
+# 如需开发和测试，可按需自行安装 pytest / black / flake8 等工具
