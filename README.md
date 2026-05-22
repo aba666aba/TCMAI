@@ -64,7 +64,7 @@ tcmai/
 │   └── best_model.json           # 训练配置记录
 │
 ├── data/                         # 数据目录
-│   ├── tcm_knowledge.db          # SQLite 数据库（3497 药材, 1019 方剂）
+│   ├── tcm_knowledge.db          # SQLite 数据库（3010 药材, 1095 方剂）
 │   ├── train_data.npz            # 训练数据（94333 样本）
 │   ├── history.json              # 问答历史记录
 │   └── logs/                     # 运行日志

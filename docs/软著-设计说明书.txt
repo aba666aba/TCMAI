@@ -406,10 +406,10 @@
 数据总量：约 5000 条记录
 
 包含 4 个核心表：
-  药材表（herbs） - 3497 条
-  方剂表（formulas） - 1019 条
-  中成药表（patent_medicines） - 约 60 条
-  民间验方表（folk_remedies） - 约 220 条
+  药材表（herbs） - 3010 条
+  方剂表（formulas） - 1095 条
+  中成药表（patent_medicines） - 125 条
+  民间验方表（folk_remedies） - 222 条
 
 3.2 药材表（herbs）
 
