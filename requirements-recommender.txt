@@ -1,9 +1,0 @@
-# 中医药智能问答系统 — 深度学习推荐模型依赖（可选）
-# 安装：pip install -r requirements-recommender.txt
-#
-# 用于 AI 模式下的深度学习推荐功能。
-# 不安装不影响快速模式（基于规则）的正常使用。
-
-torch>=2.0.0
-numpy>=1.24.0
-tqdm>=4.65.0
