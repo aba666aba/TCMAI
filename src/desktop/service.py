@@ -281,21 +281,29 @@ class TCMDesktopService:
         if answer_mode == "ai":
             recommender = self._get_recommender()
             if recommender is not None:
-                try:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(
-                            self._run_recommender_inference,
-                            recommender,
-                            query_text,
-                            filtered_symptoms,
-                        )
-                        answer, knowledge_result = future.result(timeout=15)
-                except concurrent.futures.TimeoutError:
-                    logger.warning("推荐模型推理超时，降级到快速模式")
-                    mode = "fast"
-                except Exception as exc:
-                    logger.error("推荐模型推理失败: %s", exc)
-                    mode = "fast"
+                for attempt in range(2):
+                    try:
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                self._run_recommender_inference,
+                                recommender,
+                                query_text,
+                                filtered_symptoms,
+                            )
+                            answer, knowledge_result = future.result(timeout=60)
+                        break  # 成功则跳出重试循环
+                    except concurrent.futures.TimeoutError:
+                        if attempt == 0:
+                            logger.warning("推荐模型推理超时，重试一次…")
+                            continue
+                        logger.warning("推荐模型推理再次超时，降级到快速模式")
+                        mode = "fast"
+                    except Exception as exc:
+                        logger.error("推荐模型推理失败(%s): %s", type(exc).__name__, exc)
+                        if attempt == 0:
+                            logger.info("重试推荐模型推理…")
+                            continue
+                        mode = "fast"
 
                 if answer is not None:
                     mode = "ai"
