@@ -28,18 +28,23 @@ else:
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tcm_recommender.data_loader import TCMDataLoader
-from tcm_recommender.model import create_model, SafetyChecker
+from tcm_recommender.model import create_model, HerbFeatureEncoder, SafetyChecker
 
-# V3 模型支持（可选）
+# V3/V4 模型支持
+_HAS_V3 = False
+_HAS_V4 = False
 try:
-    from tcm_recommender.model_v3 import (
-        create_model_v3,
-        HerbFeatureEncoderV3,
-        SafetyChecker as SafetyCheckerV3,
-    )
-    _V3_AVAILABLE = True
+    from tcm_recommender.model_v3 import create_model_v3, HerbFeatureEncoderV3
+    _HAS_V3 = True
 except ImportError:
-    _V3_AVAILABLE = False
+    pass
+try:
+    from tcm_recommender.model_v4 import TCMV4, create_tcm_v4
+    from tcm_recommender.train_v4 import build_herb_features_v4
+    from tcm_recommender.data_pipeline import TCMDataPipeline
+    _HAS_V4 = True
+except ImportError as e:
+    pass
 
 # 配置日志
 logging.basicConfig(
@@ -72,18 +77,28 @@ class TCMRecommender:
         logger.info("检测到模型版本: V%s", self._model_version)
 
         # 药材字符特征
-        if self._model_version == 3:
+        if self._model_version == 4:
+            pipeline = TCMDataPipeline(db_path)
+            pipeline.load_all()
+            herb_feat = build_herb_features_v4(pipeline)
+            self._herb_features_dict = herb_feat
+            self._cached_herb_features = None
+            self.herb_char_multihot = None
+            num_chars = herb_feat["num_chars"]
+            pipeline.close()
+        elif self._model_version == 3:
             from tcm_recommender.train_v3 import build_herb_char_features_v3
             herb_char_multihot, num_chars, char_list = build_herb_char_features_v3(self.data_loader)
+            self.herb_char_multihot = herb_char_multihot
         else:
             from tcm_recommender.train import build_herb_char_features
             herb_char_multihot, num_chars, char_list = build_herb_char_features(self.data_loader)
-        self.herb_char_multihot = herb_char_multihot
+            self.herb_char_multihot = herb_char_multihot
 
-        # 加载扩展症状/证型（V2.1/V3 需要）
+        # 加载扩展症状/证型
         self._extended_symptoms = None
         self._extended_syndromes = None
-        if self._model_version in (3, 21):
+        if self._model_version in (3, 4, 21):
             try:
                 from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST, EXTENDED_SYNDROME_DEFINITIONS
                 self._extended_symptoms = EXTENDED_SYMPTOM_LIST
@@ -91,65 +106,75 @@ class TCMRecommender:
             except ImportError:
                 pass
 
-        # 特征编码器
-        if self._model_version == 3:
-            self.herb_feature_encoder = HerbFeatureEncoderV3(num_chars, feature_dim=128)
-        elif self._model_version == 21:
-            from tcm_recommender.model import HerbFeatureEncoder
-            self.herb_feature_encoder = HerbFeatureEncoder(num_chars, feature_dim=64)
-        else:
-            from tcm_recommender.model import HerbFeatureEncoder
-            self.herb_feature_encoder = HerbFeatureEncoder(num_chars, feature_dim=32)
-
-        # 模型
-        logger.info("加载模型...")
         num_symptoms = len(self._extended_symptoms) if self._extended_symptoms else len(self.data_loader.symptoms)
         num_syndromes = len(self._extended_syndromes) if self._extended_syndromes else self.data_loader.num_syndromes
 
-        if self._model_version == 3:
-            self.model = create_model_v3(
+        # ── V4 特殊处理 ──
+        if self._model_version == 4:
+            cfg = checkpoint.get("config", {})
+            self.model = create_tcm_v4(
                 num_symptoms=num_symptoms,
                 num_herbs=self.data_loader.num_herbs,
                 num_formulas=len(self.data_loader.formulas) + 1,
                 num_syndromes=num_syndromes + 1,
-                herb_char_dim=num_chars,
-                d_model=256,
-                herb_feature_dim=128,
-                num_transformer_layers=4,
+                num_chars=self._herb_features_dict["num_chars"],
+                num_categories=self._herb_features_dict["num_categories"],
+                d_model=cfg.get("d_model", 384),
+                nhead=8,
+                num_layers=cfg.get("num_layers", 4),
+                dropout=0.1,
             )
-        elif self._model_version == 21:
-            self.model = create_model(
-                num_symptoms=num_symptoms,
-                num_herbs=self.data_loader.num_herbs,
-                num_formulas=len(self.data_loader.formulas) + 1,
-                num_syndromes=num_syndromes + 1,
-                herb_char_dim=num_chars,
-                embed_dim=128,
-                herb_feature_dim=64,
-            )
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            self.model.to(device)
+            self.model.eval()
+            logger.info("V4 模型加载完成")
         else:
-            self.model = create_model(
-                num_symptoms=num_symptoms,
-                num_herbs=self.data_loader.num_herbs,
-                num_formulas=len(self.data_loader.formulas) + 1,
-                num_syndromes=num_syndromes + 1,
-                herb_char_dim=num_chars,
-                embed_dim=64,
-                herb_feature_dim=32,
-            )
+            # ── V2/V2.1/V3 处理 ──
+            if self._model_version == 3:
+                self.herb_feature_encoder = HerbFeatureEncoderV3(num_chars, feature_dim=128)
+            elif self._model_version == 21:
+                self.herb_feature_encoder = HerbFeatureEncoder(num_chars, feature_dim=64)
+            else:
+                self.herb_feature_encoder = HerbFeatureEncoder(num_chars, feature_dim=32)
 
-        self._load_model(checkpoint, encoder_path)
-        self.model.to(device)
-        self.herb_feature_encoder.to(device)
-        self.herb_char_multihot = self.herb_char_multihot.to(device)
-        self.model.eval()
-        self.herb_feature_encoder.eval()
+            logger.info("加载模型...")
+            if self._model_version == 3:
+                self.model = create_model_v3(
+                    num_symptoms=num_symptoms, num_herbs=self.data_loader.num_herbs,
+                    num_formulas=len(self.data_loader.formulas) + 1,
+                    num_syndromes=num_syndromes + 1, herb_char_dim=num_chars,
+                    d_model=256, herb_feature_dim=128, num_transformer_layers=4,
+                )
+            elif self._model_version == 21:
+                self.model = create_model(
+                    num_symptoms=num_symptoms, num_herbs=self.data_loader.num_herbs,
+                    num_formulas=len(self.data_loader.formulas) + 1,
+                    num_syndromes=num_syndromes + 1, herb_char_dim=num_chars,
+                    embed_dim=128, herb_feature_dim=64,
+                )
+            else:
+                self.model = create_model(
+                    num_symptoms=num_symptoms, num_herbs=self.data_loader.num_herbs,
+                    num_formulas=len(self.data_loader.formulas) + 1,
+                    num_syndromes=num_syndromes + 1, herb_char_dim=num_chars,
+                    embed_dim=64, herb_feature_dim=32,
+                )
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            logger.info("模型状态已加载")
 
-        # 预计算药材特征
-        with torch.no_grad():
-            self._cached_herb_features = self.herb_feature_encoder(
-                self.herb_char_multihot
-            )
+            if encoder_path and os.path.exists(encoder_path):
+                enc_checkpoint = torch.load(encoder_path, map_location=self.device)
+                self.herb_feature_encoder.load_state_dict(enc_checkpoint["encoder_state_dict"])
+                logger.info("编码器已加载：%s", encoder_path)
+
+            self.model.to(device)
+            self.herb_feature_encoder.to(device)
+            self.herb_char_multihot = self.herb_char_multihot.to(device)
+            self.model.eval()
+            self.herb_feature_encoder.eval()
+
+            with torch.no_grad():
+                self._cached_herb_features = self.herb_feature_encoder(self.herb_char_multihot)
 
         # 安全校验器
         self.safety_checker = SafetyChecker(self.data_loader.incompatible_herbs)
@@ -171,13 +196,14 @@ class TCMRecommender:
 
     @staticmethod
     def _detect_version(checkpoint: dict) -> int:
-        """检测模型版本"""
-        config = checkpoint.get("model_config", {})
+        config = checkpoint.get("config", checkpoint.get("model_config", {}))
+        ver = config.get("version", "")
+        if ver == "v4":
+            return 4
         d_model = config.get("d_model", 64)
-        version_str = config.get("version", "")
-        if version_str == "v2.1" or (d_model >= 100 and d_model < 200):
-            return 21  # V2.1
-        elif d_model >= 200:
+        if ver == "v2.1" or (100 <= d_model < 200):
+            return 21
+        if d_model >= 200:
             return 3
         return 2
 
@@ -231,28 +257,30 @@ class TCMRecommender:
         
         return symptom_ids, valid_symptoms, unknown_symptoms
     
-    def recommend(
-        self,
-        symptoms: List[int],
-        top_k_herb: int = 10,
-        top_k_formula: int = 5,
-    ) -> Dict:
+    def recommend(self, symptoms: List[int], top_k_herb: int = 10, top_k_formula: int = 5) -> Dict:
         """推荐药材和方剂"""
         if not symptoms:
-            return {
-                "error": "无有效症状",
-                "herbs": [],
-                "formulas": [],
-                "suggestion": f"支持的症状示例：{', '.join(list(self.symptom_to_id.keys())[:10])}...",
-            }
+            return {"error": "无有效症状", "herbs": [], "formulas": [],
+                    "suggestion": f"支持: {', '.join(list(self.symptom_to_id.keys())[:10])}..."}
 
         symptom_tensor = torch.tensor([symptoms], dtype=torch.long).to(self.device)
 
         with torch.no_grad():
-            result = self.model.predict(
-                symptom_tensor, self._cached_herb_features,
-                top_k=max(top_k_herb, top_k_formula),
-            )
+            if self._model_version == 4:
+                mask = torch.ones_like(symptom_tensor, dtype=torch.float32)
+                result = self.model.predict(
+                    symptom_tensor, mask,
+                    self._herb_features_dict["char_multihot"].to(self.device),
+                    self._herb_features_dict["category_idx"].to(self.device),
+                    self._herb_features_dict["nature_idx"].to(self.device),
+                    self._herb_features_dict["flavor_idx"].to(self.device),
+                    top_k=max(top_k_herb, top_k_formula),
+                )
+            else:
+                result = self.model.predict(
+                    symptom_tensor, self._cached_herb_features,
+                    top_k=max(top_k_herb, top_k_formula),
+                )
 
         herb_names = self.data_loader.get_herb_names()
         formula_names = self.data_loader.get_formula_names()
