@@ -330,26 +330,6 @@ class DesktopApp:
         )
         self._configure_output_text(self.answer_text)
 
-        # 相关知识
-        tk.Frame(right, bg=self.palette["border"], height=1).pack(fill="x", pady=(12, 10))
-        ttk.Label(right, text="相关知识", style="Body.TLabel").pack(anchor="w", pady=(0, 6))
-        knowledge_frame = tk.Frame(right, bg=self.palette["border"], bd=1, relief="solid")
-        knowledge_frame.pack(fill="x")
-        self.knowledge_text = ScrolledText(
-            knowledge_frame,
-            wrap="word",
-            height=5,
-            font=("Microsoft YaHei UI", 10),
-            relief="flat",
-            bd=0,
-        )
-        self.knowledge_text.pack(fill="both", padx=2, pady=2)
-        self.knowledge_text.configure(
-            background=self.palette["input_bg"],
-            foreground=self.palette["muted"],
-        )
-        self._configure_output_text(self.knowledge_text)
-
         # ── 免责声明（首页最底部）──
         disclaimer_frame = tk.Frame(
             self.home_tab, bg=self.palette["warning_bg"], highlightthickness=1, highlightbackground=self.palette["warning_border"]
@@ -544,7 +524,6 @@ class DesktopApp:
         self.progress.start(10)
         self.status_var.set("正在分析您的问题，请稍候...")
         self._set_text(self.answer_text, "")
-        self._set_text(self.knowledge_text, "")
 
         thread = threading.Thread(target=self._run_query, args=(query,), daemon=True)
         thread.start()
@@ -583,10 +562,6 @@ class DesktopApp:
             data.get("disclaimer") or "本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。"
         )
         self._set_text(self.answer_text, data.get("answer", ""))
-        knowledge = data.get("knowledge")
-        if isinstance(knowledge, dict):
-            knowledge = json.dumps(knowledge, ensure_ascii=False, indent=2)
-        self._set_text(self.knowledge_text, str(knowledge or "暂无相关知识"))
         self._load_history()
 
     def _load_history(self) -> None:

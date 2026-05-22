@@ -256,9 +256,21 @@ class TCMDesktopService:
             parts.append("✓ 未检测到常见配伍禁忌")
 
         parts.append("\n【养生建议】")
-        parts.append("• 饮食调理：饮食宜清淡，避免生冷油腻")
-        parts.append("• 起居调摄：保持规律作息，避免熬夜")
+        sym_set = set(s.lower() for s in (result.get("symptoms", []) or symptoms))
+        if any(k in str(sym_set) for k in ["失眠", "健忘", "心悸"]):
+            parts.append("• 安神助眠：睡前可温水泡脚，避免咖啡浓茶，卧室保持安静昏暗")
+        if any(k in str(sym_set) for k in ["食欲不振", "腹泻", "腹胀", "胃痛"]):
+            parts.append("• 健脾养胃：少食多餐，以小米粥、山药、南瓜等易消化食物为主")
+        if any(k in str(sym_set) for k in ["乏力", "疲倦", "气短", "面色萎黄"]):
+            parts.append("• 补气养血：适当食用红枣、桂圆、瘦肉，避免过度劳累")
+        if any(k in str(sym_set) for k in ["畏寒", "腰膝酸软", "手足冷"]):
+            parts.append("• 温阳驱寒：避免生冷饮食，可适量食用羊肉、生姜、核桃")
+        if any(k in str(sym_set) for k in ["头痛", "头晕", "耳鸣"]):
+            parts.append("• 调养肝肾：保持充足睡眠，避免长时间看屏幕，适当按摩太阳穴")
+        if any(k in str(sym_set) for k in ["咳嗽", "咽喉肿痛", "发热"]):
+            parts.append("• 清肺润燥：多饮温水，少食辛辣，可用梨、银耳、百合煲汤")
         parts.append("• 情志调畅：保持心情舒畅，避免过度思虑")
+        parts.append("• 起居有常：规律作息，适当运动，避免熬夜")
 
         return "\n".join(parts)
 
