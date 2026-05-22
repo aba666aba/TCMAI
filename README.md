@@ -195,20 +195,7 @@ pyinstaller tcm_desktop.spec
 
 ### TCMNet 架构
 
-当前模型为 **TCMNet**，基于 Transformer 的多任务深度学习模型。
-
-| 参数 | 完整配置 | 当前模型 |
-|------|---------|---------|
-| 参数总量 | **11,192,726** | 11,192,726 |
-| 模型维度 (d_model) | 384 | 256 |
-| Transformer 层数 | 4 | 2 |
-| 注意力头数 | 8 | 8 |
-| 训练 epoch | 50 | 1 |
-| 训练数据 | 94,333 样本 | `train_data_v4_small.npz` |
-| 证型分类准确率 | — | **96.4%** |
-| 药材召回率@10 | — | **25.7%** |
-
-**当前模型 (`best_model.pth`)** 是用小配置（d_model=256, 2层, 1 epoch）快速验证的。完整配置（d_model=384, 4层, 50 epoch）训练后可显著提升药材召回率。
+当前模型为 **TCMNet**，基于 Transformer 的多任务深度学习模型（11,192,726 参数）。
 
 ### 模型组件
 
@@ -230,7 +217,7 @@ pyinstaller tcm_desktop.spec
 | 组合增强 | ~25% | 随机症状组合 + 关联矩阵标签 |
 | 负采样 | ~10% | 零关联负样本 |
 
-### 完整训练命令
+### 训练命令
 
 ```bash
 python tcm_recommender/train.py ^
@@ -293,18 +280,6 @@ python tcm_recommender/data_expansion.py
 | `a1de053` | 2026-05-22 | V4 升级：100K 级数据管线 + 最新 Transformer 架构 |
 | `aa5a3fe` | 2026-05-22 | V2.1→V3：数据库扩展到 1024 药材/377 方剂/200 症状/17 证型 |
 | `6498f11` | 2026-04-07 | 重构：Web→Desktop 桌面模块迁移 |
-
-### 模型训练纪要
-
-- `best_model.pth` 当前为小配置快速验证版本（1 epoch）
-- 完整 50 epoch 训练预计: GPU (RTX 3050) 约 15-30 分钟
-- 训练需修复 `-1e9` 溢出问题（已在 `model.py` 中修复）
-
-### 待办清单
-
-- [ ] 用完整配置（d_model=384, 4层, 50 epoch）重新训练模型
-- [ ] 恢复测试用例并适配 V4 架构
-- [ ] 添加 `.gitignore` 排除 `__pycache__`/`dist`/`*.bak`
 
 ---
 
