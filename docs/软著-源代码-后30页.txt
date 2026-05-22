@@ -1,0 +1,1547 @@
+================================================================================
+                      中医药智能问答系统 v2.1.0                      
+                           源代码文档                            
+================================================================================
+
+目  录
+----------------------------------------
+  src/desktop/app.py  （共 400 行）
+  src/desktop/service.py  （共 400 行）
+  tcm_recommender/model.py  （共 200 行）
+  tcm_recommender/recommend.py  （共 200 行）
+  tcm_recommender/train.py  （共 200 行）
+  tcm_recommender/data_pipeline.py  （共 100 行）
+
+  共 1500 行，30 页
+================================================================================
+
+中医药智能问答系统 v2.1.0                                       第 1 页
+================================================================================
+      1  import json
+      2  import logging
+      3  import queue
+      4  import threading
+      5  import tkinter as tk
+      6  from pathlib import Path
+      7  from tkinter import filedialog, messagebox, ttk
+      8  from tkinter.scrolledtext import ScrolledText
+      9  from typing import Any, Dict, List, Optional
+     10
+     11  from core.symptom_pipeline import SymptomPipeline
+     12  from desktop.service import TCMDesktopService
+     13
+     14  logger = logging.getLogger(__name__)
+     15
+     16
+     17  class DesktopApp:
+     18      def __init__(self, root: tk.Tk) -> None:
+     19          self.root = root
+     20          self.service = TCMDesktopService()
+     21          self.result_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+     22          self.selected_history_id: Optional[int] = None
+     23          self.query_in_flight = False
+     24          self.palette = {
+     25              "bg": "#f2efe8",
+     26              "card": "#fcfaf7",
+     27              "deep": "#1a3a2b",
+     28              "primary": "#256a4b",
+     29              "primary_hover": "#1d573c",
+     30              "primary_light": "#409b6e",
+     31              "accent": "#c8953e",
+     32              "text": "#2b3d33",
+     33              "muted": "#7a8e80",
+     34              "warning_bg": "#fef6e9",
+     35              "warning_fg": "#7a5a16",
+     36              "warning_border": "#f0dca0",
+     37              "border": "#d4ddd6",
+     38              "tag_bg": "#e9f2ed",
+     39              "tag_hover": "#256a4b",
+     40              "input_bg": "#fefefe",
+     41              "shadow": "#dfdcd5",
+     42          }
+     43          from core.tcm_config import UI_QUICK_SYMPTOMS
+     44          self.symptom_options = list(UI_QUICK_SYMPTOMS)
+     45
+     46          self._configure_root()
+     47          self._build_style()
+     48          self._build_layout()
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 2 页
+================================================================================
+     49          self._load_history()
+     50          self._poll_queue()
+     51
+     52      def _configure_root(self) -> None:
+     53          self.root.title("中医药智能问答系统")
+     54          self.root.geometry("1280x840")
+     55          self.root.minsize(1080, 720)
+     56          self.root.configure(bg=self.palette["bg"])
+     57          self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+     58
+     59      def _build_style(self) -> None:
+     60          style = ttk.Style()
+     61          try:
+     62              style.theme_use("clam")
+     63          except tk.TclError:
+     64              pass
+     65
+     66          style.configure(".", font=("Microsoft YaHei UI", 10))
+     67          style.configure("App.TFrame", background=self.palette["bg"])
+     68          style.configure("Card.TFrame", background=self.palette["card"])
+     69          style.configure("Hero.TFrame", background=self.palette["deep"])
+     70
+     71          # Hero 标题
+     72          style.configure(
+     73              "Title.TLabel",
+     74              background=self.palette["deep"],
+     75              foreground="#ffffff",
+     76              font=("Microsoft YaHei UI", 20, "bold"),
+     77          )
+     78          style.configure(
+     79              "Subtitle.TLabel",
+     80              background=self.palette["deep"],
+     81              foreground="#c8ddd2",
+     82              font=("Microsoft YaHei UI", 10),
+     83          )
+     84          # 装饰性副标题
+     85          style.configure(
+     86              "Accent.TLabel",
+     87              background=self.palette["deep"],
+     88              foreground=self.palette["accent"],
+     89              font=("Microsoft YaHei UI", 9),
+     90          )
+     91          # 卡片区标题
+     92          style.configure(
+     93              "SectionTitle.TLabel",
+     94              background=self.palette["card"],
+     95              foreground=self.palette["primary"],
+     96              font=("Microsoft YaHei UI", 15, "bold"),
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 3 页
+================================================================================
+     97          )
+     98          style.configure(
+     99              "SectionSubtitle.TLabel",
+    100              background=self.palette["card"],
+    101              foreground=self.palette["muted"],
+    102              font=("Microsoft YaHei UI", 10),
+    103          )
+    104          style.configure(
+    105              "Body.TLabel",
+    106              background=self.palette["card"],
+    107              foreground=self.palette["text"],
+    108          )
+    109          style.configure(
+    110              "Muted.TLabel",
+    111              background=self.palette["card"],
+    112              foreground=self.palette["muted"],
+    113              font=("Microsoft YaHei UI", 9),
+    114          )
+    115          # 主按钮
+    116          style.configure(
+    117              "Primary.TButton",
+    118              background=self.palette["primary"],
+    119              foreground="#ffffff",
+    120              padding=(22, 11),
+    121              borderwidth=0,
+    122              font=("Microsoft YaHei UI", 11, "bold"),
+    123          )
+    124          style.map(
+    125              "Primary.TButton",
+    126              background=[("active", self.palette["primary_hover"]), ("disabled", "#96b8ab")],
+    127          )
+    128          # 次要按钮
+    129          style.configure(
+    130              "Secondary.TButton",
+    131              background="#e8efe9",
+    132              foreground=self.palette["primary"],
+    133              padding=(14, 9),
+    134              borderwidth=0,
+    135              font=("Microsoft YaHei UI", 10),
+    136          )
+    137          style.map("Secondary.TButton", background=[("active", "#d4e4da")])
+    138          # 表格
+    139          style.configure(
+    140              "Treeview",
+    141              font=("Microsoft YaHei UI", 10),
+    142              rowheight=36,
+    143              background="#ffffff",
+    144              fieldbackground="#ffffff",
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 4 页
+================================================================================
+    145              foreground=self.palette["text"],
+    146          )
+    147          style.configure(
+    148              "Treeview.Heading",
+    149              font=("Microsoft YaHei UI", 10, "bold"),
+    150              background="#e8efe9",
+    151              foreground=self.palette["primary"],
+    152          )
+    153          # Notebook 标签
+    154          style.configure(
+    155              "TNotebook",
+    156              background=self.palette["bg"],
+    157              borderwidth=0,
+    158          )
+    159          style.configure(
+    160              "TNotebook.Tab",
+    161              background="#e0e8e2",
+    162              foreground=self.palette["text"],
+    163              padding=(20, 8),
+    164              font=("Microsoft YaHei UI", 10),
+    165              borderwidth=0,
+    166          )
+    167          style.map(
+    168              "TNotebook.Tab",
+    169              background=[("selected", self.palette["card"])],
+    170              foreground=[("selected", self.palette["primary"])],
+    171          )
+    172          # 滚动条
+    173          style.configure(
+    174              "Vertical.TScrollbar",
+    175              background="#dce3dd",
+    176              arrowcolor=self.palette["muted"],
+    177              troughcolor=self.palette["bg"],
+    178              borderwidth=0,
+    179          )
+    180
+    181      def _build_layout(self) -> None:
+    182          container = ttk.Frame(self.root, style="App.TFrame", padding=(20, 16))
+    183          container.pack(fill="both", expand=True)
+    184
+    185          # ── Hero 区域 ──
+    186          hero = ttk.Frame(container, style="Hero.TFrame", padding=(28, 20))
+    187          hero.pack(fill="x")
+    188          # 装饰顶线
+    189          tk.Frame(hero, bg=self.palette["accent"], height=3).pack(fill="x", pady=(0, 12))
+    190          ttk.Label(hero, text="中医药智能问答系统", style="Title.TLabel").pack(anchor="w")
+    191          ttk.Label(
+    192              hero,
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 5 页
+================================================================================
+    193              text="基于深度学习的中医药知识推荐 · 支持症状辨证与方剂推荐",
+    194              style="Subtitle.TLabel",
+    195          ).pack(anchor="w", pady=(4, 0))
+    196          ttk.Label(
+    197              hero,
+    198              text="快速模式（规则引擎） · AI 模式（深度学习）",
+    199              style="Accent.TLabel",
+    200          ).pack(anchor="w", pady=(6, 0))
+    201
+    202          # ── 阴影装饰（Hero 底部投影效果）──
+    203          shadow_bar = tk.Frame(container, bg=self.palette["shadow"], height=1)
+    204          shadow_bar.pack(fill="x", pady=(0, 0))
+    205
+    206          # ── Notebook ──
+    207          notebook = ttk.Notebook(container)
+    208          notebook.pack(fill="both", expand=True, pady=(14, 0))
+    209
+    210          self.home_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
+    211          self.history_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
+    212          self.about_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
+    213          notebook.add(self.home_tab, text="首页")
+    214          notebook.add(self.history_tab, text="历史记录")
+    215          notebook.add(self.about_tab, text="关于")
+    216
+    217          self._build_home_tab()
+    218          self._build_history_tab()
+    219          self._build_about_tab()
+    220
+    221      def _build_home_tab(self) -> None:
+    222          pane = ttk.Panedwindow(self.home_tab, orient="horizontal")
+    223          pane.pack(fill="both", expand=True)
+    224
+    225          left = ttk.Frame(pane, style="Card.TFrame", padding=24)
+    226          right = ttk.Frame(pane, style="Card.TFrame", padding=24)
+    227          pane.add(left, weight=2)
+    228          pane.add(right, weight=3)
+    229
+    230          # ── 左侧面板 ──
+    231
+    232          # 卡片内阴影顶线
+    233          tk.Frame(left, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 16))
+    234
+    235          ttk.Label(left, text="症状输入", style="SectionTitle.TLabel").pack(anchor="w")
+    236          ttk.Label(left, text="描述您的症状或直接点击快捷标签", style="SectionSubtitle.TLabel").pack(anchor="w", pady=(2, 14))
+    237
+    238          # 输入框
+    239          input_frame = tk.Frame(left, bg=self.palette["border"], bd=1, relief="solid")
+    240          input_frame.pack(fill="x")
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 6 页
+================================================================================
+    241          self.query_input = ScrolledText(
+    242              input_frame,
+    243              height=8,
+    244              wrap="word",
+    245              font=("Microsoft YaHei UI", 11),
+    246              relief="flat",
+    247              bd=0,
+    248          )
+    249          self.query_input.pack(fill="both", padx=2, pady=2)
+    250          self.query_input.configure(
+    251              background=self.palette["input_bg"],
+    252              foreground=self.palette["text"],
+    253              insertbackground=self.palette["primary"],
+    254          )
+    255
+    256          # 分隔线
+    257          tk.Frame(left, bg=self.palette["border"], height=1).pack(fill="x", pady=(16, 10))
+    258
+    259          # 快捷标签
+    260          ttk.Label(left, text="快捷症状", style="Body.TLabel").pack(anchor="w", pady=(0, 8))
+    261          tags = ttk.Frame(left, style="Card.TFrame")
+    262          tags.pack(fill="x")
+    263          for index, symptom in enumerate(self.symptom_options):
+    264              button = tk.Button(
+    265                  tags,
+    266                  text=symptom,
+    267                  relief="flat",
+    268                  bd=0,
+    269                  bg=self.palette["tag_bg"],
+    270                  fg=self.palette["primary"],
+    271                  activebackground=self.palette["tag_hover"],
+    272                  activeforeground="#ffffff",
+    273                  cursor="hand2",
+    274                  font=("Microsoft YaHei UI", 10),
+    275                  padx=14,
+    276                  pady=6,
+    277                  command=lambda value=symptom: self._append_symptom(value),
+    278              )
+    279              button.grid(row=index // 4, column=index % 4, padx=5, pady=5, sticky="ew")
+    280              tags.grid_columnconfigure(index % 4, weight=1)
+    281
+    282          # 操作按钮
+    283          actions = ttk.Frame(left, style="Card.TFrame")
+    284          actions.pack(fill="x", pady=(16, 0))
+    285          self.submit_button = ttk.Button(
+    286              actions, text="提交查询", style="Primary.TButton", command=self._submit_query
+    287          )
+    288          self.submit_button.pack(side="left")
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 7 页
+================================================================================
+    289          ttk.Button(actions, text="清空", style="Secondary.TButton", command=self._clear_query).pack(
+    290              side="left", padx=(8, 0)
+    291          )
+    292
+    293          # 状态
+    294          status_frame = tk.Frame(left, bg=self.palette["card"])
+    295          status_frame.pack(fill="x", pady=(12, 0))
+    296          self.status_var = tk.StringVar(value="准备就绪")
+    297          ttk.Label(status_frame, textvariable=self.status_var, style="Muted.TLabel").pack(anchor="w")
+    298          self.progress = ttk.Progressbar(left, mode="indeterminate", length=200)
+    299          self.progress.pack(fill="x", pady=(4, 0))
+    300
+    301          # Progressbar 颜色
+    302          style = ttk.Style()
+    303          style.configure("green.Horizontal.TProgressbar", background=self.palette["primary"], troughcolor=self.palette["bg"], borderwidth=0)
+    304          self.progress.configure(style="green.Horizontal.TProgressbar")
+    305
+    306          # ── 右侧面板 ──
+    307
+    308          # 卡片内阴影顶线
+    309          tk.Frame(right, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 16))
+    310
+    311          ttk.Label(right, text="智能回答", style="SectionTitle.TLabel").pack(anchor="w")
+    312          ttk.Label(right, text="提交症状后将在此显示辨证结果与推荐方案", style="SectionSubtitle.TLabel").pack(anchor="w", pady=(2, 14))
+    313
+    314          # 回答内容
+    315          answer_frame = tk.Frame(right, bg=self.palette["border"], bd=1, relief="solid")
+    316          answer_frame.pack(fill="both", expand=True)
+    317          self.answer_text = ScrolledText(
+    318              answer_frame,
+    319              wrap="word",
+    320              height=14,
+    321              font=("Microsoft YaHei UI", 11),
+    322              relief="flat",
+    323              bd=0,
+    324          )
+    325          self.answer_text.pack(fill="both", padx=2, pady=2)
+    326          self.answer_text.configure(
+    327              background=self.palette["input_bg"],
+    328              foreground=self.palette["text"],
+    329              insertbackground=self.palette["primary"],
+    330          )
+    331          self._configure_output_text(self.answer_text)
+    332
+    333          # ── 免责声明（首页最底部）──
+    334          disclaimer_frame = tk.Frame(
+    335              self.home_tab, bg=self.palette["warning_bg"], highlightthickness=1, highlightbackground=self.palette["warning_border"]
+    336          )
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 8 页
+================================================================================
+    337          disclaimer_frame.pack(fill="x", pady=(0, 0), side="bottom")
+    338          tk.Label(
+    339              disclaimer_frame,
+    340              text="⚕ 免责声明",
+    341              bg=self.palette["warning_bg"],
+    342              fg=self.palette["warning_fg"],
+    343              font=("Microsoft YaHei UI", 10, "bold"),
+    344          ).pack(anchor="w", padx=14, pady=(8, 2))
+    345          self.disclaimer_var = tk.StringVar(
+    346              value="本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。如有健康问题，请咨询专业医疗机构或执业医师。"
+    347          )
+    348          tk.Label(
+    349              disclaimer_frame,
+    350              textvariable=self.disclaimer_var,
+    351              justify="left",
+    352              wraplength=880,
+    353              bg=self.palette["warning_bg"],
+    354              fg=self.palette["warning_fg"],
+    355              font=("Microsoft YaHei UI", 10),
+    356          ).pack(anchor="w", padx=14, pady=(0, 10))
+    357
+    358      def _build_history_tab(self) -> None:
+    359          wrapper = ttk.Frame(self.history_tab, style="App.TFrame")
+    360          wrapper.pack(fill="both", expand=True)
+    361
+    362          toolbar = ttk.Frame(wrapper, style="Card.TFrame", padding=16)
+    363          toolbar.pack(fill="x")
+    364          # 卡片内阴影顶线
+    365          tk.Frame(toolbar, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 12))
+    366          ttk.Label(toolbar, text="查询历史", style="SectionTitle.TLabel").pack(side="left")
+    367          self.history_search_var = tk.StringVar()
+    368          entry = ttk.Entry(toolbar, textvariable=self.history_search_var, width=36, font=("Microsoft YaHei UI", 10))
+    369          entry.pack(side="right", padx=(8, 0))
+    370          entry.bind("<KeyRelease>", lambda _event: self._load_history())
+    371          ttk.Button(toolbar, text="导出全部", style="Secondary.TButton", command=self._export_history).pack(
+    372              side="right", padx=(8, 0)
+    373          )
+    374          ttk.Button(toolbar, text="清空历史", style="Secondary.TButton", command=self._clear_history).pack(
+    375              side="right", padx=(8, 0)
+    376          )
+    377          ttk.Button(toolbar, text="刷新", style="Secondary.TButton", command=self._load_history).pack(
+    378              side="right", padx=(8, 0)
+    379          )
+    380
+    381          content = ttk.Panedwindow(wrapper, orient="horizontal")
+    382          content.pack(fill="both", expand=True, pady=(14, 0))
+    383          list_frame = ttk.Frame(content, style="Card.TFrame", padding=16)
+    384          detail_frame = ttk.Frame(content, style="Card.TFrame", padding=16)
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 9 页
+================================================================================
+    385          content.add(list_frame, weight=3)
+    386          content.add(detail_frame, weight=2)
+    387
+    388          # 列表装饰顶线
+    389          tk.Frame(list_frame, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 12))
+    390          ttk.Label(list_frame, text="记录列表", style="SectionTitle.TLabel").pack(anchor="w")
+    391
+    392          self.history_tree = ttk.Treeview(
+    393              list_frame,
+    394              columns=("timestamp", "query"),
+    395              show="headings",
+    396              selectmode="browse",
+    397          )
+    398          self.history_tree.heading("timestamp", text="时间")
+    399          self.history_tree.heading("query", text="问题")
+    400          self.history_tree.column("timestamp", width=170, anchor="w")
+    401  import concurrent.futures
+    402  import json
+    403  import logging
+    404  import os
+    405  import platform
+    406  import re
+    407  import sys
+    408  import threading
+    409  from contextlib import contextmanager
+    410  from datetime import datetime
+    411  from pathlib import Path
+    412  from tempfile import NamedTemporaryFile
+    413  from typing import Any, Dict, List, Optional
+    414
+    415  from core.data_desensitize import DataDesensitizer
+    416  from core.fallback import generate_fallback_answer
+    417  from core.knowledge_base import KnowledgeBase
+    418  from core.result_verify import ResultVerifier
+    419  from core.symptom_pipeline import SymptomPipeline
+    420
+    421  logger = logging.getLogger(__name__)
+    422
+    423
+    424  def format_knowledge_for_display(kb_result: Dict[str, Any]) -> str:
+    425      if not kb_result:
+    426          return "暂无相关知识"
+    427
+    428      parts: List[str] = []
+    429      if kb_result.get("herbs"):
+    430          parts.append(f"相关药材：{', '.join(item['name'] for item in kb_result['herbs'][:5])}")
+    431      if kb_result.get("formulas"):
+    432          parts.append(f"相关方剂：{', '.join(item['name'] for item in kb_result['formulas'][:5])}")
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 10 页
+================================================================================
+    433      if kb_result.get("patent_medicines"):
+    434          parts.append(
+    435              f"相关中成药：{', '.join(item['name'] for item in kb_result['patent_medicines'][:5])}"
+    436          )
+    437      if kb_result.get("folk_remedies"):
+    438          parts.append(
+    439              "相关民间验方："
+    440              + ", ".join(
+    441                  item.get("remedy", item.get("disease", "验方"))
+    442                  for item in kb_result["folk_remedies"][:5]
+    443              )
+    444          )
+    445
+    446      return "；".join(parts) if parts else "暂无相关知识"
+    447
+    448
+    449  class TCMDesktopService:
+    450      MAX_HISTORY_ITEMS = 500
+    451
+    452      def __init__(self) -> None:
+    453          self.kb = KnowledgeBase()
+    454          self.pipeline = SymptomPipeline()
+    455          self.verifier = ResultVerifier()
+    456          self.desensitizer = DataDesensitizer()
+    457          self.history_lock = threading.Lock()
+    458          self.history_file = self._resolve_history_file()
+    459          self.history_lock_file = self.history_file.with_suffix(".lock")
+    460          self.history_data = self.load_history()
+    461          self._recommender = None
+    462          self._recommender_load_attempted = False
+    463          self._recommender_available = False
+    464
+    465      def _resolve_history_file(self) -> Path:
+    466          root = Path(os.environ.get("TCMAI_ROOT", Path(__file__).resolve().parents[2]))
+    467          data_dir = (root / "data").resolve()
+    468          data_dir.mkdir(parents=True, exist_ok=True)
+    469          return data_dir / "history.json"
+    470
+    471      @contextmanager
+    472      def _acquire_file_lock(self):
+    473          self.history_lock_file.parent.mkdir(parents=True, exist_ok=True)
+    474          with open(self.history_lock_file, "a+b") as handle:
+    475              handle.seek(0)
+    476              if sys.platform == "win32":
+    477                  import msvcrt
+    478                  msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    479              else:
+    480                  import fcntl
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 11 页
+================================================================================
+    481                  fcntl.lockf(handle, fcntl.LOCK_EX)
+    482              try:
+    483                  yield
+    484              finally:
+    485                  handle.seek(0)
+    486                  if sys.platform == "win32":
+    487                      import msvcrt
+    488                      msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    489                  else:
+    490                      import fcntl
+    491                      fcntl.lockf(handle, fcntl.LOCK_UN)
+    492
+    493      def _safe_desensitize(self, value: str) -> str:
+    494          text = value or ""
+    495          text = self.desensitizer.remove_pii(text)
+    496          text = self.desensitizer.anonymize_query(text)
+    497          text = re.sub(r"(我叫|我是|姓名是)([\u4e00-\u9fff]{2,4})", r"\1**", text)
+    498          text = re.sub(r"患者[：: ]?([\u4e00-\u9fff]{2,4})", "患者**", text)
+    499          return text[:4000]
+    500
+    501      def _sanitize_history_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+    502          symptoms = item.get("symptoms", [])
+    503          if not isinstance(symptoms, list):
+    504              symptoms = []
+    505          return {
+    506              "id": int(item.get("id", 0)),
+    507              "query": self._safe_desensitize(str(item.get("query", ""))),
+    508              "symptoms": [self._safe_desensitize(str(symptom))[:64] for symptom in symptoms[:20]],
+    509              "answer": self._safe_desensitize(str(item.get("answer", ""))),
+    510              "timestamp": str(item.get("timestamp", ""))[:32],
+    511              "mode": "ai" if item.get("mode") == "ai" else "fast",
+    512          }
+    513
+    514      def _normalize_history(self, data: Any) -> List[Dict[str, Any]]:
+    515          if not isinstance(data, list):
+    516              return []
+    517          normalized: List[Dict[str, Any]] = []
+    518          used_ids = set()
+    519          next_id = 1
+    520          for raw_item in data[: self.MAX_HISTORY_ITEMS]:
+    521              if not isinstance(raw_item, dict):
+    522                  continue
+    523              item = self._sanitize_history_item(raw_item)
+    524              if item["id"] <= 0 or item["id"] in used_ids:
+    525                  item["id"] = next_id
+    526              used_ids.add(item["id"])
+    527              next_id = max(next_id, item["id"] + 1)
+    528              normalized.append(item)
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 12 页
+================================================================================
+    529          return normalized
+    530
+    531      def load_history(self) -> List[Dict[str, Any]]:
+    532          if not self.history_file.exists():
+    533              return []
+    534          try:
+    535              with self._acquire_file_lock():
+    536                  with open(self.history_file, "r", encoding="utf-8") as handle:
+    537                      data = json.load(handle)
+    538              return self._normalize_history(data)
+    539          except json.JSONDecodeError:
+    540              backup = self.history_file.with_suffix(".corrupt.json")
+    541              try:
+    542                  if self.history_file.exists():
+    543                      os.replace(self.history_file, backup)
+    544              except Exception:
+    545                  pass
+    546              logger.error("历史记录文件损坏，已重置为空并保留损坏副本")
+    547              return []
+    548          except Exception as exc:
+    549              logger.error("加载历史记录失败: %s", exc)
+    550              return []
+    551
+    552      def save_history(self) -> None:
+    553          try:
+    554              sanitized = self._normalize_history(self.history_data)[-self.MAX_HISTORY_ITEMS :]
+    555              with self._acquire_file_lock():
+    556                  with NamedTemporaryFile(
+    557                      "w",
+    558                      encoding="utf-8",
+    559                      delete=False,
+    560                      dir=str(self.history_file.parent),
+    561                      prefix="history_",
+    562                      suffix=".tmp",
+    563                  ) as handle:
+    564                      json.dump(sanitized, handle, ensure_ascii=False, indent=2)
+    565                      temp_name = handle.name
+    566                  os.replace(temp_name, self.history_file)
+    567              self.history_data = sanitized
+    568          except Exception as exc:
+    569              logger.error("保存历史记录失败: %s", exc)
+    570
+    571      def _get_recommender(self):
+    572          """懒加载推荐模型单例"""
+    573          if self._recommender_load_attempted:
+    574              return self._recommender
+    575
+    576          self._recommender_load_attempted = True
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 13 页
+================================================================================
+    577          try:
+    578              from tcm_recommender.recommend import TCMRecommender
+    579              import torch
+    580
+    581              db_path = os.path.join(
+    582                  os.environ.get("TCMAI_ROOT", str(Path(__file__).resolve().parents[2])),
+    583                  "data",
+    584                  "tcm_knowledge.db",
+    585              )
+    586              model_path = os.path.join(
+    587                  os.environ.get("TCMAI_ROOT", str(Path(__file__).resolve().parents[2])),
+    588                  "tcm_recommender",
+    589                  "best_model.pth",
+    590              )
+    591              if not os.path.exists(db_path) or not os.path.exists(model_path):
+    592                  logger.warning("推荐模型或数据库文件不存在，AI 模式不可用")
+    593                  return None
+    594
+    595              self._recommender = TCMRecommender(
+    596                  model_path=model_path,
+    597                  db_path=db_path,
+    598                  device="cuda" if torch.cuda.is_available() else "cpu",
+    599              )
+    600              self._recommender_available = True
+    601              logger.info("推荐模型加载成功，AI 模式可用")
+    602          except ImportError:
+    603              logger.warning("PyTorch 未安装，AI 模式使用降级方案")
+    604          except Exception as exc:
+    605              logger.error("推荐模型加载失败: %s", exc)
+    606
+    607          return self._recommender
+    608
+    609      def _format_recommendation_as_answer(
+    610          self,
+    611          query_text: str,
+    612          symptoms: List[str],
+    613          result: Dict[str, Any],
+    614          safety: Optional[Dict[str, Any]] = None,
+    615      ) -> str:
+    616          """将推荐模型的结构化结果格式化为自然语言回答"""
+    617          parts = []
+    618
+    619          parts.append("【症状分析】")
+    620          parts.append(f"根据您描述的症状：{'、'.join(symptoms) if symptoms else query_text}")
+    621
+    622          if result.get("symptoms"):
+    623              parts.append(f"系统识别到：{'、'.join(result['symptoms'])}")
+    624
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 14 页
+================================================================================
+    625          if result.get("formulas"):
+    626              parts.append("\n【推荐方剂】")
+    627              for i, formula in enumerate(result["formulas"][:5], 1):
+    628                  parts.append(
+    629                      f"{i}. {formula['name']}（置信度：{formula['score']:.2f}）"
+    630                  )
+    631                  if formula.get("composition"):
+    632                      parts.append(f"   组成：{formula['composition']}")
+    633                  if formula.get("functions"):
+    634                      parts.append(f"   功效：{formula['functions']}")
+    635
+    636          if result.get("herbs"):
+    637              parts.append("\n【推荐药材】")
+    638              for i, herb in enumerate(result["herbs"][:10], 1):
+    639                  toxic_tag = " ☠️" if herb.get("is_toxic") else ""
+    640                  parts.append(
+    641                      f"{i}. {herb['name']}{toxic_tag}（置信度：{herb['score']:.2f}）"
+    642                  )
+    643                  if herb.get("efficacy"):
+    644                      parts.append(f"   功效：{herb['efficacy'][:80]}")
+    645
+    646          parts.append("\n【安全提示】")
+    647          if safety and safety.get("warnings"):
+    648              for w in safety["warnings"]:
+    649                  parts.append(w)
+    650              if safety.get("toxic_herbs"):
+    651                  toxic_names = "、".join(safety["toxic_herbs"])
+    652                  parts.append(f"☠️ 含毒性药材：{toxic_names}，须在医师指导下使用")
+    653              if not safety.get("is_safe"):
+    654                  parts.append("⚠️ 检测到配伍禁忌，请勿自行搭配使用！")
+    655          else:
+    656              parts.append("✓ 未检测到常见配伍禁忌")
+    657
+    658          parts.append("\n【养生建议】")
+    659          sym_set = set(s.lower() for s in (result.get("symptoms", []) or symptoms))
+    660          if any(k in str(sym_set) for k in ["失眠", "健忘", "心悸"]):
+    661              parts.append("• 安神助眠：睡前可温水泡脚，避免咖啡浓茶，卧室保持安静昏暗")
+    662          if any(k in str(sym_set) for k in ["食欲不振", "腹泻", "腹胀", "胃痛"]):
+    663              parts.append("• 健脾养胃：少食多餐，以小米粥、山药、南瓜等易消化食物为主")
+    664          if any(k in str(sym_set) for k in ["乏力", "疲倦", "气短", "面色萎黄"]):
+    665              parts.append("• 补气养血：适当食用红枣、桂圆、瘦肉，避免过度劳累")
+    666          if any(k in str(sym_set) for k in ["畏寒", "腰膝酸软", "手足冷"]):
+    667              parts.append("• 温阳驱寒：避免生冷饮食，可适量食用羊肉、生姜、核桃")
+    668          if any(k in str(sym_set) for k in ["头痛", "头晕", "耳鸣"]):
+    669              parts.append("• 调养肝肾：保持充足睡眠，避免长时间看屏幕，适当按摩太阳穴")
+    670          if any(k in str(sym_set) for k in ["咳嗽", "咽喉肿痛", "发热"]):
+    671              parts.append("• 清肺润燥：多饮温水，少食辛辣，可用梨、银耳、百合煲汤")
+    672          parts.append("• 情志调畅：保持心情舒畅，避免过度思虑")
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 15 页
+================================================================================
+    673          parts.append("• 起居有常：规律作息，适当运动，避免熬夜")
+    674
+    675          return "\n".join(parts)
+    676
+    677      def query(self, query_text: str, symptoms: List[str], answer_mode: str = "ai") -> Dict[str, Any]:
+    678          if not query_text or len(query_text.strip()) < 1 or len(query_text) > 1000:
+    679              raise ValueError("查询内容长度需要在 1-1000 个字符之间")
+    680          if not isinstance(symptoms, list):
+    681              raise ValueError("症状参数必须为列表")
+    682          if len(symptoms) > 20:
+    683              raise ValueError("症状列表最多支持 20 项")
+    684
+    685          filtered_symptoms = [s for s in symptoms if isinstance(s, str) and s.strip()]
+    686          _pipeline_result = self.pipeline.process(query_text, filtered_symptoms)
+    687          kb_result = self.kb.search(query_text)
+    688          answer = None
+    689          knowledge: Any = {}
+    690          disclaimer = ""
+    691          mode = answer_mode
+    692
+    693          if answer_mode == "ai":
+    694              recommender = self._get_recommender()
+    695              if recommender is not None:
+    696                  for attempt in range(2):
+    697                      try:
+    698                          with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    699                              future = executor.submit(
+    700                                  self._run_recommender_inference,
+    701                                  recommender,
+    702                                  query_text,
+    703                                  filtered_symptoms,
+    704                              )
+    705                              answer, knowledge_result = future.result(timeout=60)
+    706                          break  # 成功则跳出重试循环
+    707                      except concurrent.futures.TimeoutError:
+    708                          if attempt == 0:
+    709                              logger.warning("推荐模型推理超时，重试一次…")
+    710                              continue
+    711                          logger.warning("推荐模型推理再次超时，降级到快速模式")
+    712                          mode = "fast"
+    713                      except Exception as exc:
+    714                          logger.error("推荐模型推理失败(%s): %s", type(exc).__name__, exc)
+    715                          if attempt == 0:
+    716                              logger.info("重试推荐模型推理…")
+    717                              continue
+    718                          mode = "fast"
+    719
+    720                  if answer is not None:
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 16 页
+================================================================================
+    721                      mode = "ai"
+    722                      knowledge = knowledge_result
+    723                      disclaimer = "温馨提示：本结果基于深度学习模型推荐，仅供参考。实际用药请咨询专业中医师。"
+    724
+    725          if mode == "fast" or answer is None:
+    726              fallback = generate_fallback_answer(query_text, kb_result)
+    727              answer = fallback["answer"]
+    728              knowledge = format_knowledge_for_display(kb_result)
+    729              disclaimer = fallback.get("disclaimer", "")
+    730              mode = "fast"
+    731
+    732          history_item = self._append_history(query_text, filtered_symptoms, answer, mode)
+    733          return {
+    734              "success": True,
+    735              "answer": answer,
+    736              "knowledge": knowledge,
+    737              "disclaimer": disclaimer,
+    738              "mode": mode,
+    739              "history_item": history_item,
+    740          }
+    741
+    742      def _run_recommender_inference(
+    743          self, recommender, query_text: str, symptoms: List[str]
+    744      ):
+    745          """在独立线程中运行推荐模型推理"""
+    746          symptom_ids, valid, unknown = recommender.parse_symptoms(
+    747              " ".join(symptoms) if symptoms else query_text
+    748          )
+    749          if not symptom_ids:
+    750              return None, None
+    751
+    752          result = recommender.recommend(symptom_ids, top_k_herb=10, top_k_formula=5)
+    753
+    754          # 安全校验
+    755          safety_result: Optional[Dict[str, Any]] = None
+    756          try:
+    757              herb_names = [h["name"] for h in result.get("herbs", [])[:10]]
+    758              safety_result = recommender.check_safety(herb_names)
+    759          except Exception:
+    760              pass
+    761
+    762          answer = self._format_recommendation_as_answer(
+    763              query_text, symptoms, result, safety_result
+    764          )
+    765          knowledge = {
+    766              "symptoms": result.get("symptoms", []),
+    767              "herbs": [
+    768                  {"name": h["name"], "score": h["score"]}
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 17 页
+================================================================================
+    769                  for h in result.get("herbs", [])[:10]
+    770              ],
+    771              "formulas": [
+    772                  {"name": f["name"], "score": f["score"]}
+    773                  for f in result.get("formulas", [])[:5]
+    774              ],
+    775              "source": "deep_learning_model",
+    776          }
+    777          return answer, knowledge
+    778
+    779      def _append_history(self, query_text: str, symptoms: List[str], answer: str, mode: str) -> Dict[str, Any]:
+    780          with self.history_lock:
+    781              next_id = max((item.get("id", 0) for item in self.history_data), default=0) + 1
+    782              record = self._sanitize_history_item(
+    783                  {
+    784                      "id": next_id,
+    785                      "query": query_text,
+    786                      "symptoms": symptoms,
+    787                      "answer": answer,
+    788                      "timestamp": datetime.now().isoformat(timespec="seconds"),
+    789                      "mode": mode,
+    790                  }
+    791              )
+    792              self.history_data.append(record)
+    793              self.history_data = self.history_data[-self.MAX_HISTORY_ITEMS :]
+    794              self.save_history()
+    795              return record
+    796
+    797      def list_history(self) -> List[Dict[str, Any]]:
+    798          return sorted(
+    799              self.history_data[-self.MAX_HISTORY_ITEMS :],
+    800              key=lambda item: item.get("timestamp", ""),
+    801  # Copyright (C) 2026 中医药智能问答系统
+    802  # Licensed under Apache License 2.0
+    803
+    804  """
+    805  中医药推荐系统 - 深度学习模型
+    806
+    807  架构：
+    808    SymptomEncoder (6层Transformer, 512dim, 8heads)
+    809       + Embedding + PositionalEncoding
+    810       + x6 TransformerEncoderLayer (GELU, PreLN)
+    811       + AttentivePooling -> [B, 512]
+    812    HerbEncoder (双塔: 文本特征 + 属性编码)
+    813    CrossAttention (症状x药材交互)
+    814    MultiTaskHeads (证型/药材/方剂三头)
+    815    ContrastiveLoss (InfoNCE)
+    816  """
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 18 页
+================================================================================
+    817
+    818  import logging
+    819  import sys
+    820  from pathlib import Path
+    821  from typing import Dict, List, Optional, Tuple
+    822
+    823  import torch
+    824  import torch.nn as nn
+    825  import torch.nn.functional as F
+    826
+    827  _src = Path(__file__).resolve().parents[1] / "src"
+    828  if str(_src) not in sys.path:
+    829      sys.path.insert(0, str(_src))
+    830
+    831  logger = logging.getLogger(__name__)
+    832
+    833
+    834  # ═══════════════════════════════════════════════════════════
+    835  # 基础组件
+    836  # ═══════════════════════════════════════════════════════════
+    837
+    838  class PreLayerNormTransformerEncoderLayer(nn.Module):
+    839      """Pre-LN Transformer Encoder Layer (更稳定的训练)"""
+    840
+    841      def __init__(self, d_model: int, nhead: int, dim_feedforward: int = 2048,
+    842                   dropout: float = 0.1, activation: str = "gelu"):
+    843          super().__init__()
+    844          self.norm1 = nn.LayerNorm(d_model)
+    845          self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,
+    846                                                  batch_first=True)
+    847          self.dropout1 = nn.Dropout(dropout)
+    848          self.norm2 = nn.LayerNorm(d_model)
+    849          self.linear1 = nn.Linear(d_model, dim_feedforward)
+    850          self.activation = nn.GELU() if activation == "gelu" else nn.ReLU()
+    851          self.dropout_act = nn.Dropout(dropout)
+    852          self.linear2 = nn.Linear(dim_feedforward, d_model)
+    853          self.dropout2 = nn.Dropout(dropout)
+    854
+    855      def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None,
+    856                  src_key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    857          # Pre-LN + Attention
+    858          residual = src
+    859          src_normed = self.norm1(src)
+    860          attn_out, _ = self.self_attn(src_normed, src_normed, src_normed,
+    861                                        key_padding_mask=src_key_padding_mask)
+    862          src = residual + self.dropout1(attn_out)
+    863
+    864          # Pre-LN + FFN
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 19 页
+================================================================================
+    865          residual = src
+    866          src_normed = self.norm2(src)
+    867          ffn_out = self.linear2(self.dropout_act(self.activation(self.linear1(src_normed))))
+    868          src = residual + self.dropout2(ffn_out)
+    869          return src
+    870
+    871
+    872  class LearnedPositionalEncoding(nn.Module):
+    873      """可学习的位置编码"""
+    874
+    875      def __init__(self, d_model: int, max_len: int = 64):
+    876          super().__init__()
+    877          self.pos_embedding = nn.Parameter(torch.randn(1, max_len, d_model) * 0.02)
+    878
+    879      def forward(self, x: torch.Tensor) -> torch.Tensor:
+    880          return x + self.pos_embedding[:, :x.size(1)]
+    881
+    882
+    883  class AttentivePooling(nn.Module):
+    884      """注意力池化：加权平均序列 → 固定维度"""
+    885
+    886      def __init__(self, d_model: int):
+    887          super().__init__()
+    888          self.attn = nn.Sequential(
+    889              nn.Linear(d_model, d_model // 2),
+    890              nn.Tanh(),
+    891              nn.Linear(d_model // 2, 1),
+    892          )
+    893
+    894      def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    895          """
+    896          Args:
+    897              x: [B, L, D]
+    898              mask: [B, L] True=valid
+    899          Returns:
+    900              [B, D]
+    901          """
+    902          scores = self.attn(x).squeeze(-1)  # [B, L]
+    903          if mask is not None:
+    904              scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
+    905          weights = F.softmax(scores, dim=-1).unsqueeze(-1)  # [B, L, 1]
+    906          return (x * weights).sum(dim=1)
+    907
+    908
+    909  # ═══════════════════════════════════════════════════════════
+    910  # 症状编码器
+    911  # ═══════════════════════════════════════════════════════════
+    912
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 20 页
+================================================================================
+    913  class SymptomEncoder(nn.Module):
+    914      """多层Transformer症状编码器"""
+    915
+    916      def __init__(self, num_symptoms: int, d_model: int = 512, nhead: int = 8,
+    917                   num_layers: int = 6, dim_ff: int = 2048, dropout: float = 0.1):
+    918          super().__init__()
+    919          self.d_model = d_model
+    920          self.embedding = nn.Embedding(num_symptoms + 1, d_model, padding_idx=0)
+    921          self.pos_encoder = LearnedPositionalEncoding(d_model)
+    922          self.dropout_emb = nn.Dropout(dropout)
+    923
+    924          self.layers = nn.ModuleList([
+    925              PreLayerNormTransformerEncoderLayer(d_model, nhead, dim_ff, dropout)
+    926              for _ in range(num_layers)
+    927          ])
+    928          self.final_norm = nn.LayerNorm(d_model)
+    929          self.pooling = AttentivePooling(d_model)
+    930
+    931          self._init_weights()
+    932
+    933      def _init_weights(self):
+    934          nn.init.normal_(self.embedding.weight, mean=0, std=self.d_model ** -0.5)
+    935          nn.init.constant_(self.embedding.weight[0], 0)
+    936
+    937      def forward(self, symptom_ids: torch.Tensor,
+    938                  mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    939          """
+    940          Args:
+    941              symptom_ids: [B, L], 1-based, 0=padding
+    942              mask: [B, L], True=valid
+    943          Returns:
+    944              pooled: [B, D]
+    945              sequence: [B, L, D]
+    946          """
+    947          if mask is None:
+    948              mask = symptom_ids != 0
+    949
+    950          x = self.embedding(symptom_ids) * (self.d_model ** 0.5)
+    951          x = self.pos_encoder(x)
+    952          x = self.dropout_emb(x)
+    953
+    954          key_padding_mask = ~mask
+    955          for layer in self.layers:
+    956              x = layer(x, src_key_padding_mask=key_padding_mask)
+    957
+    958          x = self.final_norm(x)
+    959          pooled = self.pooling(x, mask)
+    960          return pooled, x
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 21 页
+================================================================================
+    961
+    962
+    963  # ═══════════════════════════════════════════════════════════
+    964  # 药材编码器 (双塔)
+    965  # ═══════════════════════════════════════════════════════════
+    966
+    967  class HerbEncoder(nn.Module):
+    968      """双塔药材编码器：文本塔 + 属性塔"""
+    969
+    970      def __init__(self, num_chars: int, num_categories: int = 30,
+    971                   d_model: int = 512, text_dim: int = 256, meta_dim: int = 64):
+    972          super().__init__()
+    973          # 文本塔 (CharCNN → 文本特征)
+    974          self.text_encoder = nn.Sequential(
+    975              nn.Linear(num_chars, text_dim * 2),
+    976              nn.LayerNorm(text_dim * 2),
+    977              nn.GELU(),
+    978              nn.Dropout(0.2),
+    979              nn.Linear(text_dim * 2, text_dim),
+    980              nn.LayerNorm(text_dim),
+    981              nn.GELU(),
+    982              nn.Dropout(0.2),
+    983              nn.Linear(text_dim, d_model),
+    984              nn.LayerNorm(d_model),
+    985          )
+    986
+    987          # 属性塔 (category + nature + flavor + meridian)
+    988          self.category_emb = nn.Embedding(num_categories + 1, meta_dim, padding_idx=0)
+    989          self.nature_emb = nn.Embedding(8, meta_dim)    # 0=padding, 1-5=natures, 6-7=unknown
+    990          self.flavor_emb = nn.Embedding(8, meta_dim)     # 0=padding, 1-5=flavors, 6-7=unknown
+    991          meta_total = meta_dim * 3
+    992          self.meta_proj = nn.Sequential(
+    993              nn.Linear(meta_total, d_model),
+    994              nn.LayerNorm(d_model),
+    995          )
+    996
+    997          # 融合门
+    998          self.gate = nn.Sequential(
+    999              nn.Linear(d_model * 2, d_model),
+   1000              nn.Sigmoid(),
+   1001  # -*- coding: utf-8 -*-
+   1002  # Copyright (C) 2026 中医药智能问答系统
+   1003  # Licensed under Apache License 2.0
+   1004
+   1005  """
+   1006  中医药推荐系统 - 推理接口
+   1007
+   1008  根据症状推荐药材和方剂，并进行安全校验。
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 22 页
+================================================================================
+   1009  """
+   1010
+   1011  import os
+   1012  import sys
+   1013  import json
+   1014  import logging
+   1015  import argparse
+   1016  from pathlib import Path
+   1017  from typing import Dict, List, Optional, Tuple
+   1018
+   1019  import torch
+   1020
+   1021  # 项目路径
+   1022  if getattr(sys, 'frozen', False):
+   1023      PROJECT_ROOT = Path(sys.executable).parent.parent
+   1024  else:
+   1025      PROJECT_ROOT = Path(__file__).parent.parent
+   1026  sys.path.insert(0, str(PROJECT_ROOT))
+   1027
+   1028  from tcm_recommender.model import TCMNet, create_model
+   1029  from tcm_recommender.train import build_herb_features
+   1030  from tcm_recommender.data_pipeline import TCMDataPipeline
+   1031  from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST, EXTENDED_SYNDROME_DEFINITIONS
+   1032
+   1033  # 配置日志
+   1034  logging.basicConfig(
+   1035      level=logging.INFO,
+   1036      format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+   1037  )
+   1038  logger = logging.getLogger(__name__)
+   1039
+   1040
+   1041  class TCMRecommender:
+   1042      """中医药推荐器"""
+   1043
+   1044      def __init__(
+   1045          self,
+   1046          model_path: str,
+   1047          db_path: str,
+   1048          encoder_path: Optional[str] = None,
+   1049          device: str = "cpu",
+   1050      ):
+   1051          self.device = device
+   1052          self.db_path = db_path
+   1053          self.encoder_path = encoder_path
+   1054
+   1055          # 加载数据管线
+   1056          logger.info("加载数据...")
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 23 页
+================================================================================
+   1057          self._pipeline = TCMDataPipeline(db_path)
+   1058          self._pipeline.load_all()
+   1059
+   1060          # 加载模型
+   1061          logger.info("加载模型: %s", model_path)
+   1062          checkpoint = torch.load(model_path, map_location="cpu")
+   1063          cfg = checkpoint.get("config", {})
+   1064
+   1065          herb_feat = build_herb_features(self._pipeline)
+   1066          self._herb_feat = herb_feat
+   1067
+   1068          # 症状/证型配置
+   1069          self._symptom_list = EXTENDED_SYMPTOM_LIST
+   1070          self._syndrome_names = ["未知"] + list(EXTENDED_SYNDROME_DEFINITIONS.keys())
+   1071
+   1072          # 创建模型
+   1073          self.model = create_model(
+   1074              num_symptoms=len(self._symptom_list),
+   1075              num_herbs=len(self._pipeline.herb_names),
+   1076              num_formulas=len(self._pipeline.formula_names) + 1,
+   1077              num_syndromes=len(self._syndrome_names),
+   1078              num_chars=herb_feat["num_chars"],
+   1079              num_categories=herb_feat["num_categories"],
+   1080              d_model=cfg.get("d_model", 384),
+   1081              nhead=8,
+   1082              num_layers=cfg.get("num_layers", 4),
+   1083              dropout=0.1,
+   1084          )
+   1085          self.model.load_state_dict(checkpoint["model_state_dict"])
+   1086          self.model.to(device)
+   1087          self.model.eval()
+   1088          logger.info("模型加载完成")
+   1089
+   1090          # 症状名称→ID 映射
+   1091          self.symptom_to_id = {s: i + 1 for i, s in enumerate(self._symptom_list)}
+   1092
+   1093          # 药材索引映射
+   1094          self._herb_name_list = self._pipeline.herb_names
+   1095          self._formula_name_list = self._pipeline.formula_names
+   1096
+   1097          # 缓存药材特征
+   1098          self._cached_herb_features = herb_feat
+   1099
+   1100          logger.info("推荐器初始化完成")
+   1101
+   1102      def parse_symptoms(self, symptom_text: str) -> Tuple[List[int], List[str], List[str]]:
+   1103          """解析症状文本"""
+   1104          for sep in [' ', ',', '，', '、', ';', '；']:
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 24 页
+================================================================================
+   1105              symptom_text = symptom_text.replace(sep, ' ')
+   1106
+   1107          symptoms = [s.strip() for s in symptom_text.split() if s.strip()]
+   1108          symptom_ids = []
+   1109          valid_symptoms = []
+   1110          unknown_symptoms = []
+   1111
+   1112          for symp in symptoms:
+   1113              if symp in self.symptom_to_id:
+   1114                  symptom_ids.append(self.symptom_to_id[symp])
+   1115                  valid_symptoms.append(symp)
+   1116              else:
+   1117                  # 尝试别名匹配
+   1118                  matched = False
+   1119                  for std_name, sid in self.symptom_to_id.items():
+   1120                      if symp in std_name or std_name in symp:
+   1121                          symptom_ids.append(sid)
+   1122                          valid_symptoms.append(std_name)
+   1123                          matched = True
+   1124                          break
+   1125                  if not matched:
+   1126                      unknown_symptoms.append(symp)
+   1127
+   1128          if unknown_symptoms:
+   1129              logger.warning("未知症状：%s", unknown_symptoms)
+   1130          if symptoms and not symptom_ids:
+   1131              logger.warning("所有症状都无效，输入：%s", symptoms)
+   1132
+   1133          return symptom_ids, valid_symptoms, unknown_symptoms
+   1134
+   1135      def recommend(
+   1136          self, symptoms: List[int], top_k_herb: int = 10, top_k_formula: int = 5
+   1137      ) -> Dict:
+   1138          """推荐药材和方剂"""
+   1139          if not symptoms:
+   1140              return {
+   1141                  "error": "无有效症状",
+   1142                  "herbs": [], "formulas": [],
+   1143                  "suggestion": "请提供有效症状描述",
+   1144              }
+   1145
+   1146          symptom_tensor = torch.tensor([symptoms], dtype=torch.long).to(self.device)
+   1147          mask = torch.ones_like(symptom_tensor, dtype=torch.float32)
+   1148
+   1149          with torch.no_grad():
+   1150              result = self.model.predict(
+   1151                  symptom_tensor, mask,
+   1152                  self._herb_feat["char_multihot"].to(self.device),
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 25 页
+================================================================================
+   1153                  self._herb_feat["category_idx"].to(self.device),
+   1154                  self._herb_feat["nature_idx"].to(self.device),
+   1155                  self._herb_feat["flavor_idx"].to(self.device),
+   1156                  top_k=max(top_k_herb, top_k_formula),
+   1157              )
+   1158
+   1159          # 药材结果
+   1160          herb_results = []
+   1161          for herb_idx, score in result["herbs"][:top_k_herb]:
+   1162              name = self._herb_name_list[herb_idx] if herb_idx < len(self._herb_name_list) else f"药材{herb_idx}"
+   1163              herb_results.append({
+   1164                  "id": int(herb_idx),
+   1165                  "name": name,
+   1166                  "score": float(score),
+   1167                  "efficacy": "",
+   1168                  "is_toxic": False,
+   1169              })
+   1170
+   1171          # 方剂结果
+   1172          formula_results = []
+   1173          for formula_idx, score in result["formulas"][:top_k_formula]:
+   1174              name = self._formula_name_list[formula_idx] if formula_idx < len(self._formula_name_list) else f"方剂{formula_idx}"
+   1175              formula_results.append({
+   1176                  "id": int(formula_idx),
+   1177                  "name": name,
+   1178                  "score": float(score),
+   1179                  "composition": "",
+   1180                  "functions": "",
+   1181              })
+   1182
+   1183          # 证型
+   1184          top_syndrome = None
+   1185          if result.get("syndromes"):
+   1186              sid, sp = result["syndromes"][0]
+   1187              if 0 <= sid < len(self._syndrome_names) and sid > 0:
+   1188                  top_syndrome = {
+   1189                      "id": int(sid),
+   1190                      "name": self._syndrome_names[sid],
+   1191                      "confidence": round(float(sp), 4),
+   1192                  }
+   1193
+   1194          return {
+   1195              "symptoms": [self._symptom_list[s - 1] for s in symptoms if 0 < s <= len(self._symptom_list)],
+   1196              "syndrome": top_syndrome,
+   1197              "herbs": herb_results,
+   1198              "formulas": formula_results,
+   1199          }
+   1200
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 26 页
+================================================================================
+   1201  # Copyright (C) 2026 中医药智能问答系统
+   1202  # Licensed under Apache License 2.0
+   1203
+   1204  """
+   1205  中医药推荐系统 - 训练脚本
+   1206
+   1207  管线：数据加载 -> 特征构建 -> 模型训练 -> 评估保存
+   1208  """
+   1209
+   1210  import argparse
+   1211  import json
+   1212  import logging
+   1213  import os
+   1214  import sys
+   1215  import time
+   1216  from pathlib import Path
+   1217  from typing import Dict, Optional, Tuple
+   1218
+   1219  import numpy as np
+   1220  import torch
+   1221  import torch.nn as nn
+   1222  import torch.nn.functional as F
+   1223  from torch.utils.data import DataLoader, Dataset, random_split
+   1224  from tqdm import tqdm
+   1225
+   1226  PROJECT_ROOT = Path(__file__).parent.parent
+   1227  sys.path.insert(0, str(PROJECT_ROOT))
+   1228
+   1229  from tcm_recommender.data_pipeline import TCMDataPipeline
+   1230  from tcm_recommender.model import TCMNet, create_model
+   1231
+   1232  logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+   1233  logger = logging.getLogger(__name__)
+   1234
+   1235  # ── 常量 ─────────────────────────────────────────
+   1236  MAX_SYMPTOMS = 32
+   1237  NATURE_LIST = ["寒", "热", "温", "凉", "平"]
+   1238  FLAVOR_LIST = ["酸", "苦", "甘", "辛", "咸"]
+   1239
+   1240
+   1241  # ═══════════════════════════════════════════════════════════
+   1242  # 数据集
+   1243  # ═══════════════════════════════════════════════════════════
+   1244
+   1245  class TCMDataset(Dataset):
+   1246      """训练数据集"""
+   1247
+   1248      def __init__(self, data: Dict[str, np.ndarray], indices: Optional[np.ndarray] = None):
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 27 页
+================================================================================
+   1249          if indices is not None:
+   1250              self.symptom_ids = data["symptom_ids"][indices]
+   1251              self.symptom_mask = data["symptom_mask"][indices]
+   1252              self.herb_labels = data["herb_labels"][indices]
+   1253              self.formula_labels = data["formula_labels"][indices]
+   1254              self.syndrome_labels = data["syndrome_labels"][indices]
+   1255          else:
+   1256              self.symptom_ids = data["symptom_ids"]
+   1257              self.symptom_mask = data["symptom_mask"]
+   1258              self.herb_labels = data["herb_labels"]
+   1259              self.formula_labels = data["formula_labels"]
+   1260              self.syndrome_labels = data["syndrome_labels"]
+   1261
+   1262      def __len__(self):
+   1263          return len(self.symptom_ids)
+   1264
+   1265      def __getitem__(self, idx):
+   1266          return {
+   1267              "symptom_ids": torch.from_numpy(self.symptom_ids[idx].astype(np.int64)),
+   1268              "symptom_mask": torch.from_numpy(self.symptom_mask[idx].astype(np.float32)),
+   1269              "herb_labels": torch.from_numpy(self.herb_labels[idx].astype(np.float32)),
+   1270              "formula_label": int(self.formula_labels[idx]),
+   1271              "syndrome_label": int(self.syndrome_labels[idx]),
+   1272          }
+   1273
+   1274
+   1275  # ═══════════════════════════════════════════════════════════
+   1276  # 药材特征构建
+   1277  # ═══════════════════════════════════════════════════════════
+   1278
+   1279  def build_herb_features(pipeline: TCMDataPipeline) -> Dict[str, torch.Tensor]:
+   1280      """构建药材的字符多热矩阵 + 类别/性味/归经索引"""
+   1281      nh = pipeline.num_herbs
+   1282
+   1283      # ── 字符多热矩阵 ──
+   1284      herb_texts = {}
+   1285      for model_idx in range(1, nh + 1):
+   1286          db_id = pipeline.model_idx_to_herb_db_id[model_idx]
+   1287          herb = pipeline.herbs[db_id]
+   1288          herb_texts[model_idx] = f"{herb.get('efficacy', '')} {herb.get('indications', '')}"
+   1289
+   1290      char_set = set()
+   1291      for text in herb_texts.values():
+   1292          for ch in text:
+   1293              if '\u4e00' <= ch <= '\u9fff':
+   1294                  char_set.add(ch)
+   1295      char_list = sorted(char_set)
+   1296      char_to_idx = {ch: i for i, ch in enumerate(char_list)}
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 28 页
+================================================================================
+   1297      num_chars = len(char_list)
+   1298
+   1299      char_mh = torch.zeros(nh, num_chars)
+   1300      for mi, text in herb_texts.items():
+   1301          for ch in text:
+   1302              if ch in char_to_idx:
+   1303                  char_mh[mi - 1, char_to_idx[ch]] = 1.0
+   1304
+   1305      # ── 类别索引 ──
+   1306      # 收集所有类别名
+   1307      all_categories = sorted(set(
+   1308          pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
+   1309          for mi in range(1, nh + 1)
+   1310      ))
+   1311      cat_to_idx = {c: i + 1 for i, c in enumerate(all_categories)}
+   1312      cat_idx = torch.zeros(nh, dtype=torch.long)
+   1313      for mi in range(1, nh + 1):
+   1314          cat = pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
+   1315          cat_idx[mi - 1] = cat_to_idx.get(cat, 0)
+   1316
+   1317      # ── 药性索引 ──
+   1318      nat_idx = torch.zeros(nh, dtype=torch.long)
+   1319      for mi in range(1, nh + 1):
+   1320          nat = pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("nature", "") or ""
+   1321          found = False
+   1322          for ni, n_name in enumerate(NATURE_LIST, 1):
+   1323              if n_name in nat:
+   1324                  nat_idx[mi - 1] = ni
+   1325                  found = True
+   1326                  break
+   1327          if not found:
+   1328              nat_idx[mi - 1] = len(NATURE_LIST) + 1  # unknown category
+   1329
+   1330      # ── 药味索引 (取第一个) ──
+   1331      flv_idx = torch.zeros(nh, dtype=torch.long)
+   1332      for mi in range(1, nh + 1):
+   1333          flv = pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("flavor", "") or ""
+   1334          found = False
+   1335          for fi, f_name in enumerate(FLAVOR_LIST, 1):
+   1336              if f_name in flv:
+   1337                  flv_idx[mi - 1] = fi
+   1338                  found = True
+   1339                  break
+   1340          if not found:
+   1341              flv_idx[mi - 1] = len(FLAVOR_LIST) + 1  # unknown category
+   1342
+   1343      logger.info("药材特征: chars=%s, categories=%s", num_chars, len(all_categories))
+   1344      return {
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 29 页
+================================================================================
+   1345          "char_multihot": char_mh,
+   1346          "category_idx": cat_idx,
+   1347          "nature_idx": nat_idx,
+   1348          "flavor_idx": flv_idx,
+   1349          "num_chars": num_chars,
+   1350          "num_categories": len(all_categories) + 1,  # +1 for padding
+   1351          "num_natures": len(NATURE_LIST) + 2,  # +1 padding +1 unknown
+   1352          "num_flavors": len(FLAVOR_LIST) + 2,
+   1353      }
+   1354
+   1355
+   1356  # ═══════════════════════════════════════════════════════════
+   1357  # 训练器
+   1358  # ═══════════════════════════════════════════════════════════
+   1359
+   1360  class Trainer:
+   1361      def __init__(self, model: TCMNet, herb_features: Dict[str, torch.Tensor],
+   1362                   device: torch.device, lr: float = 1e-4, weight_decay: float = 1e-5,
+   1363                   warmup_steps: int = 500, grad_accum: int = 1,
+   1364                   contrastive_weight: float = 0.2, label_smoothing: float = 0.05):
+   1365          self.model = model.to(device)
+   1366          self.device = device
+   1367          self.grad_accum = grad_accum
+   1368          self.contrastive_weight = contrastive_weight
+   1369          self.label_smoothing = label_smoothing
+   1370
+   1371          # 药材特征预加载到设备
+   1372          self.herb_char = herb_features["char_multihot"].to(device)
+   1373          self.herb_cat = herb_features["category_idx"].to(device)
+   1374          self.herb_nat = herb_features["nature_idx"].to(device)
+   1375          self.herb_flv = herb_features["flavor_idx"].to(device)
+   1376
+   1377          # 损失函数
+   1378          self.syn_criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=label_smoothing)
+   1379          self.formula_criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=label_smoothing)
+   1380
+   1381          # 优化器
+   1382          no_decay = ["bias", "LayerNorm.weight", "layernorm.weight", "norm.weight"]
+   1383          optimizer_grouped_params = [
+   1384              {"params": [p for n, p in model.named_parameters()
+   1385                          if not any(nd in n for nd in no_decay) and p.requires_grad],
+   1386               "weight_decay": weight_decay},
+   1387              {"params": [p for n, p in model.named_parameters()
+   1388                          if any(nd in n for nd in no_decay) and p.requires_grad],
+   1389               "weight_decay": 0.0},
+   1390          ]
+   1391          self.optimizer = torch.optim.AdamW(optimizer_grouped_params, lr=lr, betas=(0.9, 0.98))
+   1392          self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 30 页
+================================================================================
+   1393              self.optimizer, T_0=10, T_mult=2, eta_min=lr * 0.01)
+   1394
+   1395          self.scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
+   1396          self.history = {"train": [], "val": [], "lr": []}
+   1397          self.global_step = 0
+   1398
+   1399      def _herb_bce_loss(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+   1400          """加权 BCE 损失（处理正负样本不平衡）"""
+   1401  # Copyright (C) 2026 中医药智能问答系统
+   1402  # Licensed under Apache License 2.0
+   1403
+   1404  """
+   1405  中医药推荐系统 - 大规模数据管线
+   1406
+   1407  从 2,000+ 药材、500+ 方剂、200 症状、17 证型的知识库中，
+   1408  通过组合增强 + 噪声注入 + 证型映射生成 100,000+ 高质量训练样本。
+   1409
+   1410  管线：
+   1411    1. 加载基础数据（药材/方剂/症状/证型）
+   1412    2. 构建症状-药材关联矩阵
+   1413    3. 构建症状-方剂关联矩阵
+   1414    4. 证型驱动样本生成（主要来源，~60K）
+   1415    5. 药材驱动样本生成（~20K）
+   1416    6. 方剂驱动样本生成（~10K）
+   1417    7. 组合增强 + 噪声注入（~30K）
+   1418    8. 输出 HDF5/NPZ 格式的高效训练数据
+   1419  """
+   1420
+   1421  import logging
+   1422  import sqlite3
+   1423  import sys
+   1424  from collections import defaultdict
+   1425  from pathlib import Path
+   1426  from typing import Dict, List, Optional, Set, Tuple
+   1427
+   1428  import numpy as np
+   1429
+   1430  _src = Path(__file__).resolve().parents[1] / "src"
+   1431  if str(_src) not in sys.path:
+   1432      sys.path.insert(0, str(_src))
+   1433  _project = Path(__file__).resolve().parents[1]
+   1434  if str(_project) not in sys.path:
+   1435      sys.path.insert(0, str(_project))
+   1436
+   1437  logger = logging.getLogger(__name__)
+   1438
+   1439  # ── 常量 ─────────────────────────────────────────
+   1440  MAX_SYMPTOMS_PER_SAMPLE = 32
+================================================================================

@@ -1,0 +1,1550 @@
+================================================================================
+                      中医药智能问答系统 v2.1.0                      
+                           源代码文档                            
+================================================================================
+
+目  录
+----------------------------------------
+  launcher.py  （共 56 行）
+  src/core/__init__.py  （共 25 行）
+  src/core/tcm_config.py  （共 300 行）
+  src/core/symptom_pipeline.py  （共 106 行）
+  src/core/symptom_analysis.py  （共 164 行）
+  src/core/fallback.py  （共 200 行）
+  src/core/knowledge_base.py  （共 200 行）
+  src/core/result_verify.py  （共 200 行）
+  src/core/data_desensitize.py  （共 200 行）
+
+  共 1451 行，30 页
+================================================================================
+
+中医药智能问答系统 v2.1.0                                       第 1 页
+================================================================================
+      1  import logging
+      2  import logging.handlers
+      3  import os
+      4  import sys
+      5  from pathlib import Path
+      6
+      7
+      8  if getattr(sys, "frozen", False):
+      9      ROOT_DIR = Path(sys.executable).parent
+     10      internal_path = ROOT_DIR / "_internal"
+     11      if internal_path.exists():
+     12          sys.path.insert(0, str(internal_path))
+     13          sys.path.insert(0, str(internal_path / "src"))
+     14  else:
+     15      ROOT_DIR = Path(__file__).resolve().parent
+     16      sys.path.insert(0, str(ROOT_DIR / "src"))
+     17
+     18  os.environ["TCMAI_ROOT"] = str(ROOT_DIR)
+     19
+     20  # 日志配置
+     21  _log_level = getattr(logging, os.environ.get("TCMAI_LOG_LEVEL", "INFO").upper(), logging.INFO)
+     22  _log_format = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+     23  _log_dir = ROOT_DIR / "data" / "logs"
+     24  _log_dir.mkdir(parents=True, exist_ok=True)
+     25  _file_handler = logging.handlers.RotatingFileHandler(
+     26      _log_dir / "tcmai.log",
+     27      maxBytes=5 * 1024 * 1024,
+     28      backupCount=3,
+     29      encoding="utf-8",
+     30  )
+     31  _file_handler.setFormatter(_log_format)
+     32  _console_handler = logging.StreamHandler(sys.stdout)
+     33  _console_handler.setFormatter(_log_format)
+     34  logging.basicConfig(level=_log_level, handlers=[_file_handler, _console_handler])
+     35  _logger = logging.getLogger("launcher")
+     36
+     37
+     38  def main() -> None:
+     39      try:
+     40          from desktop.runtime import hide_console_window, show_error_dialog
+     41          from desktop.app import run_desktop_app
+     42
+     43          hide_console_window()
+     44          _logger.info("中医药智能问答系统启动")
+     45          run_desktop_app()
+     46      except Exception as exc:
+     47          _logger.exception("程序运行失败")
+     48          try:
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 2 页
+================================================================================
+     49              show_error_dialog("中医药智能问答系统", f"程序运行失败：\n{exc}")
+     50          except Exception:
+     51              pass
+     52
+     53
+     54  if __name__ == "__main__":
+     55      main()
+     56
+     57  # Copyright (C) 2026 中医药智能问答系统
+     58  # Licensed under Apache License 2.0
+     59  # See LICENSE file for details
+     60
+     61  """
+     62  中医药智能问答系统 - 核心业务逻辑模块
+     63
+     64  完全原创开发，软著核心保护部分
+     65  """
+     66
+     67  from .data_desensitize import DataDesensitizer
+     68  from .fallback import generate_fallback_answer
+     69  from .knowledge_base import KnowledgeBase
+     70  from .result_verify import ResultVerifier
+     71  from .symptom_analysis import SymptomAnalyzer
+     72  from .symptom_pipeline import SymptomPipeline
+     73
+     74  __all__ = [
+     75      "DataDesensitizer",
+     76      "KnowledgeBase",
+     77      "ResultVerifier",
+     78      "SymptomAnalyzer",
+     79      "SymptomPipeline",
+     80      "generate_fallback_answer",
+     81  ]
+     82  # Copyright (C) 2026 中医药智能问答系统
+     83  # Licensed under Apache License 2.0
+     84
+     85  """
+     86  中医药统一配置模块
+     87
+     88  所有模块共享的症状、证型、药材、方剂定义的单一数据源。
+     89  """
+     90
+     91  # ============================================================
+     92  # 症状列表（31 种常见症状）
+     93  # ============================================================
+     94  SYMPTOM_LIST: list[str] = [
+     95      "乏力", "疲倦", "食欲不振", "失眠", "头痛", "咳嗽",
+     96      "发热", "腹痛", "腹泻", "便秘", "心悸", "头晕",
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 3 页
+================================================================================
+     97      "恶心", "呕吐", "胃痛", "腹胀", "腰膝酸软", "耳鸣",
+     98      "健忘", "气短", "畏寒", "手足心热", "口干", "自汗",
+     99      "盗汗", "胁痛", "关节痛", "皮肤瘙痒", "月经不调",
+    100      "痛经", "白带异常", "面色萎黄", "咽喉肿痛",
+    101  ]
+    102
+    103  # ============================================================
+    104  # 症状别名映射（口语 → 标准术语）
+    105  # ============================================================
+    106  SYMPTOM_ALIAS_MAP: dict[str, str] = {
+    107      "肚子疼": "腹痛",
+    108      "肚子痛": "腹痛",
+    109      "胃疼": "胃痛",
+    110      "没力气": "乏力",
+    111      "累": "乏力",
+    112      "疲劳": "乏力",
+    113      "疲倦": "乏力",
+    114      "无力": "乏力",
+    115      "虚弱": "乏力",
+    116      "睡不着": "失眠",
+    117      "入睡困难": "失眠",
+    118      "易醒": "失眠",
+    119      "睡眠不好": "失眠",
+    120      "不想吃饭": "食欲不振",
+    121      "没胃口": "食欲不振",
+    122      "吃不下": "食欲不振",
+    123      "纳差": "食欲不振",
+    124      "拉肚子": "腹泻",
+    125      "大便稀": "腹泻",
+    126      "大便干": "便秘",
+    127      "排便困难": "便秘",
+    128      "心慌": "心悸",
+    129      "心跳快": "心悸",
+    130      "眩晕": "头晕",
+    131      "头昏": "头晕",
+    132      "发烧": "发热",
+    133      "体温高": "发热",
+    134      "怕冷": "畏寒",
+    135      "恶寒": "畏寒",
+    136      "胁肋痛": "胁痛",
+    137      "两肋痛": "胁痛",
+    138      "想吐": "呕吐",
+    139      "容易出汗": "自汗",
+    140      "头疼": "头痛",
+    141      "咳痰": "咳嗽",
+    142      "恶心呕吐": "恶心",
+    143  }
+    144
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 4 页
+================================================================================
+    145  # ============================================================
+    146  # 症状详细信息
+    147  # ============================================================
+    148  SYMPTOM_INFO: dict[str, dict] = {
+    149      "乏力": {"category": "全身症状", "description": "身体疲倦无力，精神不振", "related_syndromes": "脾胃虚弱，气血两虚，肾阳虚"},
+    150      "食欲不振": {"category": "消化系统", "description": "不想进食，食量减少", "related_syndromes": "脾胃虚弱，肝郁气滞"},
+    151      "失眠": {"category": "精神症状", "description": "难以入睡或睡而易醒", "related_syndromes": "心脾两虚，肝郁化火，阴虚火旺"},
+    152      "头痛": {"category": "头部症状", "description": "头部疼痛", "related_syndromes": "肝阳上亢，气血亏虚，痰浊上扰"},
+    153      "咳嗽": {"category": "呼吸系统", "description": "肺气上逆，发出咳声", "related_syndromes": "风寒束肺，风热犯肺，痰湿阻肺"},
+    154      "腹痛": {"category": "消化系统", "description": "腹部疼痛", "related_syndromes": "寒邪内阻，湿热壅滞，气滞血瘀"},
+    155      "腹泻": {"category": "消化系统", "description": "大便次数增多，粪质稀薄", "related_syndromes": "脾虚湿盛，肾阳虚衰"},
+    156      "便秘": {"category": "消化系统", "description": "大便干结，排便困难", "related_syndromes": "热结肠道，津亏血少，气虚传导无力"},
+    157      "心悸": {"category": "心血管系统", "description": "心中悸动，惊惕不安", "related_syndromes": "心气虚，心血不足，心阳不振"},
+    158      "头晕": {"category": "头部症状", "description": "头目眩晕，视物旋转", "related_syndromes": "肝阳上亢，气血亏虚，肾精不足"},
+    159      "发热": {"category": "全身症状", "description": "体温升高或自觉发热", "related_syndromes": "外感风寒，外感风热，阴虚发热"},
+    160      "畏寒": {"category": "全身症状", "description": "怕冷，得温可减", "related_syndromes": "阳虚"},
+    161      "胁痛": {"category": "消化系统", "description": "胁肋部疼痛", "related_syndromes": "肝郁气滞，瘀血阻络，肝胆湿热"},
+    162      "自汗": {"category": "全身症状", "description": "白天不活动或轻微活动即出汗", "related_syndromes": "气虚，阳虚"},
+    163      "恶心": {"category": "消化系统", "description": "胃气上逆，欲吐不吐", "related_syndromes": "胃寒，胃热，痰饮，食滞"},
+    164      "呕吐": {"category": "消化系统", "description": "胃气上逆，吐出胃内容物", "related_syndromes": "胃寒，胃热，痰饮，食滞"},
+    165      "胃痛": {"category": "消化系统", "description": "胃部疼痛", "related_syndromes": "寒邪客胃，饮食伤胃，肝气犯胃"},
+    166      "腹胀": {"category": "消化系统", "description": "腹部胀满不适", "related_syndromes": "脾虚气滞，食积，湿阻"},
+    167      "腰膝酸软": {"category": "全身症状", "description": "腰部和膝部酸软无力", "related_syndromes": "肾阳虚，肾阴虚"},
+    168      "耳鸣": {"category": "头部症状", "description": "耳中鸣响", "related_syndromes": "肾精不足，肝火上炎"},
+    169      "健忘": {"category": "精神症状", "description": "记忆力减退", "related_syndromes": "心脾两虚，肾精不足"},
+    170      "气短": {"category": "全身症状", "description": "呼吸短促", "related_syndromes": "肺气虚，肾不纳气"},
+    171      "手足心热": {"category": "全身症状", "description": "手心脚心发热", "related_syndromes": "阴虚火旺"},
+    172      "口干": {"category": "全身症状", "description": "口中干燥", "related_syndromes": "阴虚，热盛津伤"},
+    173      "盗汗": {"category": "全身症状", "description": "睡中出汗，醒后即止", "related_syndromes": "阴虚火旺，气阴两虚"},
+    174      "关节痛": {"category": "全身症状", "description": "关节部位疼痛", "related_syndromes": "风寒湿痹，风湿热痹"},
+    175      "皮肤瘙痒": {"category": "全身症状", "description": "皮肤自觉瘙痒", "related_syndromes": "风邪外袭，血虚生风，湿热内蕴"},
+    176      "月经不调": {"category": "妇科", "description": "月经周期或经量异常", "related_syndromes": "肝郁气滞，气血两虚，肾虚"},
+    177      "痛经": {"category": "妇科", "description": "经期或经行前后小腹疼痛", "related_syndromes": "寒凝血瘀，气滞血瘀，气血两虚"},
+    178      "白带异常": {"category": "妇科", "description": "带下量、色、质、气味异常", "related_syndromes": "脾虚湿盛，湿热下注，肾虚"},
+    179      "疲倦": {"category": "全身症状", "description": "自觉身体困重疲倦", "related_syndromes": "脾胃虚弱，气血两虚"},
+    180      "面色萎黄": {"category": "全身症状", "description": "面色发黄无华", "related_syndromes": "气血两虚，脾胃虚弱"},
+    181      "咽喉肿痛": {"category": "头部症状", "description": "咽喉部红肿疼痛", "related_syndromes": "风热感冒，阴虚火旺"},
+    182  }
+    183
+    184  # ============================================================
+    185  # 症状关键词映射（用于 detect_symptoms 自然语言检测）
+    186  # ============================================================
+    187  SYMPTOM_KEYWORDS: dict[str, list[str]] = {
+    188      "乏力": ["乏力", "没力气", "疲倦", "无力", "累", "疲劳", "虚弱"],
+    189      "食欲不振": ["食欲不振", "不想吃饭", "没胃口", "吃不下", "纳差"],
+    190      "失眠": ["失眠", "睡不着", "入睡困难", "易醒", "睡眠不好"],
+    191      "头痛": ["头痛", "头疼", "头昏"],
+    192      "咳嗽": ["咳嗽", "咳痰"],
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 5 页
+================================================================================
+    193      "腹痛": ["腹痛", "肚子疼", "肚子痛", "胃痛", "胃疼"],
+    194      "腹泻": ["腹泻", "拉肚子", "大便稀"],
+    195      "便秘": ["便秘", "大便干", "排便困难"],
+    196      "心悸": ["心悸", "心慌", "心跳快"],
+    197      "头晕": ["头晕", "眩晕", "头昏"],
+    198      "发热": ["发热", "发烧", "体温高"],
+    199      "畏寒": ["恶寒", "怕冷", "畏寒"],
+    200      "胁痛": ["胁痛", "胁肋痛", "两肋痛"],
+    201      "自汗": ["自汗", "容易出汗", "盗汗"],
+    202      "恶心": ["恶心", "想吐"],
+    203      "呕吐": ["呕吐", "想吐"],
+    204  }
+    205
+    206  # ============================================================
+    207  # 证型定义
+    208  # ============================================================
+    209  SYNDROME_DEFINITIONS: dict[str, dict] = {
+    210      "脾胃虚弱": {
+    211          "description": "脾胃运化功能减弱",
+    212          "symptoms": ["乏力", "食欲不振", "腹泻", "腹胀"],
+    213          "treatment": "健脾益气",
+    214          "formula": "四君子汤",
+    215      },
+    216      "气血两虚": {
+    217          "description": "气血不足，脏腑功能减退",
+    218          "symptoms": ["乏力", "心悸", "失眠", "面色萎黄"],
+    219          "treatment": "益气补血",
+    220          "formula": "八珍汤",
+    221      },
+    222      "肝郁气滞": {
+    223          "description": "肝气郁结，气机不畅",
+    224          "symptoms": ["胁痛", "失眠", "头痛", "乏力"],
+    225          "treatment": "疏肝理气",
+    226          "formula": "逍遥散",
+    227      },
+    228      "肾阳虚": {
+    229          "description": "肾阳不足，温煦功能减退",
+    230          "symptoms": ["畏寒", "腰膝酸软", "乏力"],
+    231          "treatment": "温补肾阳",
+    232          "formula": "金匮肾气丸",
+    233      },
+    234      "阴虚火旺": {
+    235          "description": "阴液亏虚，虚火内扰",
+    236          "symptoms": ["手足心热", "盗汗", "失眠", "口干"],
+    237          "treatment": "滋阴降火",
+    238          "formula": "六味地黄丸",
+    239      },
+    240      "风寒感冒": {
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 6 页
+================================================================================
+    241          "description": "风寒之邪侵袭肌表",
+    242          "symptoms": ["畏寒", "发热", "头痛"],
+    243          "treatment": "辛温解表",
+    244          "formula": "桂枝汤",
+    245      },
+    246      "风热感冒": {
+    247          "description": "风热之邪侵袭肺卫",
+    248          "symptoms": ["发热", "咽喉肿痛", "口干"],
+    249          "treatment": "辛凉解表",
+    250          "formula": "银翘散",
+    251      },
+    252      "心脾两虚": {
+    253          "description": "心血不足，脾气虚弱",
+    254          "symptoms": ["失眠", "健忘", "心悸", "食欲不振"],
+    255          "treatment": "补益心脾",
+    256          "formula": "归脾汤",
+    257      },
+    258      "肾阴虚": {
+    259          "description": "肾阴不足，髓海亏虚",
+    260          "symptoms": ["腰膝酸软", "头晕", "耳鸣", "盗汗"],
+    261          "treatment": "滋补肾阴",
+    262          "formula": "六味地黄丸",
+    263      },
+    264  }
+    265
+    266  # ============================================================
+    267  # 证型判断规则（用于 SymptomAnalyzer 的规则匹配）
+    268  # ============================================================
+    269  SYNDROME_RULES: dict[str, dict] = {
+    270      "脾胃虚弱": {
+    271          "symptoms": ["乏力", "食欲不振", "腹泻"],
+    272          "explanation": "脾胃运化功能减弱，表现为消化功能低下",
+    273      },
+    274      "肝郁气滞": {
+    275          "symptoms": ["头痛", "失眠", "乏力"],
+    276          "explanation": "肝气郁结，气机不畅",
+    277      },
+    278      "气血两虚": {
+    279          "symptoms": ["乏力", "失眠", "食欲不振"],
+    280          "explanation": "气血不足，脏腑功能减退",
+    281      },
+    282  }
+    283
+    284  # ============================================================
+    285  # 禁忌规则
+    286  # ============================================================
+    287  CONTRAINDICATION_RULES: dict[str, list[str]] = {
+    288      "孕妇禁用": ["活血化瘀", "攻下"],
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 7 页
+================================================================================
+    289      "脾胃虚寒慎用": ["寒凉"],
+    290  }
+    291
+    292  # ============================================================
+    293  # 症状类别
+    294  # ============================================================
+    295  SYMPTOM_CATEGORIES: dict[str, str] = {
+    296      "乏力": "全身症状",
+    297      "食欲不振": "消化系统",
+    298      "失眠": "精神症状",
+    299      "头痛": "头部症状",
+    300      "咳嗽": "呼吸系统",
+    301      "腹痛": "消化系统",
+    302      "腹泻": "消化系统",
+    303      "便秘": "消化系统",
+    304      "心悸": "心血管系统",
+    305      "头晕": "头部症状",
+    306      "发热": "全身症状",
+    307      "畏寒": "全身症状",
+    308      "胁痛": "消化系统",
+    309      "自汗": "全身症状",
+    310      "恶心": "消化系统",
+    311      "呕吐": "消化系统",
+    312      "胃痛": "消化系统",
+    313      "腹胀": "消化系统",
+    314      "腰膝酸软": "全身症状",
+    315      "耳鸣": "头部症状",
+    316      "健忘": "精神症状",
+    317      "气短": "呼吸系统",
+    318      "手足心热": "全身症状",
+    319      "口干": "全身症状",
+    320      "盗汗": "全身症状",
+    321      "关节痛": "全身症状",
+    322      "皮肤瘙痒": "全身症状",
+    323      "月经不调": "妇科",
+    324      "痛经": "妇科",
+    325      "白带异常": "妇科",
+    326      "疲倦": "全身症状",
+    327      "面色萎黄": "全身症状",
+    328      "咽喉肿痛": "头部症状",
+    329  }
+    330
+    331  # ============================================================
+    332  # 配伍禁忌（十八反、十九畏、孕妇禁用）
+    333  # ============================================================
+    334  INCOMPATIBLE_HERBS: dict[str, list] = {
+    335      "十八反": [
+    336          ("甘草", "大戟"), ("甘草", "芫花"), ("甘草", "甘遂"),
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 8 页
+================================================================================
+    337          ("乌头", "半夏"), ("乌头", "瓜蒌"), ("乌头", "贝母"),
+    338          ("藜芦", "人参"), ("藜芦", "丹参"), ("藜芦", "沙参"),
+    339          ("藜芦", "玄参"), ("藜芦", "苦参"),
+    340      ],
+    341      "十九畏": [
+    342          ("硫黄", "朴硝"), ("水银", "砒霜"), ("狼毒", "密陀僧"),
+    343          ("巴豆", "牵牛"), ("丁香", "郁金"), ("牙硝", "三棱"),
+    344          ("川乌", "草乌"), ("人参", "五灵脂"), ("肉桂", "赤石脂"),
+    345      ],
+    346      "孕妇禁用": [
+    347          "麝香", "三棱", "莪术", "水蛭", "虻虫", "巴豆", "牵牛",
+    348          "大戟", "芫花", "甘遂", "商陆", "斑蝥", "穿山甲",
+    349      ],
+    350  }
+    351
+    352  # ============================================================
+    353  # 毒性药材列表
+    354  # ============================================================
+    355  TOXIC_HERBS: list[str] = [
+    356      "生川乌", "生草乌", "附子", "巴豆", "甘遂", "大戟", "芫花",
+    357  ]
+    358
+    359  # ============================================================
+    360  # 降级方案知识库（内置药材和方剂，不依赖外部数据库）
+    361  # ============================================================
+    362  FALLBACK_HERBS: list[dict] = [
+    363      {"name": "人参", "alias": "人衔、鬼盖", "efficacy": "大补元气，复脉固脱，补脾益肺，生津养血，安神益智", "indications": "体虚欲脱，肢冷脉微，脾虚食少，肺虚喘咳", "contraindications": "实证、热证而正气不虚者忌服"},
+    364      {"name": "黄芪", "alias": "黄耆", "efficacy": "补气升阳，固表止汗，利水消肿，生津养血，托毒排脓", "indications": "气虚乏力，食少便溏，中气下陷，表虚自汗", "contraindications": "表实邪盛，气滞湿阻者慎用"},
+    365      {"name": "白术", "alias": "山蓟", "efficacy": "健脾益气，燥湿利水，止汗，安胎", "indications": "脾虚食少，腹胀泄泻，痰饮眩悸", "contraindications": "阴虚燥渴者慎用"},
+    366      {"name": "甘草", "alias": "国老", "efficacy": "补脾益气，清热解毒，祛痰止咳，缓急止痛，调和诸药", "indications": "脾胃虚弱，倦怠乏力，咳嗽痰多", "contraindications": "湿盛胀满者不宜"},
+    367      {"name": "当归", "alias": "干归", "efficacy": "补血活血，调经止痛，润肠通便", "indications": "血虚萎黄，月经不调，经闭痛经", "contraindications": "湿盛中满，大便泄泻者忌服"},
+    368      {"name": "熟地黄", "alias": "熟地", "efficacy": "补血滋阴，益精填髓", "indications": "血虚萎黄，心悸怔忡，月经不调", "contraindications": "气滞痰多者慎用"},
+    369      {"name": "茯苓", "alias": "茯菟", "efficacy": "利水渗湿，健脾宁心", "indications": "水肿尿少，痰饮眩悸，脾虚食少", "contraindications": "阴虚而无湿热者慎用"},
+    370      {"name": "陈皮", "alias": "橘皮", "efficacy": "理气健脾，燥湿化痰", "indications": "脘腹胀满，食少吐泻，咳嗽痰多", "contraindications": "吐血证慎用"},
+    371      {"name": "柴胡", "alias": "地熏", "efficacy": "疏散退热，疏肝解郁，升举阳气", "indications": "感冒发热，寒热往来，胸胁胀痛", "contraindications": "真阴亏损者忌用"},
+    372      {"name": "黄芩", "alias": "腐肠", "efficacy": "清热燥湿，泻火解毒，止血，安胎", "indications": "湿温暑湿，肺热咳嗽，高热烦渴", "contraindications": "脾胃虚寒者慎用"},
+    373      {"name": "黄连", "alias": "味连", "efficacy": "清热燥湿，泻火解毒", "indications": "湿热痞满，呕吐吞酸，泻痢黄疸", "contraindications": "脾胃虚寒者慎用"},
+    374      {"name": "生姜", "alias": "姜", "efficacy": "解表散寒，温中止呕，化痰止咳", "indications": "风寒感冒，胃寒呕吐，寒痰咳嗽", "contraindications": "阴虚内热者慎用"},
+    375      {"name": "大枣", "alias": "红枣", "efficacy": "补中益气，养血安神", "indications": "脾虚食少，乏力便溏，妇人脏躁", "contraindications": "湿盛脘腹胀满者慎用"},
+    376      {"name": "桂枝", "alias": "柳桂", "efficacy": "发汗解肌，温通经脉，助阳化气", "indications": "风寒感冒，寒凝血滞，痰饮", "contraindications": "温热病阴虚火旺者慎用"},
+    377      {"name": "白芍", "alias": "白芍药", "efficacy": "养血调经，敛阴止汗，柔肝止痛，平抑肝阳", "indications": "血虚萎黄，月经不调，自汗盗汗", "contraindications": "阳衰虚寒者不宜"},
+    378  ]
+    379
+    380  FALLBACK_FORMULAS: list[dict] = [
+    381      {"name": "四君子汤", "source": "《太平惠民和剂局方》", "composition": "人参、白术、茯苓、甘草", "efficacy": "益气健脾", "indications": "脾胃气虚证，面色萎白，气短乏力，食少便溏"},
+    382  # Copyright (C) 2026 中医药智能问答系统
+    383  # Licensed under Apache License 2.0
+    384
+================================================================================
+中医药智能问答系统 v2.1.0                                       第 9 页
+================================================================================
+    385  """
+    386  统一症状处理管线
+    387
+    388  合并 fallback.detect_symptoms() 和 SymptomAnalyzer 的功能，
+    389  提供单一入口：症状检测 → 标准化 → 证型推断 → 禁忌检查。
+    390  """
+    391
+    392  import logging
+    393  from typing import List, Dict, Optional
+    394
+    395  from core.symptom_analysis import SymptomAnalyzer
+    396  from core.tcm_config import (
+    397      FALLBACK_SYMPTOMS,
+    398      SYMPTOM_KEYWORDS,
+    399      SYNDROME_DEFINITIONS,
+    400  )
+    401
+    402  logger = logging.getLogger(__name__)
+    403
+    404
+    405  class SymptomPipeline:
+    406      """统一症状处理管线"""
+    407
+    408      def __init__(self):
+    409          self.analyzer = SymptomAnalyzer()
+    410
+    411      def detect(self, query: str) -> List[str]:
+    412          """从自然语言查询中检测症状（关键词匹配）"""
+    413          detected = []
+    414          query_lower = query.lower()
+    415          for symptom, keywords in SYMPTOM_KEYWORDS.items():
+    416              for keyword in keywords:
+    417                  if keyword in query_lower:
+    418                      if symptom not in detected:
+    419                          detected.append(symptom)
+    420                      break
+    421          return detected
+    422
+    423      def analyze(self, symptoms: List[str]) -> Dict:
+    424          """分析症状列表：标准化 → 证型推断 → 禁忌检查"""
+    425          return self.analyzer.analyze(symptoms)
+    426
+    427      def process(self, query: str, symptoms: Optional[List[str]] = None) -> Dict:
+    428          """完整处理管线：检测 + 分析
+    429
+    430          Returns:
+    431              {
+    432                  "detected": [...],       # 从 query 检测到的症状
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 10 页
+================================================================================
+    433                  "standardized": [...],    # 标准化后的 SymptomInfo
+    434                  "syndromes": [...],       # 证型推断结果
+    435                  "contraindications": [...], # 禁忌
+    436                  "suggestions": [...],     # 调理建议
+    437                  "info": {...},            # 症状详细信息
+    438              }
+    439          """
+    440          result: Dict = {
+    441              "detected": [],
+    442              "standardized": [],
+    443              "syndromes": [],
+    444              "contraindications": [],
+    445              "suggestions": [],
+    446              "info": {},
+    447          }
+    448
+    449          # 1. 关键词检测
+    450          result["detected"] = self.detect(query)
+    451
+    452          # 2. 合并外部传入的症状
+    453          all_symptoms = list(result["detected"])
+    454          if symptoms:
+    455              for s in symptoms:
+    456                  if isinstance(s, str) and s.strip() and s not in all_symptoms:
+    457                      all_symptoms.append(s.strip())
+    458
+    459          if not all_symptoms:
+    460              return result
+    461
+    462          # 3. 症状分析（标准化 + 证型）
+    463          analysis = self.analyzer.analyze(all_symptoms)
+    464          result["standardized"] = analysis.get("standardized", [])
+    465          result["syndromes"] = analysis.get("syndromes", [])
+    466          result["contraindications"] = analysis.get("contraindications", [])
+    467          result["suggestions"] = analysis.get("suggestions", [])
+    468
+    469          # 4. 获取症状详情
+    470          for symptom in all_symptoms:
+    471              info = self.analyzer.get_symptom_info(symptom)
+    472              if info:
+    473                  result["info"][symptom] = info
+    474
+    475          return result
+    476
+    477      def get_symptom_info(self, symptom_name: str) -> Optional[Dict]:
+    478          """获取症状详细信息"""
+    479          return self.analyzer.get_symptom_info(symptom_name)
+    480
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 11 页
+================================================================================
+    481      def get_fallback_symptom_info(self, symptom_name: str) -> Optional[Dict]:
+    482          """获取降级症状信息（含推荐方剂）"""
+    483          return FALLBACK_SYMPTOMS.get(symptom_name)
+    484
+    485      def get_syndrome_info(self, syndrome_name: str) -> Optional[Dict]:
+    486          """获取证型信息"""
+    487          return SYNDROME_DEFINITIONS.get(syndrome_name)
+    488  # Copyright (C) 2026 中医药智能问答系统
+    489  # Licensed under Apache License 2.0
+    490  # See LICENSE file for details
+    491
+    492  """
+    493  症状分析模块
+    494
+    495  原创功能：症状组合分析、证型判断、禁忌校验
+    496  所有数据定义从 tcm_config 统一读取。
+    497  """
+    498
+    499  import logging
+    500  from typing import List, Dict, Optional
+    501  from dataclasses import dataclass
+    502
+    503  from core.tcm_config import (
+    504      SYMPTOM_ALIAS_MAP,
+    505      SYMPTOM_CATEGORIES,
+    506      SYMPTOM_INFO,
+    507      SYNDROME_RULES,
+    508      CONTRAINDICATION_RULES,
+    509  )
+    510
+    511  logger = logging.getLogger(__name__)
+    512
+    513
+    514  @dataclass
+    515  class SymptomInfo:
+    516      """症状信息"""
+    517      name: str
+    518      standardized_name: str
+    519      category: str
+    520      severity: int
+    521
+    522
+    523  @dataclass
+    524  class SyndromeResult:
+    525      """证型判断结果"""
+    526      syndrome_name: str
+    527      confidence: float
+    528      symptoms: List[str]
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 12 页
+================================================================================
+    529      explanation: str
+    530
+    531
+    532  class SymptomAnalyzer:
+    533      """症状分析器，基于中医辨证论治理论进行症状分析"""
+    534
+    535      def __init__(self):
+    536          self.symptom_map = dict(SYMPTOM_ALIAS_MAP)
+    537          self.symptom_categories = dict(SYMPTOM_CATEGORIES)
+    538          self.syndrome_rules = dict(SYNDROME_RULES)
+    539          self.contraindications = dict(CONTRAINDICATION_RULES)
+    540
+    541      def analyze(self, symptoms: List[str]) -> Dict:
+    542          """分析症状"""
+    543          if not symptoms:
+    544              return {
+    545                  "standardized": [],
+    546                  "syndromes": [],
+    547                  "contraindications": [],
+    548                  "suggestions": [],
+    549              }
+    550
+    551          standardized = self._standardize_symptoms(symptoms)
+    552          syndromes = self._identify_syndromes(standardized)
+    553          contraindications = self._check_contraindications(syndromes)
+    554          suggestions = self._generate_suggestions(syndromes)
+    555
+    556          return {
+    557              "standardized": standardized,
+    558              "syndromes": syndromes,
+    559              "contraindications": contraindications,
+    560              "suggestions": suggestions,
+    561          }
+    562
+    563      def _standardize_symptoms(self, symptoms: List[str]) -> List[SymptomInfo]:
+    564          """将日常用语映射到中医专业术语"""
+    565          standardized = []
+    566          for symptom in symptoms:
+    567              std_name = self.symptom_map.get(symptom, symptom)
+    568              category = self.symptom_categories.get(std_name, "其他")
+    569              symptom_info = SymptomInfo(
+    570                  name=symptom,
+    571                  standardized_name=std_name,
+    572                  category=category,
+    573                  severity=3,
+    574              )
+    575              standardized.append(symptom_info)
+    576
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 13 页
+================================================================================
+    577          logger.info("症状标准化完成：%s", [s.standardized_name for s in standardized])
+    578          return standardized
+    579
+    580      def _identify_syndromes(self, symptoms: List[SymptomInfo]) -> List[SyndromeResult]:
+    581          """证型判断"""
+    582          symptom_names = [s.standardized_name for s in symptoms]
+    583          results = []
+    584
+    585          for syndrome_name, rule in self.syndrome_rules.items():
+    586              matched = [s for s in rule["symptoms"] if s in symptom_names]
+    587
+    588              if not rule["symptoms"]:
+    589                  logger.warning("证型 '%s' 的症状列表为空，跳过该证型", syndrome_name)
+    590                  continue
+    591
+    592              confidence = len(matched) / len(rule["symptoms"])
+    593
+    594              if confidence >= 0.5:
+    595                  result = SyndromeResult(
+    596                      syndrome_name=syndrome_name,
+    597                      confidence=confidence,
+    598                      symptoms=matched,
+    599                      explanation=rule["explanation"],
+    600                  )
+    601                  results.append(result)
+    602
+    603          results.sort(key=lambda x: x.confidence, reverse=True)
+    604          logger.info("证型判断完成：%s", [r.syndrome_name for r in results])
+    605          return results
+    606
+    607      def _check_contraindications(self, syndromes: List[SyndromeResult]) -> List[str]:
+    608          """禁忌检查"""
+    609          contraindications = []
+    610          for syndrome in syndromes:
+    611              if syndrome.syndrome_name == "脾胃虚弱":
+    612                  contraindications.append("脾胃虚寒者慎用寒凉药物")
+    613
+    614          logger.info("禁忌检查完成：%s", contraindications)
+    615          return contraindications
+    616
+    617      def _generate_suggestions(self, syndromes: List[SyndromeResult]) -> List[str]:
+    618          """生成调理建议"""
+    619          suggestions = []
+    620
+    621          if not syndromes:
+    622              return ["建议咨询专业中医师进行辨证施治"]
+    623
+    624          top_syndrome = syndromes[0]
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 14 页
+================================================================================
+    625
+    626          if top_syndrome.syndrome_name == "脾胃虚弱":
+    627              suggestions.extend([
+    628                  "饮食宜清淡易消化",
+    629                  "避免生冷油腻食物",
+    630                  "可适当食用山药、薏米等健脾食材",
+    631              ])
+    632          elif top_syndrome.syndrome_name == "肝郁气滞":
+    633              suggestions.extend([
+    634                  "保持心情舒畅",
+    635                  "适当运动疏解压力",
+    636                  "可饮用玫瑰花茶疏肝理气",
+    637              ])
+    638
+    639          return suggestions
+    640
+    641      def get_symptom_info(self, symptom_name: str) -> Optional[Dict]:
+    642          """获取症状信息（从统一配置读取）"""
+    643          info = SYMPTOM_INFO.get(symptom_name)
+    644          if info:
+    645              return {
+    646                  "name": symptom_name,
+    647                  "category": info["category"],
+    648                  "description": info["description"],
+    649                  "related_syndromes": info["related_syndromes"],
+    650              }
+    651          return None
+    652  # Copyright (C) 2026 中医药智能问答系统
+    653  # Licensed under Apache License 2.0
+    654  # See LICENSE file for details
+    655
+    656  """
+    657  降级回答模块
+    658
+    659  当 AI 模型无法正常工作时，使用基于规则的中医药知识提供回答。
+    660  所有知识数据从 tcm_config 统一读取。
+    661  """
+    662
+    663  import logging
+    664  import re
+    665  from typing import Optional, List, Dict, Any
+    666
+    667  from core.tcm_config import (
+    668      FALLBACK_HERBS,
+    669      FALLBACK_FORMULAS,
+    670      FALLBACK_SYMPTOMS,
+    671      SYNDROME_DEFINITIONS,
+    672      SYMPTOM_KEYWORDS,
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 15 页
+================================================================================
+    673      TCM_KEYWORDS,
+    674  )
+    675
+    676  # 向后兼容：旧代码可能直接引用这些名称
+    677  TCM_KNOWLEDGE = {
+    678      "herbs": FALLBACK_HERBS,
+    679      "formulas": FALLBACK_FORMULAS,
+    680      "symptoms": FALLBACK_SYMPTOMS,
+    681  }
+    682  SYNDROMES = SYNDROME_DEFINITIONS
+    683
+    684  logger = logging.getLogger(__name__)
+    685
+    686
+    687  def detect_symptoms(query: str) -> List[str]:
+    688      """从用户问题中检测症状"""
+    689      detected = []
+    690      query_lower = query.lower()
+    691
+    692      for symptom, keywords in SYMPTOM_KEYWORDS.items():
+    693          for keyword in keywords:
+    694              if keyword in query_lower:
+    695                  if symptom not in detected:
+    696                      detected.append(symptom)
+    697                  break
+    698
+    699      return detected
+    700
+    701
+    702  def search_herbs(keyword: str) -> List[Dict]:
+    703      """搜索药材"""
+    704      results = []
+    705      for herb in FALLBACK_HERBS:
+    706          if (
+    707              keyword in herb["name"]
+    708              or keyword in herb.get("alias", "")
+    709              or keyword in herb.get("efficacy", "")
+    710          ):
+    711              results.append(herb)
+    712      return results[:5]
+    713
+    714
+    715  def search_formulas(keyword: str) -> List[Dict]:
+    716      """搜索方剂"""
+    717      results = []
+    718      for formula in FALLBACK_FORMULAS:
+    719          if (
+    720              keyword in formula["name"]
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 16 页
+================================================================================
+    721              or keyword in formula.get("efficacy", "")
+    722              or keyword in formula.get("indications", "")
+    723          ):
+    724              results.append(formula)
+    725      return results[:5]
+    726
+    727
+    728  def generate_fallback_answer(query: str, kb_result: Optional[Dict] = None) -> Dict[str, Any]:
+    729      """生成降级回答（基于规则的中医药知识回答）"""
+    730      logger.info("使用降级方案生成回答：%s", query[:50])
+    731
+    732      symptoms = detect_symptoms(query)
+    733      answer_parts = []
+    734
+    735      if symptoms:
+    736          answer_parts.append("【症状分析】")
+    737          for symptom in symptoms:
+    738              if symptom in FALLBACK_SYMPTOMS:
+    739                  info = FALLBACK_SYMPTOMS[symptom]
+    740                  answer_parts.append(f"• {symptom}：{info['description']}")
+    741                  answer_parts.append(f"  可能证型：{info['syndromes']}")
+    742                  answer_parts.append(f"  建议：{info['recommendation']}")
+    743      else:
+    744          answer_parts.append("【分析】")
+    745          answer_parts.append("根据您的描述，我来提供相关的中医药知识参考。")
+    746
+    747      if symptoms:
+    748          answer_parts.append("\n【推荐方剂】")
+    749          for symptom in symptoms:
+    750              if symptom in FALLBACK_SYMPTOMS:
+    751                  info = FALLBACK_SYMPTOMS[symptom]
+    752                  answer_parts.append(f"针对{symptom}，可考虑：{info['recommendation']}")
+    753
+    754      answer_parts.append("\n【相关知识】")
+    755      keywords = extract_keywords(query)
+    756      for keyword in keywords[:3]:
+    757          herbs = search_herbs(keyword)
+    758          formulas = search_formulas(keyword)
+    759
+    760          if herbs:
+    761              answer_parts.append(f"• 相关药材（{keyword}）：")
+    762              for herb in herbs[:2]:
+    763                  answer_parts.append(f"  - {herb['name']}：{herb['efficacy']}")
+    764
+    765          if formulas:
+    766              answer_parts.append(f"• 相关方剂（{keyword}）：")
+    767              for formula in formulas[:2]:
+    768                  answer_parts.append(f"  - {formula['name']}：{formula['efficacy']}")
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 17 页
+================================================================================
+    769                  answer_parts.append(f"    组成：{formula['composition']}")
+    770
+    771      answer_parts.append("\n【养生建议】")
+    772      sym_set = set(s.lower() for s in symptoms)
+    773      if any(k in str(sym_set) for k in ["失眠", "健忘", "心悸"]):
+    774          answer_parts.append("• 安神助眠：睡前可温水泡脚，避免咖啡浓茶，卧室保持安静昏暗")
+    775      if any(k in str(sym_set) for k in ["食欲不振", "腹泻", "腹胀", "胃痛"]):
+    776          answer_parts.append("• 健脾养胃：少食多餐，以小米粥、山药、南瓜等易消化食物为主")
+    777      if any(k in str(sym_set) for k in ["乏力", "疲倦", "气短", "面色萎黄"]):
+    778          answer_parts.append("• 补气养血：适当食用红枣、桂圆、瘦肉，避免过度劳累")
+    779      if any(k in str(sym_set) for k in ["畏寒", "腰膝酸软", "手足冷"]):
+    780          answer_parts.append("• 温阳驱寒：避免生冷饮食，可适量食用羊肉、生姜、核桃")
+    781      if any(k in str(sym_set) for k in ["头痛", "头晕", "耳鸣"]):
+    782          answer_parts.append("• 调养肝肾：保持充足睡眠，避免长时间看屏幕，适当按摩太阳穴")
+    783      if any(k in str(sym_set) for k in ["咳嗽", "咽喉肿痛", "发热"]):
+    784          answer_parts.append("• 清肺润燥：多饮温水，少食辛辣，可用梨、银耳、百合煲汤")
+    785      answer_parts.append("• 情志调畅：保持心情舒畅，避免过度思虑")
+    786      answer_parts.append("• 起居有常：规律作息，适当运动，避免熬夜")
+    787
+    788      answer = "\n".join(answer_parts)
+    789      disclaimer = (
+    790          "温馨提示：本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。"
+    791          "用户如有健康问题，请咨询专业医疗机构或执业医师。"
+    792      )
+    793
+    794      return {
+    795          "answer": answer,
+    796          "knowledge": {"symptoms": symptoms, "source": "fallback_mode"},
+    797          "disclaimer": disclaimer,
+    798          "mode": "fallback",
+    799      }
+    800
+    801
+    802  def extract_keywords(query: str) -> List[str]:
+    803      """从查询中提取中医药领域关键词"""
+    804      keywords = []
+    805      for keyword in TCM_KEYWORDS:
+    806          if keyword in query:
+    807              keywords.append(keyword)
+    808      return keywords
+    809
+    810
+    811  def is_model_output_valid(output: str) -> bool:
+    812      """检查模型输出是否有效"""
+    813      if not output or not output.strip():
+    814          return False
+    815
+    816      if len(output) >= 10:
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 18 页
+================================================================================
+    817          if re.search(r"(.)\1{4,}", output):
+    818              return False
+    819
+    820          for length in range(2, 10):
+    821              for i in range(len(output) - length * 2):
+    822                  segment = output[i : i + length]
+    823                  if segment * 3 in output:
+    824                      return False
+    825
+    826          unique_chars = set(output)
+    827          unique_ratio = len(unique_chars) / len(output)
+    828          if unique_ratio < 0.3:
+    829              return False
+    830
+    831      if re.search(r"[\x00-\x08\x0b-\x0c\x0e-\x1f]", output):
+    832          return False
+    833
+    834      if not re.search(r"[一-鿿]", output):
+    835          return False
+    836
+    837      return True
+    838
+    839
+    840  def get_fallback_info(topic: str) -> Dict[str, Any]:
+    841      """获取特定主题的降级信息"""
+    842      result: Dict[str, Any] = {"found": False, "type": None, "data": None}
+    843
+    844      for herb in FALLBACK_HERBS:
+    845          if topic in herb["name"] or topic in herb.get("alias", ""):
+    846              result["found"] = True
+    847              result["type"] = "herb"
+    848              result["data"] = herb
+    849              return result
+    850
+    851      for formula in FALLBACK_FORMULAS:
+    852  import logging
+    853  import os
+    854  import sqlite3
+    855  import threading
+    856  from pathlib import Path
+    857  from typing import Any, Dict, List, Optional
+    858
+    859  logger = logging.getLogger(__name__)
+    860
+    861
+    862  class DatabaseConnectionError(Exception):
+    863      pass
+    864
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 19 页
+================================================================================
+    865
+    866  class KnowledgeBase:
+    867      def __init__(self, db_path: str = None):
+    868          if db_path is None:
+    869              tcm_root = os.environ.get("TCMAI_ROOT")
+    870              if tcm_root:
+    871                  db_path = os.path.join(tcm_root, "data", "tcm_knowledge.db")
+    872              else:
+    873                  import sys
+    874
+    875                  if getattr(sys, "frozen", False):
+    876                      base_path = Path(sys.executable).parent
+    877                  else:
+    878                      base_path = Path(__file__).resolve().parents[2]
+    879                  db_path = base_path / "data" / "tcm_knowledge.db"
+    880
+    881          self.db_path = str(db_path)
+    882          self.conn: Optional[sqlite3.Connection] = None
+    883          self.is_available = False
+    884          self._lock = threading.RLock()
+    885          self._connect()
+    886
+    887      def _connect(self) -> None:
+    888          try:
+    889              if not os.path.exists(self.db_path):
+    890                  logger.warning("知识库文件不存在，已降级为空知识库: %s", self.db_path)
+    891                  return
+    892              if os.path.getsize(self.db_path) == 0:
+    893                  logger.warning("知识库文件为空，已降级为空知识库: %s", self.db_path)
+    894                  return
+    895
+    896              self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=5)
+    897              self.conn.row_factory = sqlite3.Row
+    898              self.is_available = True
+    899              logger.info("知识库连接成功: %s", self.db_path)
+    900          except sqlite3.Error as exc:
+    901              logger.error("知识库连接失败(SQLite): %s", exc)
+    902              self.conn = None
+    903              self.is_available = False
+    904          except Exception as exc:
+    905              logger.error("知识库连接失败: %s", exc)
+    906              self.conn = None
+    907              self.is_available = False
+    908
+    909      def _empty_result(self) -> Dict[str, Any]:
+    910          return {
+    911              "herbs": [],
+    912              "formulas": [],
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 20 页
+================================================================================
+    913              "patent_medicines": [],
+    914              "folk_remedies": [],
+    915              "efficacy": [],
+    916          }
+    917
+    918      def search(self, query: str) -> Dict[str, Any]:
+    919          with self._lock:
+    920              if not self.conn:
+    921                  return self._empty_result()
+    922              try:
+    923                  return {
+    924                      "herbs": self._search_herbs(query),
+    925                      "formulas": self._search_formulas(query),
+    926                      "patent_medicines": self._search_patent_medicines(query),
+    927                      "folk_remedies": self._search_folk_remedies(query),
+    928                      "efficacy": self._search_efficacy(query),
+    929                  }
+    930              except Exception as exc:
+    931                  logger.error("知识库搜索失败: %s", exc)
+    932                  return self._empty_result()
+    933
+    934      def _search_herbs(self, keyword: str) -> List[Dict]:
+    935          cursor = self.conn.cursor()
+    936          cursor.execute(
+    937              """
+    938              SELECT id, name, category, nature, flavor, meridian,
+    939                     efficacy, indications, usage, contraindications
+    940              FROM herbs
+    941              WHERE name LIKE ? OR efficacy LIKE ? OR indications LIKE ? OR category LIKE ?
+    942              LIMIT 10
+    943              """,
+    944              (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"),
+    945          )
+    946          return [dict(row) for row in cursor.fetchall()]
+    947
+    948      def _search_formulas(self, keyword: str) -> List[Dict]:
+    949          cursor = self.conn.cursor()
+    950          cursor.execute(
+    951              """
+    952              SELECT id, name, category, source_book, composition, dosage,
+    953                     functions, indications, usage, modification, explanation
+    954              FROM formulas
+    955              WHERE name LIKE ? OR functions LIKE ? OR indications LIKE ? OR composition LIKE ?
+    956              LIMIT 10
+    957              """,
+    958              (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"),
+    959          )
+    960          return [dict(row) for row in cursor.fetchall()]
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 21 页
+================================================================================
+    961
+    962      def _search_patent_medicines(self, keyword: str) -> List[Dict]:
+    963          cursor = self.conn.cursor()
+    964          cursor.execute(
+    965              """
+    966              SELECT id, name, category, composition, functions,
+    967                     indications, usage_dosage, contraindications
+    968              FROM patent_medicines
+    969              WHERE name LIKE ? OR functions LIKE ? OR indications LIKE ? OR composition LIKE ?
+    970              LIMIT 10
+    971              """,
+    972              (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"),
+    973          )
+    974          return [dict(row) for row in cursor.fetchall()]
+    975
+    976      def _search_folk_remedies(self, keyword: str) -> List[Dict]:
+    977          cursor = self.conn.cursor()
+    978          cursor.execute(
+    979              """
+    980              SELECT id, disease, remedy, ingredients, method, source
+    981              FROM folk_remedies
+    982              WHERE disease LIKE ? OR remedy LIKE ? OR ingredients LIKE ?
+    983              LIMIT 10
+    984              """,
+    985              (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"),
+    986          )
+    987          return [dict(row) for row in cursor.fetchall()]
+    988
+    989      def _search_efficacy(self, keyword: str) -> List[Dict]:
+    990          results: List[Dict[str, Any]] = []
+    991          cursor = self.conn.cursor()
+    992
+    993          cursor.execute(
+    994              """
+    995              SELECT 'herb' AS type, name, category, efficacy, indications
+    996              FROM herbs
+    997              WHERE efficacy LIKE ? OR indications LIKE ?
+    998              LIMIT 5
+    999              """,
+   1000              (f"%{keyword}%", f"%{keyword}%"),
+   1001          )
+   1002          results.extend(dict(row) for row in cursor.fetchall())
+   1003
+   1004          cursor.execute(
+   1005              """
+   1006              SELECT 'formula' AS type, name, category, functions AS efficacy, indications
+   1007              FROM formulas
+   1008              WHERE functions LIKE ? OR indications LIKE ?
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 22 页
+================================================================================
+   1009              LIMIT 5
+   1010              """,
+   1011              (f"%{keyword}%", f"%{keyword}%"),
+   1012          )
+   1013          results.extend(dict(row) for row in cursor.fetchall())
+   1014
+   1015          cursor.execute(
+   1016              """
+   1017              SELECT 'patent_medicine' AS type, name, category, functions AS efficacy, indications
+   1018              FROM patent_medicines
+   1019              WHERE functions LIKE ? OR indications LIKE ?
+   1020              LIMIT 5
+   1021              """,
+   1022              (f"%{keyword}%", f"%{keyword}%"),
+   1023          )
+   1024          results.extend(dict(row) for row in cursor.fetchall())
+   1025
+   1026          return results
+   1027
+   1028      def get_herb_detail(self, herb_id: int) -> Optional[Dict]:
+   1029          with self._lock:
+   1030              if not self.conn:
+   1031                  return None
+   1032              cursor = self.conn.cursor()
+   1033              cursor.execute(
+   1034                  """
+   1035                  SELECT id, name, category, nature, flavor, meridian,
+   1036                         efficacy, indications, usage, contraindications
+   1037                  FROM herbs WHERE id = ?
+   1038                  """,
+   1039                  (herb_id,),
+   1040              )
+   1041              row = cursor.fetchone()
+   1042              return dict(row) if row else None
+   1043
+   1044      def get_formula_detail(self, formula_id: int) -> Optional[Dict]:
+   1045          with self._lock:
+   1046              if not self.conn:
+   1047                  return None
+   1048              cursor = self.conn.cursor()
+   1049              cursor.execute(
+   1050                  """
+   1051                  SELECT id, name, category, source_book, composition, dosage,
+   1052  # Copyright (C) 2026 中医药智能问答系统
+   1053  # Licensed under Apache License 2.0
+   1054  # See LICENSE file for details
+   1055
+   1056  """
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 23 页
+================================================================================
+   1057  结果校验模块
+   1058
+   1059  原创功能：问答结果溯源、合规提示添加、内容过滤
+   1060  """
+   1061
+   1062  import logging
+   1063  import re
+   1064  from typing import Dict, Any, List, Optional
+   1065  from datetime import datetime
+   1066
+   1067  logger = logging.getLogger(__name__)
+   1068
+   1069
+   1070  class ResultVerifier:
+   1071      """
+   1072      结果校验器
+   1073
+   1074      负责对 AI 生成的回答进行校验、溯源和合规处理
+   1075      """
+   1076
+   1077      def __init__(self):
+   1078          """初始化校验器"""
+   1079          # 合规提示模板
+   1080          self.disclaimer_templates = [
+   1081              "本回答仅供参考，不构成医疗诊断或治疗建议。",
+   1082              "如有健康问题，请咨询专业医疗机构或执业医师。",
+   1083              "中医药使用需辨证施治，个体差异较大，请谨慎参考。"
+   1084          ]
+   1085
+   1086          # 敏感词列表（需要过滤或提示的内容）
+   1087          # 使用更精确的上下文匹配模式，只匹配绝对化断言语境
+   1088          self.sensitive_patterns = [
+   1089              r'(?:保证|确保|肯定|一定|绝对|百分百|百分之百).{0,5}(?:治愈|治好|痊愈|康复|有效)',
+   1090              r'(?:治愈|治好|痊愈|康复).{0,5}(?:保证|确保|肯定|一定|绝对|百分百|百分之百)',
+   1091              r'根治',
+   1092              r'无效退款',
+   1093              r'绝对.{0,3}(?:有效|安全|无副作用|无害)',
+   1094          ]
+   1095
+   1096          # 需要溯源的关键词
+   1097          self.source_keywords = [
+   1098              '本草纲目',
+   1099              '黄帝内经',
+   1100              '伤寒论',
+   1101              '金匮要略',
+   1102          ]
+   1103
+   1104      def verify(self, answer: str, knowledge: Dict = None) -> Dict[str, Any]:
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 24 页
+================================================================================
+   1105          """
+   1106          校验回答
+   1107
+   1108          Args:
+   1109              answer: AI 生成的回答
+   1110              knowledge: 相关知识信息
+   1111
+   1112          Returns:
+   1113              校验后的结果
+   1114          """
+   1115          logger.info("开始校验回答")
+   1116
+   1117          # 内容过滤
+   1118          filtered_answer = self._filter_content(answer)
+   1119
+   1120          # 溯源处理
+   1121          sourced_answer = self._add_source(filtered_answer, knowledge)
+   1122
+   1123          # 生成合规提示
+   1124          disclaimer = self._generate_disclaimer()
+   1125
+   1126          # 提取相关知识
+   1127          extracted_knowledge = self._extract_knowledge(knowledge)
+   1128
+   1129          result = {
+   1130              'answer': sourced_answer,
+   1131              'knowledge': extracted_knowledge,
+   1132              'disclaimer': disclaimer,
+   1133              'verified_at': datetime.now().isoformat(),
+   1134              'has_warning': self._check_warning(sourced_answer)
+   1135          }
+   1136
+   1137          logger.info("回答校验完成")
+   1138          return result
+   1139
+   1140      def _filter_content(self, content: str) -> str:
+   1141          """
+   1142          过滤不当内容
+   1143
+   1144          Args:
+   1145              content: 原始内容
+   1146
+   1147          Returns:
+   1148              过滤后的内容
+   1149          """
+   1150          filtered = content
+   1151
+   1152          for pattern in self.sensitive_patterns:
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 25 页
+================================================================================
+   1153              filtered = re.sub(
+   1154                  pattern,
+   1155                  "[该表述涉及绝对化断言，需谨慎参考]",
+   1156                  filtered,
+   1157                  flags=re.IGNORECASE,
+   1158              )
+   1159
+   1160          return filtered
+   1161
+   1162      def _add_source(self, answer: str, knowledge: Dict = None) -> str:
+   1163          """
+   1164          添加溯源信息
+   1165
+   1166          Args:
+   1167              answer: 回答内容
+   1168              knowledge: 知识库信息
+   1169
+   1170          Returns:
+   1171              添加溯源后的回答
+   1172          """
+   1173          if not knowledge:
+   1174              return answer
+   1175
+   1176          sourced_answer = answer
+   1177
+   1178          # 检查是否引用了典籍
+   1179          for keyword in self.source_keywords:
+   1180              if keyword in answer:
+   1181                  sourced_answer += f"\n\n【典籍来源】{keyword}"
+   1182                  break
+   1183
+   1184          return sourced_answer
+   1185
+   1186      def _generate_disclaimer(self) -> str:
+   1187          """
+   1188          生成合规提示
+   1189
+   1190          Returns:
+   1191              合规提示文本
+   1192          """
+   1193          return " ".join(self.disclaimer_templates)
+   1194
+   1195      def _extract_knowledge(self, knowledge: Dict = None) -> str:
+   1196          """
+   1197          提取相关知识
+   1198
+   1199          Args:
+   1200              knowledge: 知识库信息
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 26 页
+================================================================================
+   1201
+   1202          Returns:
+   1203              格式化后的知识文本
+   1204          """
+   1205          if not knowledge:
+   1206              return "暂无相关知识"
+   1207
+   1208          parts = []
+   1209
+   1210          # 提取药材信息
+   1211          if 'herbs' in knowledge and knowledge['herbs']:
+   1212              herb_names = [h.get('name', '') for h in knowledge['herbs'][:3]]
+   1213              parts.append(f"相关药材：{', '.join(herb_names)}")
+   1214
+   1215          # 提取方剂信息
+   1216          if 'formulas' in knowledge and knowledge['formulas']:
+   1217              formula_names = [f.get('name', '') for f in knowledge['formulas'][:3]]
+   1218              parts.append(f"相关方剂：{', '.join(formula_names)}")
+   1219
+   1220          return "; ".join(parts) if parts else "暂无相关知识"
+   1221
+   1222      def _check_warning(self, content: str) -> bool:
+   1223          """
+   1224          检查是否需要特别警告
+   1225
+   1226          Args:
+   1227              content: 内容
+   1228
+   1229          Returns:
+   1230              是否需要警告
+   1231          """
+   1232          warning_keywords = [
+   1233              '毒性',
+   1234              '禁忌',
+   1235              '不良反应',
+   1236              '慎用',
+   1237              '禁用',
+   1238          ]
+   1239
+   1240          for keyword in warning_keywords:
+   1241              if keyword in content:
+   1242                  return True
+   1243
+   1244          return False
+   1245
+   1246      def add_compliance_note(self, content: str) -> str:
+   1247          """
+   1248          添加合规标注
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 27 页
+================================================================================
+   1249
+   1250          Args:
+   1251              content: 原始内容
+   1252  # Copyright (C) 2026 中医药智能问答系统
+   1253  # Licensed under Apache License 2.0
+   1254  # See LICENSE file for details
+   1255
+   1256  """
+   1257  数据脱敏模块
+   1258
+   1259  原创功能：用户数据脱敏、隐私保护、日志匿名化
+   1260  """
+   1261
+   1262  import logging
+   1263  import re
+   1264  import hashlib
+   1265  from typing import Dict, Any, List, Optional
+   1266  from datetime import datetime
+   1267
+   1268  logger = logging.getLogger(__name__)
+   1269
+   1270
+   1271  class DataDesensitizer:
+   1272      """
+   1273      数据脱敏器
+   1274
+   1275      负责用户数据的脱敏处理，保护用户隐私
+   1276      """
+   1277
+   1278      def __init__(self):
+   1279          """初始化脱敏器"""
+   1280          # 个人信息匹配规则
+   1281          # 常见百家姓（前 100 个）
+   1282          _surnames = (
+   1283              r"[张王李赵刘陈杨黄吴周徐孙朱马胡郭何高林罗郑梁谢宋唐冯韩曹彭曾萧"
+   1284              r"田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦"
+   1285              r"傅方白邹孟熊秦邱侯江尹薛阎段雷贺龙史陶毛常康武乔汤严顾钱覃]"
+   1286          )
+   1287          self.patterns = {
+   1288              "phone": r"1[3-9]\d{9}",
+   1289              "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+   1290              "id_card": r"(?<!\d)(?:\d{17}[\dXx]|\d{15})(?!\d)",
+   1291              "address": r"(?:省|市|区|县|镇|村|路|街|道|号|栋|单元|室)",
+   1292              "name": _surnames + r"[一-鿿]{1,2}",
+   1293          }
+   1294
+   1295          # 脱敏替换符
+   1296          self.replacement = {
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 28 页
+================================================================================
+   1297              'phone': '138****8888',
+   1298              'email': 'u***@***.com',
+   1299              'id_card': '************',
+   1300              'address': '**省**市**区',
+   1301              'name': '张*',
+   1302          }
+   1303
+   1304      def desensitize(self, data: Dict[str, Any]) -> Dict[str, Any]:
+   1305          """
+   1306          对数据进行脱敏
+   1307
+   1308          Args:
+   1309              data: 原始数据
+   1310
+   1311          Returns:
+   1312              脱敏后的数据
+   1313          """
+   1314          logger.info("开始数据脱敏")
+   1315
+   1316          desensitized = {}
+   1317
+   1318          for key, value in data.items():
+   1319              if isinstance(value, str):
+   1320                  desensitized[key] = self._desensitize_text(value)
+   1321              elif isinstance(value, dict):
+   1322                  desensitized[key] = self.desensitize(value)
+   1323              elif isinstance(value, list):
+   1324                  desensitized[key] = [
+   1325                      self._desensitize_text(item) if isinstance(item, str) else item
+   1326                      for item in value
+   1327                  ]
+   1328              else:
+   1329                  desensitized[key] = value
+   1330
+   1331          logger.info("数据脱敏完成")
+   1332          return desensitized
+   1333
+   1334      def _desensitize_text(self, text: str) -> str:
+   1335          """
+   1336          对文本进行脱敏
+   1337
+   1338          Args:
+   1339              text: 原始文本
+   1340
+   1341          Returns:
+   1342              脱敏后的文本
+   1343          """
+   1344          if not text:
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 29 页
+================================================================================
+   1345              return text
+   1346
+   1347          desensitized = text
+   1348
+   1349          # 身份证号优先脱敏（18 位数字更特异，避免被手机号正则误匹配）
+   1350          desensitized = re.sub(
+   1351              self.patterns["id_card"],
+   1352              self.replacement["id_card"],
+   1353              desensitized,
+   1354          )
+   1355
+   1356          # 手机号脱敏
+   1357          desensitized = re.sub(
+   1358              self.patterns["phone"],
+   1359              self.replacement["phone"],
+   1360              desensitized,
+   1361          )
+   1362
+   1363          # 邮箱脱敏
+   1364          desensitized = re.sub(
+   1365              self.patterns["email"],
+   1366              self.replacement["email"],
+   1367              desensitized,
+   1368          )
+   1369
+   1370          # 姓名脱敏（匹配"姓氏+1~2个汉字"的姓名）
+   1371          desensitized = re.sub(
+   1372              self.patterns["name"],
+   1373              lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1),
+   1374              desensitized,
+   1375          )
+   1376
+   1377          return desensitized
+   1378
+   1379      def anonymize_query(self, query: str, user_id: str = None) -> str:
+   1380          """
+   1381          匿名化查询记录
+   1382
+   1383          Args:
+   1384              query: 查询内容
+   1385              user_id: 用户 ID
+   1386
+   1387          Returns:
+   1388              匿名化后的查询记录
+   1389          """
+   1390          # 脱敏查询内容
+   1391          anonymized_query = self._desensitize_text(query)
+   1392
+================================================================================
+中医药智能问答系统 v2.1.0                                      第 30 页
+================================================================================
+   1393          # 生成匿名标识
+   1394          if user_id:
+   1395              anon_id = self._generate_anon_id(user_id)
+   1396          else:
+   1397              anon_id = "anonymous"
+   1398
+   1399          logger.info(f"查询已匿名化：{anon_id}")
+   1400          return anonymized_query
+   1401
+   1402      def _generate_anon_id(self, user_id: str) -> str:
+   1403          """
+   1404          生成匿名 ID
+   1405
+   1406          Args:
+   1407              user_id: 原始用户 ID
+   1408
+   1409          Returns:
+   1410              匿名 ID
+   1411          """
+   1412          # 使用哈希生成匿名 ID
+   1413          hash_obj = hashlib.sha256(user_id.encode('utf-8'))
+   1414          return f"user_{hash_obj.hexdigest()[:8]}"
+   1415
+   1416      def sanitize_log(self, log_data: Dict[str, Any]) -> Dict[str, Any]:
+   1417          """
+   1418          日志数据脱敏
+   1419
+   1420          Args:
+   1421              log_data: 原始日志数据
+   1422
+   1423          Returns:
+   1424              脱敏后的日志数据
+   1425          """
+   1426          # 移除敏感字段
+   1427          sensitive_fields = ['password', 'token', 'cookie', 'session_id']
+   1428
+   1429          sanitized = {}
+   1430          for key, value in log_data.items():
+   1431              if key.lower() in sensitive_fields:
+   1432                  sanitized[key] = '***REDACTED***'
+   1433              elif isinstance(value, str):
+   1434                  sanitized[key] = self._desensitize_text(value)
+   1435              else:
+   1436                  sanitized[key] = value
+   1437
+   1438          return sanitized
+   1439
+   1440      def remove_pii(self, text: str) -> str:
+================================================================================
