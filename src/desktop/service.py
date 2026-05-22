@@ -176,6 +176,7 @@ class TCMDesktopService:
         self._recommender_load_attempted = True
         try:
             from tcm_recommender.recommend import TCMRecommender
+            import torch
 
             db_path = os.path.join(
                 os.environ.get("TCMAI_ROOT", str(Path(__file__).resolve().parents[2])),
@@ -194,7 +195,7 @@ class TCMDesktopService:
             self._recommender = TCMRecommender(
                 model_path=model_path,
                 db_path=db_path,
-                device="cpu",
+                device="cuda" if torch.cuda.is_available() else "cpu",
             )
             self._recommender_available = True
             logger.info("推荐模型加载成功，AI 模式可用")
