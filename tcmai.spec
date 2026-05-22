@@ -6,8 +6,8 @@
 import sys
 from pathlib import Path
 
-# 项目根目录
-root = Path(__file__).parent.absolute()
+# 项目根目录（打包脚本已 cd 到项目目录）
+root = Path.cwd()
 
 # ── 数据文件清单 ──
 # (源路径, 目标目录)
