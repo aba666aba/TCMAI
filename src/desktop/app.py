@@ -235,28 +235,30 @@ class DesktopApp:
         ttk.Label(left, text="症状输入", style="SectionTitle.TLabel").pack(anchor="w")
         ttk.Label(left, text="描述您的症状或直接点击快捷标签", style="SectionSubtitle.TLabel").pack(anchor="w", pady=(2, 14))
 
-        # 输入框（可垂直扩展 + 滚动条）
+        # 输入框（固定高度，无滚动条）
         input_frame = tk.Frame(left, bg=self.palette["border"], bd=1, relief="solid")
-        input_frame.pack(fill="both", expand=True)
-        self.query_input = ScrolledText(
+        input_frame.pack(fill="x")
+        self.query_input = tk.Text(
             input_frame,
+            height=8,
             wrap="word",
             font=("Microsoft YaHei UI", 11),
             relief="flat",
             bd=0,
         )
-        self.query_input.pack(fill="both", padx=2, pady=2, expand=True)
+        self.query_input.pack(fill="both", padx=1, pady=1)
         self.query_input.configure(
             background=self.palette["input_bg"],
             foreground=self.palette["text"],
             insertbackground=self.palette["primary"],
+            highlightthickness=0,
         )
 
         # 分隔线
-        tk.Frame(left, bg=self.palette["border"], height=1).pack(fill="x", pady=(10, 8))
+        tk.Frame(left, bg=self.palette["border"], height=1).pack(fill="x", pady=(16, 10))
 
-        # 快捷标签（固定行，不滚动）
-        ttk.Label(left, text="快捷症状", style="Body.TLabel").pack(anchor="w", pady=(0, 6))
+        # 快捷标签
+        ttk.Label(left, text="快捷症状", style="Body.TLabel").pack(anchor="w", pady=(0, 8))
         tags = ttk.Frame(left, style="Card.TFrame")
         tags.pack(fill="x")
         for index, symptom in enumerate(self.symptom_options):
@@ -310,24 +312,23 @@ class DesktopApp:
         ttk.Label(right, text="智能回答", style="SectionTitle.TLabel").pack(anchor="w")
         ttk.Label(right, text="提交症状后将在此显示辨证结果与推荐方案", style="SectionSubtitle.TLabel").pack(anchor="w", pady=(2, 14))
 
-        # 回答内容
-        answer_frame = tk.Frame(right, bg=self.palette["border"], bd=1, relief="solid")
+        # 回答内容（无滚动条，背景统一）
+        answer_frame = tk.Frame(right, bg="#fcfcfc", bd=1, relief="solid")
         answer_frame.pack(fill="both", expand=True)
-        self.answer_text = ScrolledText(
+        self.answer_text = tk.Text(
             answer_frame,
             wrap="word",
-            height=14,
             font=("Microsoft YaHei UI", 11),
             relief="flat",
             bd=0,
-        )
-        self.answer_text.pack(fill="both", padx=2, pady=2)
-        self.answer_text.configure(
-            background=self.palette["input_bg"],
+            background="#fcfcfc",
             foreground=self.palette["text"],
-            insertbackground=self.palette["primary"],
+            padx=14,
+            pady=12,
+            state="disabled",
+            highlightthickness=0,
         )
-        self._configure_output_text(self.answer_text)
+        self.answer_text.pack(fill="both", expand=True)
 
         # ── 免责声明（首页最底部）──
         disclaimer_frame = tk.Frame(
@@ -481,7 +482,7 @@ class DesktopApp:
                 font=("Microsoft YaHei UI", 10),
             ).pack(anchor="w", padx=14, pady=(0, 12))
 
-    def _configure_output_text(self, widget: ScrolledText) -> None:
+    def _configure_output_text(self, widget: tk.Text) -> None:
         widget.configure(
             background="#fcfcfc",
             foreground=self.palette["text"],
@@ -496,7 +497,7 @@ class DesktopApp:
             borderwidth=0,
         )
 
-    def _set_text(self, widget: ScrolledText, value: str) -> None:
+    def _set_text(self, widget: tk.Text, value: str) -> None:
         widget.configure(state="normal")
         widget.delete("1.0", "end")
         widget.insert("1.0", value.strip() if value else "")
