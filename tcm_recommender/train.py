@@ -230,7 +230,7 @@ class Trainer:
 
         weight = torch.ones_like(scores)
         weight[pos_mask] = 1.0
-        weight[neg_mask] = neg_weight_val
+        weight[neg_mask] = weight.new_tensor(neg_weight_val)
 
         loss = F.binary_cross_entropy_with_logits(
             scores[active_mask],
@@ -248,8 +248,8 @@ class Trainer:
         form_lbl = batch["formula_label"].to(self.device)
         syn_lbl = batch["syndrome_label"].to(self.device)
         sample_weight = batch.get("sample_weight", torch.ones(sym_ids.size(0), device=self.device))
-        # 样本权重归一到均值1，防止整体loss scale偏移
-        sw = sample_weight / sample_weight.mean().clamp(min=0.01)
+        # 样本权重归一到均值1，防止整体loss scale偏移，确保在同一设备
+        sw = sample_weight.to(self.device) / sample_weight.to(self.device).mean().clamp(min=0.01)
 
         # 混合精度 (仅 CUDA)
         with torch.amp.autocast("cuda", enabled=(self.device.type == "cuda")):

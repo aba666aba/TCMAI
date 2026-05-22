@@ -41,7 +41,7 @@ class DesktopApp:
             "shadow": "#dfdcd5",
         }
         from core.tcm_config import UI_QUICK_SYMPTOMS
-        self.symptom_options = list(UI_QUICK_SYMPTOMS)
+        self.symptom_options = list(UI_QUICK_SYMPTOMS)[:5]
 
         self._configure_root()
         self._build_style()
@@ -235,18 +235,17 @@ class DesktopApp:
         ttk.Label(left, text="症状输入", style="SectionTitle.TLabel").pack(anchor="w")
         ttk.Label(left, text="描述您的症状或直接点击快捷标签", style="SectionSubtitle.TLabel").pack(anchor="w", pady=(2, 14))
 
-        # 输入框
+        # 输入框（可垂直扩展 + 滚动条）
         input_frame = tk.Frame(left, bg=self.palette["border"], bd=1, relief="solid")
-        input_frame.pack(fill="x")
+        input_frame.pack(fill="both", expand=True)
         self.query_input = ScrolledText(
             input_frame,
-            height=8,
             wrap="word",
             font=("Microsoft YaHei UI", 11),
             relief="flat",
             bd=0,
         )
-        self.query_input.pack(fill="both", padx=2, pady=2)
+        self.query_input.pack(fill="both", padx=2, pady=2, expand=True)
         self.query_input.configure(
             background=self.palette["input_bg"],
             foreground=self.palette["text"],
@@ -254,10 +253,10 @@ class DesktopApp:
         )
 
         # 分隔线
-        tk.Frame(left, bg=self.palette["border"], height=1).pack(fill="x", pady=(16, 10))
+        tk.Frame(left, bg=self.palette["border"], height=1).pack(fill="x", pady=(10, 8))
 
-        # 快捷标签
-        ttk.Label(left, text="快捷症状", style="Body.TLabel").pack(anchor="w", pady=(0, 8))
+        # 快捷标签（固定行，不滚动）
+        ttk.Label(left, text="快捷症状", style="Body.TLabel").pack(anchor="w", pady=(0, 6))
         tags = ttk.Frame(left, style="Card.TFrame")
         tags.pack(fill="x")
         for index, symptom in enumerate(self.symptom_options):
@@ -276,7 +275,7 @@ class DesktopApp:
                 pady=6,
                 command=lambda value=symptom: self._append_symptom(value),
             )
-            button.grid(row=index // 4, column=index % 4, padx=5, pady=5, sticky="ew")
+            button.grid(row=index // 4, column=index % 4, padx=4, pady=4, sticky="ew")
             tags.grid_columnconfigure(index % 4, weight=1)
 
         # 操作按钮
@@ -389,17 +388,25 @@ class DesktopApp:
         tk.Frame(list_frame, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 12))
         ttk.Label(list_frame, text="记录列表", style="SectionTitle.TLabel").pack(anchor="w")
 
+        tree_frame = ttk.Frame(list_frame, style="Card.TFrame")
+        tree_frame.pack(fill="both", expand=True, pady=(8, 0))
+
+        tree_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
+        tree_scrollbar.pack(side="right", fill="y")
+
         self.history_tree = ttk.Treeview(
-            list_frame,
+            tree_frame,
             columns=("timestamp", "query"),
             show="headings",
             selectmode="browse",
+            yscrollcommand=tree_scrollbar.set,
         )
+        tree_scrollbar.config(command=self.history_tree.yview)
         self.history_tree.heading("timestamp", text="时间")
         self.history_tree.heading("query", text="问题")
         self.history_tree.column("timestamp", width=170, anchor="w")
         self.history_tree.column("query", width=510, anchor="w")
-        self.history_tree.pack(fill="both", expand=True, pady=(8, 0))
+        self.history_tree.pack(fill="both", expand=True)
         self.history_tree.bind("<<TreeviewSelect>>", self._on_history_select)
 
         # 详情装饰顶线
@@ -476,15 +483,17 @@ class DesktopApp:
 
     def _configure_output_text(self, widget: ScrolledText) -> None:
         widget.configure(
-            background="#ffffff",
+            background="#fcfcfc",
             foreground=self.palette["text"],
             insertbackground=self.palette["primary"],
             highlightthickness=1,
             highlightbackground=self.palette["border"],
             highlightcolor=self.palette["primary_light"],
-            padx=12,
-            pady=10,
+            padx=14,
+            pady=12,
             state="disabled",
+            relief="flat",
+            borderwidth=0,
         )
 
     def _set_text(self, widget: ScrolledText, value: str) -> None:
