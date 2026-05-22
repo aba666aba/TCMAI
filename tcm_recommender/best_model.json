@@ -1,0 +1,21 @@
+{
+  "val_metrics": {
+    "val_loss": 1.0097081201228624,
+    "syn_acc": 0.9643765903307888,
+    "herb_recall10": 0.2572514249525016
+  },
+  "config": {
+    "db": "data\\tcm_knowledge.db",
+    "data": "data\\train_data_v4_small.npz",
+    "output": "tcm_recommender\\best_model_v4.pth",
+    "epochs": 1,
+    "batch_size": 32,
+    "lr": 0.001,
+    "device": "cpu",
+    "samples": 100000,
+    "grad_accum": 1,
+    "contrastive_weight": 0.2,
+    "d_model": 256,
+    "num_layers": 2
+  }
+}

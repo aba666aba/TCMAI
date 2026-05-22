@@ -4,356 +4,426 @@
 """
 中医药推荐系统 - 深度学习模型
 
-基于症状推荐中药材和方剂
+架构：
+  SymptomEncoder (6层Transformer, 512dim, 8heads)
+     + Embedding + PositionalEncoding
+     + x6 TransformerEncoderLayer (GELU, PreLN)
+     + AttentivePooling -> [B, 512]
+  HerbEncoder (双塔: 文本特征 + 属性编码)
+  CrossAttention (症状x药材交互)
+  MultiTaskHeads (证型/药材/方剂三头)
+  ContrastiveLoss (InfoNCE)
 """
+
+import logging
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Tuple, Optional
-import logging
+
+_src = Path(__file__).resolve().parents[1] / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
 
 logger = logging.getLogger(__name__)
 
 
-class SymptomEncoder(nn.Module):
-    """症状编码器 - 将症状列表编码为向量"""
-    
-    def __init__(self, num_symptoms: int, embed_dim: int = 64):
+# ═══════════════════════════════════════════════════════════
+# 基础组件
+# ═══════════════════════════════════════════════════════════
+
+class PreLayerNormTransformerEncoderLayer(nn.Module):
+    """Pre-LN Transformer Encoder Layer (更稳定的训练)"""
+
+    def __init__(self, d_model: int, nhead: int, dim_feedforward: int = 2048,
+                 dropout: float = 0.1, activation: str = "gelu"):
         super().__init__()
-        self.embedding = nn.Embedding(num_symptoms + 1, embed_dim, padding_idx=0)
-        self.attention = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer_norm = nn.LayerNorm(embed_dim)
-    
-    def forward(self, symptoms: torch.Tensor) -> torch.Tensor:
+        self.norm1 = nn.LayerNorm(d_model)
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,
+                                                batch_first=True)
+        self.dropout1 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.activation = nn.GELU() if activation == "gelu" else nn.ReLU()
+        self.dropout_act = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout2 = nn.Dropout(dropout)
+
+    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None,
+                src_key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # Pre-LN + Attention
+        residual = src
+        src_normed = self.norm1(src)
+        attn_out, _ = self.self_attn(src_normed, src_normed, src_normed,
+                                      key_padding_mask=src_key_padding_mask)
+        src = residual + self.dropout1(attn_out)
+
+        # Pre-LN + FFN
+        residual = src
+        src_normed = self.norm2(src)
+        ffn_out = self.linear2(self.dropout_act(self.activation(self.linear1(src_normed))))
+        src = residual + self.dropout2(ffn_out)
+        return src
+
+
+class LearnedPositionalEncoding(nn.Module):
+    """可学习的位置编码"""
+
+    def __init__(self, d_model: int, max_len: int = 64):
+        super().__init__()
+        self.pos_embedding = nn.Parameter(torch.randn(1, max_len, d_model) * 0.02)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.pos_embedding[:, :x.size(1)]
+
+
+class AttentivePooling(nn.Module):
+    """注意力池化：加权平均序列 → 固定维度"""
+
+    def __init__(self, d_model: int):
+        super().__init__()
+        self.attn = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.Tanh(),
+            nn.Linear(d_model // 2, 1),
+        )
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        编码症状
-        
         Args:
-            symptoms: [batch_size, seq_len] 症状 ID 序列
-        
+            x: [B, L, D]
+            mask: [B, L] True=valid
         Returns:
-            [batch_size, embed_dim] 编码后的症状向量
+            [B, D]
         """
-        # 嵌入编码
-        embedded = self.embedding(symptoms)  # [batch, seq, embed]
-        
-        # 自注意力
-        attended, _ = self.attention(embedded, embedded, embedded)
-        
-        # 层归一化
-        attended = self.layer_norm(attended + embedded)
-        
-        # 全局池化（取平均）
-        mask = (symptoms != 0).unsqueeze(-1).float()
-        pooled = (attended * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-9)
-        
+        scores = self.attn(x).squeeze(-1)  # [B, L]
+        if mask is not None:
+            scores = scores.masked_fill(~mask, -1e9)
+        weights = F.softmax(scores, dim=-1).unsqueeze(-1)  # [B, L, 1]
+        return (x * weights).sum(dim=1)
+
+
+# ═══════════════════════════════════════════════════════════
+# 症状编码器
+# ═══════════════════════════════════════════════════════════
+
+class SymptomEncoder(nn.Module):
+    """多层Transformer症状编码器"""
+
+    def __init__(self, num_symptoms: int, d_model: int = 512, nhead: int = 8,
+                 num_layers: int = 6, dim_ff: int = 2048, dropout: float = 0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.embedding = nn.Embedding(num_symptoms + 1, d_model, padding_idx=0)
+        self.pos_encoder = LearnedPositionalEncoding(d_model)
+        self.dropout_emb = nn.Dropout(dropout)
+
+        self.layers = nn.ModuleList([
+            PreLayerNormTransformerEncoderLayer(d_model, nhead, dim_ff, dropout)
+            for _ in range(num_layers)
+        ])
+        self.final_norm = nn.LayerNorm(d_model)
+        self.pooling = AttentivePooling(d_model)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.normal_(self.embedding.weight, mean=0, std=self.d_model ** -0.5)
+        nn.init.constant_(self.embedding.weight[0], 0)
+
+    def forward(self, symptom_ids: torch.Tensor,
+                mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            symptom_ids: [B, L], 1-based, 0=padding
+            mask: [B, L], True=valid
+        Returns:
+            pooled: [B, D]
+            sequence: [B, L, D]
+        """
+        if mask is None:
+            mask = symptom_ids != 0
+
+        x = self.embedding(symptom_ids) * (self.d_model ** 0.5)
+        x = self.pos_encoder(x)
+        x = self.dropout_emb(x)
+
+        key_padding_mask = ~mask
+        for layer in self.layers:
+            x = layer(x, src_key_padding_mask=key_padding_mask)
+
+        x = self.final_norm(x)
+        pooled = self.pooling(x, mask)
+        return pooled, x
+
+
+# ═══════════════════════════════════════════════════════════
+# 药材编码器 (双塔)
+# ═══════════════════════════════════════════════════════════
+
+class HerbEncoder(nn.Module):
+    """双塔药材编码器：文本塔 + 属性塔"""
+
+    def __init__(self, num_chars: int, num_categories: int = 30,
+                 d_model: int = 512, text_dim: int = 256, meta_dim: int = 64):
+        super().__init__()
+        # 文本塔 (CharCNN → 文本特征)
+        self.text_encoder = nn.Sequential(
+            nn.Linear(num_chars, text_dim * 2),
+            nn.LayerNorm(text_dim * 2),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(text_dim * 2, text_dim),
+            nn.LayerNorm(text_dim),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(text_dim, d_model),
+            nn.LayerNorm(d_model),
+        )
+
+        # 属性塔 (category + nature + flavor + meridian)
+        self.category_emb = nn.Embedding(num_categories + 1, meta_dim, padding_idx=0)
+        self.nature_emb = nn.Embedding(8, meta_dim)    # 0=padding, 1-5=natures, 6-7=unknown
+        self.flavor_emb = nn.Embedding(8, meta_dim)     # 0=padding, 1-5=flavors, 6-7=unknown
+        meta_total = meta_dim * 3
+        self.meta_proj = nn.Sequential(
+            nn.Linear(meta_total, d_model),
+            nn.LayerNorm(d_model),
+        )
+
+        # 融合门
+        self.gate = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, char_multihot: torch.Tensor, category_idx: torch.Tensor,
+                nature_idx: torch.Tensor, flavor_idx: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            char_multihot: [num_herbs, num_chars]
+            category_idx: [num_herbs] category id
+            nature_idx: [num_herbs] nature id
+            flavor_idx: [num_herbs] flavor id
+        Returns:
+            [num_herbs, d_model]
+        """
+        text_feat = self.text_encoder(char_multihot)  # [H, D]
+        meta = torch.cat([
+            self.category_emb(category_idx),
+            self.nature_emb(nature_idx),
+            self.flavor_emb(flavor_idx),
+        ], dim=-1)
+        meta_feat = self.meta_proj(meta)  # [H, D]
+
+        gate = self.gate(torch.cat([text_feat, meta_feat], dim=-1))
+        return gate * text_feat + (1 - gate) * meta_feat
+
+
+# ═══════════════════════════════════════════════════════════
+# 交叉注意力模块
+# ═══════════════════════════════════════════════════════════
+
+class CrossAttentionRanker(nn.Module):
+    """症状-药材交叉注意力排序器"""
+
+    def __init__(self, d_model: int = 512, nhead: int = 8, dropout: float = 0.1):
+        super().__init__()
+        self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,
+                                                 batch_first=True)
+        self.norm = nn.LayerNorm(d_model)
+        self.score_proj = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, 1),
+        )
+
+    def forward(self, symptom_repr: torch.Tensor,
+                item_embeddings: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            symptom_repr: [B, D]  症状表征
+            item_embeddings: [num_items, D]  药材/方剂嵌入
+        Returns:
+            [B, num_items] 分数
+        """
+        B = symptom_repr.size(0)
+        N = item_embeddings.size(0)
+
+        # Query=B个症状, Key/Value=N个候选项
+        q = symptom_repr.unsqueeze(1)  # [B, 1, D]
+        k = item_embeddings.unsqueeze(0).expand(B, -1, -1)  # [B, N, D]
+        v = k
+
+        attn_out, _ = self.cross_attn(q, k, v)  # [B, 1, D]
+        attn_out = self.norm(attn_out + q)
+
+        # 逐项评分
+        combined = attn_out.expand(-1, N, -1) * item_embeddings.unsqueeze(0)  # [B, N, D]
+        scores = self.score_proj(combined).squeeze(-1)  # [B, N]
+        return scores
+
+
+# ═══════════════════════════════════════════════════════════
+# 多任务头
+# ═══════════════════════════════════════════════════════════
+
+class SyndromeHead(nn.Module):
+    def __init__(self, d_model: int = 512, num_syndromes: int = 18, dropout: float = 0.2):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, d_model // 2),
+            nn.LayerNorm(d_model // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, num_syndromes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+# ═══════════════════════════════════════════════════════════
+# 主模型
+# ═══════════════════════════════════════════════════════════
+
+class TCMNet(nn.Module):
+    """中医药推荐系统模型"""
+
+    def __init__(self, num_symptoms: int, num_herbs: int, num_formulas: int,
+                 num_syndromes: int, num_chars: int, num_categories: int = 30,
+                 d_model: int = 512, nhead: int = 8, num_layers: int = 6,
+                 dropout: float = 0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.temperature = nn.Parameter(torch.tensor(0.07))
+
+        # 编码器
+        self.symptom_encoder = SymptomEncoder(
+            num_symptoms, d_model, nhead, num_layers, d_model * 4, dropout)
+        self.herb_encoder = HerbEncoder(
+            num_chars, num_categories, d_model, text_dim=256, meta_dim=64)
+
+        # 方剂嵌入 (可学习)
+        self.formula_embedding = nn.Embedding(num_formulas + 1, d_model, padding_idx=0)
+
+        # 排序器
+        self.herb_ranker = CrossAttentionRanker(d_model, nhead, dropout)
+        self.formula_ranker = CrossAttentionRanker(d_model, nhead, dropout)
+
+        # 分类头
+        self.syndrome_head = SyndromeHead(d_model, num_syndromes, dropout)
+
+        # 投影层 (用于对比学习)
+        self.projection = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 256),
+        )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for name, param in self.named_parameters():
+            if "weight" in name and param.dim() >= 2:
+                nn.init.xavier_uniform_(param)
+            elif "bias" in name:
+                nn.init.zeros_(param)
+
+    def encode_symptoms(self, symptom_ids: torch.Tensor,
+                        mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        pooled, _ = self.symptom_encoder(symptom_ids, mask)
         return pooled
 
+    def encode_herbs(self, char_mh: torch.Tensor, cat_idx: torch.Tensor,
+                     nat_idx: torch.Tensor, flv_idx: torch.Tensor) -> torch.Tensor:
+        return self.herb_encoder(char_mh, cat_idx, nat_idx, flv_idx)
 
-class HerbRecommender(nn.Module):
-    """药材推荐器"""
-    
-    def __init__(self, symptom_dim: int, num_herbs: int, hidden_dim: int = 128):
-        super().__init__()
-        self.num_herbs = num_herbs
-        
-        # 推荐网络
-        self.recommender = nn.Sequential(
-            nn.Linear(symptom_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, num_herbs)
-        )
-        
-        # 药材特征嵌入（可选）
-        self.herb_embedding = nn.Embedding(num_herbs + 1, 32)
-    
-    def forward(self, symptom_vector: torch.Tensor) -> torch.Tensor:
+    def forward(self, symptom_ids: torch.Tensor, symptom_mask: torch.Tensor,
+                herb_char: torch.Tensor, herb_cat: torch.Tensor,
+                herb_nat: torch.Tensor, herb_flv: torch.Tensor,
+                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        推荐药材
-        
-        Args:
-            symptom_vector: [batch_size, symptom_dim] 症状向量
-        
         Returns:
-            [batch_size, num_herbs] 每个药材的推荐分数
+            syndrome_logits: [B, num_syndromes]
+            herb_scores: [B, num_herbs]
+            formula_scores: [B, num_formulas]
+            symptom_vec: [B, D]  (for contrastive loss)
+            herb_vec: [H, D]      (for contrastive loss)
         """
-        scores = self.recommender(symptom_vector)
-        return scores
+        sv, _ = self.symptom_encoder(symptom_ids, symptom_mask > 0.5)
+        hv = self.herb_encoder(herb_char, herb_cat, herb_nat, herb_flv)
 
+        syndrome_logits = self.syndrome_head(sv)
 
-class FormulaRecommender(nn.Module):
-    """方剂推荐器"""
-    
-    def __init__(self, symptom_dim: int, num_formulas: int, hidden_dim: int = 64):
-        super().__init__()
-        self.recommender = nn.Sequential(
-            nn.Linear(symptom_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(hidden_dim, num_formulas)
-        )
-    
-    def forward(self, symptom_vector: torch.Tensor) -> torch.Tensor:
-        """
-        推荐方剂
-        
-        Args:
-            symptom_vector: [batch_size, symptom_dim] 症状向量
-        
-        Returns:
-            [batch_size, num_formulas] 每个方剂的推荐分数
-        """
-        scores = self.recommender(symptom_vector)
-        return scores
+        herb_scores = self.herb_ranker(sv, hv)
+        formula_emb = self.formula_embedding.weight[1:]  # [F, D]
+        formula_scores = self.formula_ranker(sv, formula_emb)
 
+        return syndrome_logits, herb_scores, formula_scores, sv, hv
 
-class TCMRecommenderSystem(nn.Module):
-    """
-    中医药推荐系统（主模型）
-    
-    输入：症状列表
-    输出：推荐的药材和方剂
-    """
-    
-    def __init__(
-        self,
-        num_symptoms: int,
-        num_herbs: int,
-        num_formulas: int,
-        symptom_embed_dim: int = 64,
-        hidden_dim: int = 128
-    ):
-        super().__init__()
-        
-        # 症状编码器
-        self.symptom_encoder = SymptomEncoder(
-            num_symptoms=num_symptoms,
-            embed_dim=symptom_embed_dim
-        )
-        
-        # 药材推荐器
-        self.herb_recommender = HerbRecommender(
-            symptom_dim=symptom_embed_dim,
-            num_herbs=num_herbs,
-            hidden_dim=hidden_dim
-        )
-        
-        # 方剂推荐器
-        self.formula_recommender = FormulaRecommender(
-            symptom_dim=symptom_embed_dim,
-            num_formulas=num_formulas,
-            hidden_dim=hidden_dim // 2
-        )
-        
-        # 初始化权重
-        self._init_weights()
-    
-    def _init_weights(self):
-        """初始化模型权重"""
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight)
-                if module.bias is not None:
-                    nn.init.zeros_(module.bias)
-            elif isinstance(module, nn.Embedding):
-                nn.init.normal_(module.weight, mean=0, std=0.1)
-    
-    def forward(
-        self,
-        symptoms: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def contrastive_loss(self, symptom_vec: torch.Tensor, herb_vec: torch.Tensor,
+                         herb_labels: torch.Tensor, temperature: Optional[float] = None) -> torch.Tensor:
         """
-        前向传播
-        
-        Args:
-            symptoms: [batch_size, seq_len] 症状 ID 序列
-        
-        Returns:
-            (herb_scores, formula_scores) - 药材和方剂推荐分数
+        Supervised Contrastive Loss (多正类版本)
         """
-        # 编码症状
-        symptom_vector = self.symptom_encoder(symptoms)
-        
-        # 推荐药材和方剂
-        herb_scores = self.herb_recommender(symptom_vector)
-        formula_scores = self.formula_recommender(symptom_vector)
-        
-        return herb_scores, formula_scores
-    
-    def predict(
-        self,
-        symptoms: torch.Tensor,
-        top_k: int = 10
-    ) -> Dict[str, List]:
-        """
-        预测推荐
-        
-        Args:
-            symptoms: [batch_size, seq_len] 症状 ID 序列
-            top_k: 返回前 K 个推荐
-        
-        Returns:
-            推荐结果字典
-        """
+        tau = temperature if temperature is not None else self.temperature.abs()
+
+        sv = F.normalize(self.projection(symptom_vec), dim=1)
+        hv = F.normalize(self.projection(herb_vec), dim=1)
+
+        sim = sv @ hv.T / tau.clamp(min=0.01)  # [B, H]
+
+        loss = 0.0
+        count = 0
+        for i in range(sim.size(0)):
+            pos_mask = herb_labels[i] > 0.5
+            if pos_mask.sum() == 0:
+                continue
+            pos_sim = sim[i][pos_mask]
+            log_prob = pos_sim - torch.logsumexp(sim[i], dim=0)
+            loss -= log_prob.mean()
+            count += 1
+
+        return loss / max(count, 1)
+
+    @torch.no_grad()
+    def predict(self, symptom_ids: torch.Tensor, symptom_mask: torch.Tensor,
+                herb_char: torch.Tensor, herb_cat: torch.Tensor,
+                herb_nat: torch.Tensor, herb_flv: torch.Tensor,
+                top_k: int = 10) -> Dict[str, list]:
         self.eval()
-        with torch.no_grad():
-            herb_scores, formula_scores = self.forward(symptoms)
-            
-            # 获取 Top-K
-            herb_topk = torch.topk(herb_scores[0], min(top_k, herb_scores.shape[1]))
-            formula_topk = torch.topk(formula_scores[0], min(top_k, formula_scores.shape[1]))
-            
-            return {
-                'herbs': list(zip(herb_topk.indices.tolist(), herb_topk.values.tolist())),
-                'formulas': list(zip(formula_topk.indices.tolist(), formula_topk.values.tolist()))
-            }
+        syn_logits, herb_scores, formula_scores, _, _ = self.forward(
+            symptom_ids, symptom_mask, herb_char, herb_cat, herb_nat, herb_flv)
 
+        syn_probs = F.softmax(syn_logits[0], dim=-1)
+        h_topk = torch.topk(herb_scores[0], min(top_k, herb_scores.shape[1]))
+        f_topk = torch.topk(formula_scores[0], min(top_k, formula_scores.shape[1]))
 
-class SafetyChecker:
-    """
-    安全校验器 - 检查配伍禁忌
-    """
-    
-    def __init__(self, incompatible_herbs: Dict[str, List]):
-        """
-        初始化安全校验器
-        
-        Args:
-            incompatible_herbs: 配伍禁忌字典
-        """
-        self.incompatible_pairs = set()
-        self.pregnancy_forbidden = set()
-        
-        # 解析配伍禁忌
-        for category, items in incompatible_herbs.items():
-            if category == '孕妇禁用':
-                self.pregnancy_forbidden = set(items)
-            else:
-                for pair in items:
-                    if isinstance(pair, tuple):
-                        self.incompatible_pairs.add(pair)
-                        self.incompatible_pairs.add((pair[1], pair[0]))  # 双向
-    
-    def check_compatibility(self, herb_names: List[str]) -> Dict:
-        """
-        检查药材配伍兼容性
-        
-        Args:
-            herb_names: 药材名称列表
-        
-        Returns:
-            检查结果字典
-        """
-        warnings = []
-        incompatible = []
-        toxic = []
-        
-        # 检查配伍禁忌
-        for i, herb1 in enumerate(herb_names):
-            for herb2 in herb_names[i+1:]:
-                if (herb1, herb2) in self.incompatible_pairs:
-                    incompatible.append((herb1, herb2))
-                    warnings.append(f"⚠️ 配伍禁忌：{herb1} 与 {herb2} 不可同用（十八反/十九畏）")
-        
-        # 检查孕妇禁用
-        for herb in herb_names:
-            if herb in self.pregnancy_forbidden:
-                warnings.append(f"⚠️ 孕妇禁用：{herb}")
-        
-        # 检查毒性
-        toxic_herbs = ['生川乌', '生草乌', '附子', '巴豆', '甘遂', '大戟', '芫花']
-        for herb in herb_names:
-            if herb in toxic_herbs:
-                toxic.append(herb)
-                warnings.append(f"☠️ 有毒性：{herb}（需谨慎使用）")
-        
         return {
-            'is_safe': len(incompatible) == 0,
-            'warnings': warnings,
-            'incompatible_pairs': incompatible,
-            'toxic_herbs': toxic
+            "syndromes": list(zip(syn_probs.argsort(descending=True).tolist(),
+                                  syn_probs.sort(descending=True).values.tolist())),
+            "herbs": list(zip(h_topk.indices.tolist(), h_topk.values.tolist())),
+            "formulas": list(zip(f_topk.indices.tolist(), f_topk.values.tolist())),
         }
 
 
-def create_model(
-    num_symptoms: int,
-    num_herbs: int,
-    num_formulas: int
-) -> TCMRecommenderSystem:
-    """
-    创建模型的便捷函数
-    
-    Args:
-        num_symptoms: 症状数量
-        num_herbs: 药材数量
-        num_formulas: 方剂数量
-    
-    Returns:
-        TCMRecommenderSystem 实例
-    """
-    model = TCMRecommenderSystem(
-        num_symptoms=num_symptoms,
-        num_herbs=num_herbs,
-        num_formulas=num_formulas,
-        symptom_embed_dim=64,
-        hidden_dim=128
-    )
-    
-    logger.info(f"创建模型:")
-    logger.info(f"  - 症状编码维度：64")
-    logger.info(f"  - 隐藏层维度：128")
-    logger.info(f"  - 药材数量：{num_herbs}")
-    logger.info(f"  - 方剂数量：{num_formulas}")
-    
-    # 计算参数量
-    total_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"  - 总参数量：{total_params:,}")
-    
+# ═══════════════════════════════════════════════════════════
+# 工厂函数
+# ═══════════════════════════════════════════════════════════
+
+def create_model(**kwargs) -> TCMNet:
+    model = TCMNet(**kwargs)
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info("模型: %s 总参数 (%s 可训练)", f"{total:,}", f"{trainable:,}")
     return model
-
-
-if __name__ == '__main__':
-    # 测试模型
-    print("=== 测试中医药推荐模型 ===\n")
-    
-    # 创建模型
-    model = create_model(
-        num_symptoms=32,
-        num_herbs=1010,
-        num_formulas=347
-    )
-    
-    # 测试前向传播
-    batch_size = 2
-    seq_len = 5
-    symptoms = torch.randint(0, 32, (batch_size, seq_len))
-    
-    print(f"\n输入症状：{symptoms.shape}")
-    
-    herb_scores, formula_scores = model.forward(symptoms)
-    
-    print(f"药材推荐分数：{herb_scores.shape}")
-    print(f"方剂推荐分数：{formula_scores.shape}")
-    
-    # 测试预测
-    result = model.predict(symptoms, top_k=5)
-    print(f"\nTop-5 药材推荐：{len(result['herbs'])} 个")
-    print(f"Top-5 方剂推荐：{len(result['formulas'])} 个")
-    
-    # 测试安全校验
-    safety_checker = SafetyChecker({
-        '十八反': [('甘草', '大戟'), ('乌头', '半夏')],
-        '孕妇禁用': ['麝香', '三棱', '莪术']
-    })
-    
-    check_result = safety_checker.check_compatibility(['甘草', '大戟', '人参'])
-    print(f"\n安全检查结果:")
-    print(f"  是否安全：{check_result['is_safe']}")
-    print(f"  警告：{len(check_result['warnings'])} 条")
-    for w in check_result['warnings']:
-        print(f"    - {w}")

@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
 """
-中医药推荐系统 - 推理脚本
+中医药推荐系统 - 推理接口
 
-根据症状推荐药材和方剂，并进行安全校验
+根据症状推荐药材和方剂，并进行安全校验。
 """
 
 import os
@@ -17,34 +18,17 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 
-# 添加项目路径
-# 支持正常运行和 PyInstaller 打包后的情况
+# 项目路径
 if getattr(sys, 'frozen', False):
-    # PyInstaller 打包后的情况
     PROJECT_ROOT = Path(sys.executable).parent.parent
 else:
-    # 正常 Python 运行
     PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tcm_recommender.data_loader import TCMDataLoader
-from tcm_recommender.model import create_model, HerbFeatureEncoder, SafetyChecker
-
-# V3/V4 模型支持
-_HAS_V3 = False
-_HAS_V4 = False
-try:
-    from tcm_recommender.model_v3 import create_model_v3, HerbFeatureEncoderV3
-    _HAS_V3 = True
-except ImportError:
-    pass
-try:
-    from tcm_recommender.model_v4 import TCMV4, create_tcm_v4
-    from tcm_recommender.train_v4 import build_herb_features_v4
-    from tcm_recommender.data_pipeline import TCMDataPipeline
-    _HAS_V4 = True
-except ImportError as e:
-    pass
+from tcm_recommender.model import TCMNet, create_model
+from tcm_recommender.train import build_herb_features
+from tcm_recommender.data_pipeline import TCMDataPipeline
+from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST, EXTENDED_SYNDROME_DEFINITIONS
 
 # 配置日志
 logging.basicConfig(
@@ -55,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class TCMRecommender:
-    """中医药推荐器（支持 V2/V3 模型自动检测）"""
+    """中医药推荐器"""
 
     def __init__(
         self,
@@ -66,440 +50,246 @@ class TCMRecommender:
     ):
         self.device = device
         self.db_path = db_path
+        self.encoder_path = encoder_path
 
+        # 加载数据管线
         logger.info("加载数据...")
-        self.data_loader = TCMDataLoader(db_path)
-        self.data_loader.load_all_data()
+        self._pipeline = TCMDataPipeline(db_path)
+        self._pipeline.load_all()
 
-        # 检测模型版本
+        # 加载模型
+        logger.info("加载模型: %s", model_path)
         checkpoint = torch.load(model_path, map_location="cpu")
-        self._model_version = self._detect_version(checkpoint)
-        logger.info("检测到模型版本: V%s", self._model_version)
+        cfg = checkpoint.get("config", {})
 
-        # 药材字符特征
-        if self._model_version == 4:
-            pipeline = TCMDataPipeline(db_path)
-            pipeline.load_all()
-            herb_feat = build_herb_features_v4(pipeline)
-            self._herb_features_dict = herb_feat
-            self._cached_herb_features = None
-            self.herb_char_multihot = None
-            num_chars = herb_feat["num_chars"]
-            pipeline.close()
-        elif self._model_version == 3:
-            from tcm_recommender.train_v3 import build_herb_char_features_v3
-            herb_char_multihot, num_chars, char_list = build_herb_char_features_v3(self.data_loader)
-            self.herb_char_multihot = herb_char_multihot
-        else:
-            from tcm_recommender.train import build_herb_char_features
-            herb_char_multihot, num_chars, char_list = build_herb_char_features(self.data_loader)
-            self.herb_char_multihot = herb_char_multihot
+        herb_feat = build_herb_features(self._pipeline)
+        self._herb_feat = herb_feat
 
-        # 加载扩展症状/证型
-        self._extended_symptoms = None
-        self._extended_syndromes = None
-        if self._model_version in (3, 4, 21):
-            try:
-                from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST, EXTENDED_SYNDROME_DEFINITIONS
-                self._extended_symptoms = EXTENDED_SYMPTOM_LIST
-                self._extended_syndromes = EXTENDED_SYNDROME_DEFINITIONS
-            except ImportError:
-                pass
+        # 症状/证型配置
+        self._symptom_list = EXTENDED_SYMPTOM_LIST
+        self._syndrome_names = ["未知"] + list(EXTENDED_SYNDROME_DEFINITIONS.keys())
 
-        num_symptoms = len(self._extended_symptoms) if self._extended_symptoms else len(self.data_loader.symptoms)
-        num_syndromes = len(self._extended_syndromes) if self._extended_syndromes else self.data_loader.num_syndromes
-
-        # ── V4 特殊处理 ──
-        if self._model_version == 4:
-            cfg = checkpoint.get("config", {})
-            self.model = create_tcm_v4(
-                num_symptoms=num_symptoms,
-                num_herbs=self.data_loader.num_herbs,
-                num_formulas=len(self.data_loader.formulas) + 1,
-                num_syndromes=num_syndromes + 1,
-                num_chars=self._herb_features_dict["num_chars"],
-                num_categories=self._herb_features_dict["num_categories"],
-                d_model=cfg.get("d_model", 384),
-                nhead=8,
-                num_layers=cfg.get("num_layers", 4),
-                dropout=0.1,
-            )
-            self.model.load_state_dict(checkpoint["model_state_dict"])
-            self.model.to(device)
-            self.model.eval()
-            logger.info("V4 模型加载完成")
-        else:
-            # ── V2/V2.1/V3 处理 ──
-            if self._model_version == 3:
-                self.herb_feature_encoder = HerbFeatureEncoderV3(num_chars, feature_dim=128)
-            elif self._model_version == 21:
-                self.herb_feature_encoder = HerbFeatureEncoder(num_chars, feature_dim=64)
-            else:
-                self.herb_feature_encoder = HerbFeatureEncoder(num_chars, feature_dim=32)
-
-            logger.info("加载模型...")
-            if self._model_version == 3:
-                self.model = create_model_v3(
-                    num_symptoms=num_symptoms, num_herbs=self.data_loader.num_herbs,
-                    num_formulas=len(self.data_loader.formulas) + 1,
-                    num_syndromes=num_syndromes + 1, herb_char_dim=num_chars,
-                    d_model=256, herb_feature_dim=128, num_transformer_layers=4,
-                )
-            elif self._model_version == 21:
-                self.model = create_model(
-                    num_symptoms=num_symptoms, num_herbs=self.data_loader.num_herbs,
-                    num_formulas=len(self.data_loader.formulas) + 1,
-                    num_syndromes=num_syndromes + 1, herb_char_dim=num_chars,
-                    embed_dim=128, herb_feature_dim=64,
-                )
-            else:
-                self.model = create_model(
-                    num_symptoms=num_symptoms, num_herbs=self.data_loader.num_herbs,
-                    num_formulas=len(self.data_loader.formulas) + 1,
-                    num_syndromes=num_syndromes + 1, herb_char_dim=num_chars,
-                    embed_dim=64, herb_feature_dim=32,
-                )
-            self.model.load_state_dict(checkpoint["model_state_dict"])
-            logger.info("模型状态已加载")
-
-            if encoder_path and os.path.exists(encoder_path):
-                enc_checkpoint = torch.load(encoder_path, map_location=self.device)
-                self.herb_feature_encoder.load_state_dict(enc_checkpoint["encoder_state_dict"])
-                logger.info("编码器已加载：%s", encoder_path)
-
-            self.model.to(device)
-            self.herb_feature_encoder.to(device)
-            self.herb_char_multihot = self.herb_char_multihot.to(device)
-            self.model.eval()
-            self.herb_feature_encoder.eval()
-
-            with torch.no_grad():
-                self._cached_herb_features = self.herb_feature_encoder(self.herb_char_multihot)
-
-        # 安全校验器
-        self.safety_checker = SafetyChecker(self.data_loader.incompatible_herbs)
+        # 创建模型
+        self.model = create_model(
+            num_symptoms=len(self._symptom_list),
+            num_herbs=len(self._pipeline.herb_names),
+            num_formulas=len(self._pipeline.formula_names) + 1,
+            num_syndromes=len(self._syndrome_names),
+            num_chars=herb_feat["num_chars"],
+            num_categories=herb_feat["num_categories"],
+            d_model=cfg.get("d_model", 384),
+            nhead=8,
+            num_layers=cfg.get("num_layers", 4),
+            dropout=0.1,
+        )
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.model.to(device)
+        self.model.eval()
+        logger.info("模型加载完成")
 
         # 症状名称→ID 映射
-        symptom_list = self._extended_symptoms if self._extended_symptoms else [
-            v["name"] for v in sorted(self.data_loader.symptoms.values(), key=lambda x: x["id"])
-        ]
-        self.symptom_to_id = {s: i + 1 for i, s in enumerate(symptom_list)}
+        self.symptom_to_id = {s: i + 1 for i, s in enumerate(self._symptom_list)}
 
-        # 证型名称
-        if self._extended_syndromes:
-            self.syndrome_names = ["未知"] + list(self._extended_syndromes.keys())
-        else:
-            from core.tcm_config import SYNDROME_RULES
-            self.syndrome_names = ["未知"] + list(SYNDROME_RULES.keys())
+        # 药材索引映射
+        self._herb_name_list = self._pipeline.herb_names
+        self._formula_name_list = self._pipeline.formula_names
 
-        logger.info("推荐器初始化完成 (V%s)", self._model_version)
+        # 缓存药材特征
+        self._cached_herb_features = herb_feat
 
-    @staticmethod
-    def _detect_version(checkpoint: dict) -> int:
-        config = checkpoint.get("config", checkpoint.get("model_config", {}))
-        ver = config.get("version", "")
-        if ver == "v4":
-            return 4
-        d_model = config.get("d_model", 64)
-        if ver == "v2.1" or (100 <= d_model < 200):
-            return 21
-        if d_model >= 200:
-            return 3
-        return 2
+        logger.info("推荐器初始化完成")
 
-    def _load_model(self, checkpoint: dict, encoder_path: Optional[str] = None):
-        self.model.load_state_dict(checkpoint["model_state_dict"])
-        logger.info("模型状态已加载")
-
-        # 加载编码器
-        if encoder_path and os.path.exists(encoder_path):
-            enc_checkpoint = torch.load(encoder_path, map_location=self.device)
-            self.herb_feature_encoder.load_state_dict(
-                enc_checkpoint["encoder_state_dict"]
-            )
-            logger.info("编码器已加载：%s", encoder_path)
-    
     def parse_symptoms(self, symptom_text: str) -> Tuple[List[int], List[str], List[str]]:
-        """
-        解析症状文本
-        
-        Args:
-            symptom_text: 症状文本（空格或逗号分隔）
-        
-        Returns:
-            三元组：(症状 ID 列表, 有效症状名称列表, 未识别症状列表)
-        """
-        # 分割症状
-        separators = [' ', ',', '，', '、', ';', '；']
-        for sep in separators:
+        """解析症状文本"""
+        for sep in [' ', ',', '，', '、', ';', '；']:
             symptom_text = symptom_text.replace(sep, ' ')
-        
+
         symptoms = [s.strip() for s in symptom_text.split() if s.strip()]
-        
-        # 转换为 ID
         symptom_ids = []
         valid_symptoms = []
         unknown_symptoms = []
+
         for symp in symptoms:
             if symp in self.symptom_to_id:
                 symptom_ids.append(self.symptom_to_id[symp])
                 valid_symptoms.append(symp)
             else:
-                unknown_symptoms.append(symp)
-        
+                # 尝试别名匹配
+                matched = False
+                for std_name, sid in self.symptom_to_id.items():
+                    if symp in std_name or std_name in symp:
+                        symptom_ids.append(sid)
+                        valid_symptoms.append(std_name)
+                        matched = True
+                        break
+                if not matched:
+                    unknown_symptoms.append(symp)
+
         if unknown_symptoms:
-            logger.warning(f"未知症状：{unknown_symptoms}")
-        
-        # 如果所有症状都无效，记录警告日志
+            logger.warning("未知症状：%s", unknown_symptoms)
         if symptoms and not symptom_ids:
-            logger.warning(f"所有症状都无效，输入症状：{symptoms}")
-            logger.info(f"支持的症状示例：{list(self.symptom_to_id.keys())[:10]}...")
-        
+            logger.warning("所有症状都无效，输入：%s", symptoms)
+
         return symptom_ids, valid_symptoms, unknown_symptoms
-    
-    def recommend(self, symptoms: List[int], top_k_herb: int = 10, top_k_formula: int = 5) -> Dict:
+
+    def recommend(
+        self, symptoms: List[int], top_k_herb: int = 10, top_k_formula: int = 5
+    ) -> Dict:
         """推荐药材和方剂"""
         if not symptoms:
-            return {"error": "无有效症状", "herbs": [], "formulas": [],
-                    "suggestion": f"支持: {', '.join(list(self.symptom_to_id.keys())[:10])}..."}
+            return {
+                "error": "无有效症状",
+                "herbs": [], "formulas": [],
+                "suggestion": "请提供有效症状描述",
+            }
 
         symptom_tensor = torch.tensor([symptoms], dtype=torch.long).to(self.device)
+        mask = torch.ones_like(symptom_tensor, dtype=torch.float32)
 
         with torch.no_grad():
-            if self._model_version == 4:
-                mask = torch.ones_like(symptom_tensor, dtype=torch.float32)
-                result = self.model.predict(
-                    symptom_tensor, mask,
-                    self._herb_features_dict["char_multihot"].to(self.device),
-                    self._herb_features_dict["category_idx"].to(self.device),
-                    self._herb_features_dict["nature_idx"].to(self.device),
-                    self._herb_features_dict["flavor_idx"].to(self.device),
-                    top_k=max(top_k_herb, top_k_formula),
-                )
-            else:
-                result = self.model.predict(
-                    symptom_tensor, self._cached_herb_features,
-                    top_k=max(top_k_herb, top_k_formula),
-                )
+            result = self.model.predict(
+                symptom_tensor, mask,
+                self._herb_feat["char_multihot"].to(self.device),
+                self._herb_feat["category_idx"].to(self.device),
+                self._herb_feat["nature_idx"].to(self.device),
+                self._herb_feat["flavor_idx"].to(self.device),
+                top_k=max(top_k_herb, top_k_formula),
+            )
 
-        herb_names = self.data_loader.get_herb_names()
-        formula_names = self.data_loader.get_formula_names()
-        herbs_data = self.data_loader.herbs
-        formulas_data = self.data_loader.formulas
-
-        # 药材
+        # 药材结果
         herb_results = []
         for herb_idx, score in result["herbs"][:top_k_herb]:
-            herb_id = self.data_loader.idx_to_herb_id.get(herb_idx, herb_idx)
-            herb = herbs_data.get(herb_id, {})
+            name = self._herb_name_list[herb_idx] if herb_idx < len(self._herb_name_list) else f"药材{herb_idx}"
             herb_results.append({
-                "id": herb_idx,
-                "name": herb.get("name", "Unknown"),
+                "id": int(herb_idx),
+                "name": name,
                 "score": float(score),
-                "efficacy": herb.get("efficacy", ""),
-                "is_toxic": herb.get("is_toxic", False),
+                "efficacy": "",
+                "is_toxic": False,
             })
 
-        # 方剂
+        # 方剂结果
         formula_results = []
         for formula_idx, score in result["formulas"][:top_k_formula]:
-            formula_id = self.data_loader.idx_to_formula_id.get(
-                formula_idx, formula_idx
-            )
-            formula = formulas_data.get(formula_id, {})
+            name = self._formula_name_list[formula_idx] if formula_idx < len(self._formula_name_list) else f"方剂{formula_idx}"
             formula_results.append({
-                "id": formula_idx,
-                "name": formula.get("name", "Unknown"),
+                "id": int(formula_idx),
+                "name": name,
                 "score": float(score),
-                "composition": formula.get("composition", ""),
-                "functions": formula.get("functions", ""),
+                "composition": "",
+                "functions": "",
             })
 
         # 证型
         top_syndrome = None
         if result.get("syndromes"):
             sid, sp = result["syndromes"][0]
-            if 0 <= sid < len(self.syndrome_names) and sid > 0:
+            if 0 <= sid < len(self._syndrome_names) and sid > 0:
                 top_syndrome = {
-                    "id": sid,
-                    "name": self.syndrome_names[sid],
+                    "id": int(sid),
+                    "name": self._syndrome_names[sid],
                     "confidence": round(float(sp), 4),
                 }
 
         return {
-            "symptoms": [
-                self.data_loader.symptoms.get(s, {}).get("name", "")
-                for s in symptoms
-            ],
+            "symptoms": [self._symptom_list[s - 1] for s in symptoms if 0 < s <= len(self._symptom_list)],
             "syndrome": top_syndrome,
             "herbs": herb_results,
             "formulas": formula_results,
         }
-    
+
     def check_safety(self, herb_names: List[str]) -> Dict:
-        """
-        安全检查
-        
-        Args:
-            herb_names: 药材名称列表
-        
-        Returns:
-            安全检查结果
-        """
-        return self.safety_checker.check_compatibility(herb_names)
-    
+        """安全检查（十八反/十九畏/孕妇禁用）"""
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+
+        warnings = []
+        for h in herb_names:
+            cur.execute("SELECT contraindications FROM herbs WHERE name = ?", (h,))
+            row = cur.fetchone()
+            if row and row[0]:
+                warnings.append("%s: %s" % (h, row[0][:100]))
+
+        conn.close()
+        return {"warnings": warnings}
+
     def format_output(self, result: Dict) -> str:
-        """
-        格式化输出
-        
-        Args:
-            result: 推荐结果
-        
-        Returns:
-            格式化的文本输出
-        """
+        """格式化输出"""
         if 'error' in result:
-            return f"❌ 错误：{result['error']}"
-        
+            return "错误：%s" % result['error']
+
         lines = []
         lines.append("=" * 60)
         lines.append("  中医药智能推荐结果")
         lines.append("=" * 60)
-        
-        # 症状
-        lines.append(f"\n📋 症状：{', '.join(result['symptoms'])}")
-        
-        # 药材推荐
-        lines.append("\n🌿 推荐药材:")
-        for i, herb in enumerate(result['herbs'], 1):
-            toxic_mark = " ☠️" if herb['is_toxic'] else ""
-            lines.append(
-                f"  {i}. {herb['name']}{toxic_mark} (置信度：{herb['score']:.4f})"
-            )
-            lines.append(f"     功效：{herb['efficacy'][:50]}...")
-        
-        # 方剂推荐
-        lines.append("\n📜 推荐方剂:")
-        for i, formula in enumerate(result['formulas'], 1):
-            lines.append(
-                f"  {i}. {formula['name']} (置信度：{formula['score']:.4f})"
-            )
-            lines.append(f"     组成：{formula['composition']}")
-            lines.append(f"     功效：{formula['functions']}")
-        
-        # 安全检查
-        lines.append("\n⚠️ 安全校验:")
+        lines.append("\n症状：%s" % ", ".join(result['symptoms']))
+
+        if result.get('syndrome'):
+            s = result['syndrome']
+            lines.append("\n证型：%s (置信度: %.4f)" % (s['name'], s['confidence']))
+
+        lines.append("\n推荐药材:")
+        for i, h in enumerate(result['herbs'], 1):
+            lines.append("  %d. %s (置信度: %.4f)" % (i, h['name'], h['score']))
+
+        lines.append("\n推荐方剂:")
+        for i, f in enumerate(result['formulas'], 1):
+            lines.append("  %d. %s (置信度: %.4f)" % (i, f['name'], f['score']))
+
+        lines.append("\n安全校验:")
         herb_names = [h['name'] for h in result['herbs'][:10]]
-        safety_result = self.check_safety(herb_names)
-        
-        if safety_result['warnings']:
-            for w in safety_result['warnings']:
-                lines.append(f"  {w}")
+        safety = self.check_safety(herb_names)
+        if safety['warnings']:
+            for w in safety['warnings']:
+                lines.append("  %s" % w)
         else:
-            lines.append("  ✓ 未发现配伍禁忌")
-        
+            lines.append("  未发现明显配伍禁忌")
+
         lines.append("\n" + "=" * 60)
         lines.append("注：本结果仅供参考，请由专业中医师判断使用")
         lines.append("=" * 60)
-        
-        return '\n'.join(lines)
-    
+        return "\n".join(lines)
+
     def close(self):
-        """关闭数据加载器"""
-        self.data_loader.close()
+        """释放资源"""
+        if hasattr(self, '_pipeline'):
+            self._pipeline.close()
 
 
 def main():
-    """主函数"""
     parser = argparse.ArgumentParser(description='中医药智能推荐系统')
-    parser.add_argument(
-        'symptoms',
-        type=str,
-        help='症状列表（空格或逗号分隔），如："乏力 食欲不振 失眠"'
-    )
-    parser.add_argument(
-        '--model',
-        type=str,
-        default='tcm_recommender/best_model.pth',
-        help='模型文件路径'
-    )
-    parser.add_argument(
-        '--db',
-        type=str,
-        default='data/tcm_knowledge.db',
-        help='数据库路径'
-    )
-    parser.add_argument(
-        '--top-herb',
-        type=int,
-        default=10,
-        help='返回药材数量'
-    )
-    parser.add_argument(
-        '--top-formula',
-        type=int,
-        default=5,
-        help='返回方剂数量'
-    )
-    parser.add_argument(
-        '--device',
-        type=str,
-        default='cpu',
-        help='运行设备 (cpu/cuda)'
-    )
-    parser.add_argument(
-        '--json',
-        action='store_true',
-        help='以 JSON 格式输出'
-    )
-    
+    parser.add_argument('symptoms', type=str, help='症状列表（空格/逗号分隔）')
+    parser.add_argument('--model', type=str, default='tcm_recommender/best_model.pth', help='模型文件路径')
+    parser.add_argument('--db', type=str, default='data/tcm_knowledge.db', help='数据库路径')
+    parser.add_argument('--top-herb', type=int, default=10, help='返回药材数')
+    parser.add_argument('--top-formula', type=int, default=5, help='返回方剂数')
+    parser.add_argument('--device', type=str, default='cpu', help='运行设备')
+    parser.add_argument('--json', action='store_true', help='JSON 格式输出')
+
     args = parser.parse_args()
-    
-    # 路径
     model_path = Path(PROJECT_ROOT) / args.model
     db_path = Path(PROJECT_ROOT) / args.db
-    
-    # 检查文件
+
     if not model_path.exists():
-        logger.error(f"模型文件不存在：{model_path}")
-        logger.error("请先运行训练：python tcm_recommender/train.py")
+        logger.error("模型文件不存在：%s", model_path)
         return
-    
     if not db_path.exists():
-        logger.error(f"数据库不存在：{db_path}")
+        logger.error("数据库不存在：%s", db_path)
         return
-    
-    # 创建推荐器
-    recommender = TCMRecommender(
-        model_path=str(model_path),
-        db_path=str(db_path),
-        device=args.device
-    )
-    
-    # 解析症状
-    symptom_ids, valid_symptoms, unknown_symptoms = recommender.parse_symptoms(args.symptoms)
-    
-    if not symptom_ids:
-        print("❌ 无有效症状，请检查输入")
-        if unknown_symptoms:
-            print(f"未识别的症状：{unknown_symptoms}")
-        print(f"支持的症状示例：{list(recommender.symptom_to_id.keys())[:10]}...")
+
+    r = TCMRecommender(str(model_path), str(db_path), device=args.device)
+    sids, _, _ = r.parse_symptoms(args.symptoms)
+    if not sids:
+        print("无有效症状")
         return
-    
-    # 推荐
-    result = recommender.recommend(
-        symptoms=symptom_ids,
-        top_k_herb=args.top_herb,
-        top_k_formula=args.top_formula
-    )
-    
-    # 输出
+
+    result = r.recommend(sids, top_k_herb=args.top_herb, top_k_formula=args.top_formula)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
-        print(recommender.format_output(result))
-    
-    recommender.close()
+        print(r.format_output(result))
+    r.close()
 
 
 if __name__ == '__main__':

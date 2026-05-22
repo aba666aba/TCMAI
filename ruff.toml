@@ -1,0 +1,38 @@
+# Ruff configuration for 中医药智能问答系统
+
+# 目标 Python 版本
+target-version = "py310"
+
+# 遵循的规则集
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort (import sorting)
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501", # line too long (handled by formatter)
+]
+
+# 排除目录
+exclude = [
+    ".git",
+    ".idea",
+    ".pytest_cache",
+    "__pycache__",
+    "build",
+    "dist",
+    ".qwen",
+]
+
+# 行长度限制
+line-length = 100
+
+[format]
+# 使用 ruff 格式化器
+quote-style = "double"
+indent-style = "space"

@@ -30,36 +30,30 @@ Apache License 2.0 允许用户：
 
 本系统的以下模块为完全原创开发，受著作权法保护：
 
-1. 前端界面模块 (src/frontend/)
-   - 问答主界面 UI 设计 (index.html)
-   - 历史记录页面设计 (history.html)
-   - 中医药主题样式设计 (static/css/)
-   - 症状输入校验脚本 (static/js/)
+1. 桌面端 GUI 模块 (src/desktop/)
+   - 问答主界面设计 (app.py)
+   - 历史记录管理 (service.py)
+   - Windows 运行时工具 (runtime.py)
 
-2. 核心业务逻辑模块 (src/service/)
-   - 中医药知识库匹配算法 (knowledge_base.py)
-   - 症状组合分析与禁忌校验 (symptom_analysis.py)
+2. 核心业务逻辑模块 (src/core/)
+   - 中医药知识库查询 (knowledge_base.py)
+   - 统一症状处理管线 (symptom_pipeline.py)
+   - 症状分析与证型判断 (symptom_analysis.py)
    - 问答结果溯源与合规提示 (result_verify.py)
    - 用户数据脱敏处理 (data_desensitize.py)
+   - 降级方案回答生成 (fallback.py)
+   - 统一配置数据源 (tcm_config.py)
 
-3. 数据资源 (data/)
+3. 深度学习推荐子系统 (tcm_recommender/)
+   - 症状编码器 (SymptomEncoder + Multi-Head Attention)
+   - 药材推荐器 (HerbRecommender MLP)
+   - 方剂推荐器 (FormulaRecommender MLP)
+   - 证型分类器 (SyndromeClassifier)
+   - 安全检查器 (SafetyChecker)
+
+4. 数据资源 (data/)
    - 中医药知识库数据库 (tcm_knowledge.db)
    - 中医药停用词表 (stopwords.txt)
-
---------------------------------------------------------------------------------
-                          三、开源代码使用说明
---------------------------------------------------------------------------------
-
-本系统部分模块参考或使用了以下开源项目：
-
-1. 模型推理模块 (src/model/)
-   - 基于开源 AI 大模型推理代码修改
-   - 已按照 Apache 2.0 协议保留原始版权声明
-   - 修改部分已在代码中标注说明
-
-2. 日志工具模块 (src/common/log.py)
-   - 参考开源日志框架实现
-   - 已进行适配性修改
 
 --------------------------------------------------------------------------------
                               四、免责声明

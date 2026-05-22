@@ -1,23 +1,22 @@
 import concurrent.futures
 import json
 import logging
-import msvcrt
 import os
+import platform
 import re
+import sys
 import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from ai.config import ModelConfig
-from ai.infer import ModelInference
 from core.data_desensitize import DataDesensitizer
 from core.fallback import generate_fallback_answer
 from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
-from core.symptom_analysis import SymptomAnalyzer
+from core.symptom_pipeline import SymptomPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +51,16 @@ class TCMDesktopService:
 
     def __init__(self) -> None:
         self.kb = KnowledgeBase()
-        self.analyzer = SymptomAnalyzer()
+        self.pipeline = SymptomPipeline()
         self.verifier = ResultVerifier()
         self.desensitizer = DataDesensitizer()
-        model_config = ModelConfig()
-        self.model = ModelInference(model_config.model_path, model_config.__dict__)
         self.history_lock = threading.Lock()
         self.history_file = self._resolve_history_file()
         self.history_lock_file = self.history_file.with_suffix(".lock")
         self.history_data = self.load_history()
+        self._recommender = None
+        self._recommender_load_attempted = False
+        self._recommender_available = False
 
     def _resolve_history_file(self) -> Path:
         root = Path(os.environ.get("TCMAI_ROOT", Path(__file__).resolve().parents[2]))
@@ -73,12 +73,22 @@ class TCMDesktopService:
         self.history_lock_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.history_lock_file, "a+b") as handle:
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            if sys.platform == "win32":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.lockf(handle, fcntl.LOCK_EX)
             try:
                 yield
             finally:
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.lockf(handle, fcntl.LOCK_UN)
 
     def _safe_desensitize(self, value: str) -> str:
         text = value or ""
@@ -158,7 +168,100 @@ class TCMDesktopService:
         except Exception as exc:
             logger.error("保存历史记录失败: %s", exc)
 
-    def query(self, query_text: str, symptoms: List[str], answer_mode: str = "fast") -> Dict[str, Any]:
+    def _get_recommender(self):
+        """懒加载推荐模型单例"""
+        if self._recommender_load_attempted:
+            return self._recommender
+
+        self._recommender_load_attempted = True
+        try:
+            from tcm_recommender.recommend import TCMRecommender
+
+            db_path = os.path.join(
+                os.environ.get("TCMAI_ROOT", str(Path(__file__).resolve().parents[2])),
+                "data",
+                "tcm_knowledge.db",
+            )
+            model_path = os.path.join(
+                os.environ.get("TCMAI_ROOT", str(Path(__file__).resolve().parents[2])),
+                "tcm_recommender",
+                "best_model.pth",
+            )
+            if not os.path.exists(db_path) or not os.path.exists(model_path):
+                logger.warning("推荐模型或数据库文件不存在，AI 模式不可用")
+                return None
+
+            self._recommender = TCMRecommender(
+                model_path=model_path,
+                db_path=db_path,
+                device="cpu",
+            )
+            self._recommender_available = True
+            logger.info("推荐模型加载成功，AI 模式可用")
+        except ImportError:
+            logger.warning("PyTorch 未安装，AI 模式使用降级方案")
+        except Exception as exc:
+            logger.error("推荐模型加载失败: %s", exc)
+
+        return self._recommender
+
+    def _format_recommendation_as_answer(
+        self,
+        query_text: str,
+        symptoms: List[str],
+        result: Dict[str, Any],
+        safety: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """将推荐模型的结构化结果格式化为自然语言回答"""
+        parts = []
+
+        parts.append("【症状分析】")
+        parts.append(f"根据您描述的症状：{'、'.join(symptoms) if symptoms else query_text}")
+
+        if result.get("symptoms"):
+            parts.append(f"系统识别到：{'、'.join(result['symptoms'])}")
+
+        if result.get("formulas"):
+            parts.append("\n【推荐方剂】")
+            for i, formula in enumerate(result["formulas"][:5], 1):
+                parts.append(
+                    f"{i}. {formula['name']}（置信度：{formula['score']:.2f}）"
+                )
+                if formula.get("composition"):
+                    parts.append(f"   组成：{formula['composition']}")
+                if formula.get("functions"):
+                    parts.append(f"   功效：{formula['functions']}")
+
+        if result.get("herbs"):
+            parts.append("\n【推荐药材】")
+            for i, herb in enumerate(result["herbs"][:10], 1):
+                toxic_tag = " ☠️" if herb.get("is_toxic") else ""
+                parts.append(
+                    f"{i}. {herb['name']}{toxic_tag}（置信度：{herb['score']:.2f}）"
+                )
+                if herb.get("efficacy"):
+                    parts.append(f"   功效：{herb['efficacy'][:80]}")
+
+        parts.append("\n【安全提示】")
+        if safety and safety.get("warnings"):
+            for w in safety["warnings"]:
+                parts.append(w)
+            if safety.get("toxic_herbs"):
+                toxic_names = "、".join(safety["toxic_herbs"])
+                parts.append(f"☠️ 含毒性药材：{toxic_names}，须在医师指导下使用")
+            if not safety.get("is_safe"):
+                parts.append("⚠️ 检测到配伍禁忌，请勿自行搭配使用！")
+        else:
+            parts.append("✓ 未检测到常见配伍禁忌")
+
+        parts.append("\n【养生建议】")
+        parts.append("• 饮食调理：饮食宜清淡，避免生冷油腻")
+        parts.append("• 起居调摄：保持规律作息，避免熬夜")
+        parts.append("• 情志调畅：保持心情舒畅，避免过度思虑")
+
+        return "\n".join(parts)
+
+    def query(self, query_text: str, symptoms: List[str], answer_mode: str = "ai") -> Dict[str, Any]:
         if not query_text or len(query_text.strip()) < 1 or len(query_text) > 1000:
             raise ValueError("查询内容长度需要在 1-1000 个字符之间")
         if not isinstance(symptoms, list):
@@ -166,30 +269,37 @@ class TCMDesktopService:
         if len(symptoms) > 20:
             raise ValueError("症状列表最多支持 20 项")
 
-        self.analyzer.analyze(symptoms)
+        filtered_symptoms = [s for s in symptoms if isinstance(s, str) and s.strip()]
+        _pipeline_result = self.pipeline.process(query_text, filtered_symptoms)
         kb_result = self.kb.search(query_text)
         answer = None
         knowledge: Any = {}
         disclaimer = ""
         mode = answer_mode
 
-        if answer_mode == "ai" and self.model.model_available:
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(self.model.infer, query_text, str(kb_result))
-                    answer = future.result(timeout=10)
-            except concurrent.futures.TimeoutError:
-                mode = "fast"
-            except Exception as exc:
-                logger.error("AI 推理失败: %s", exc)
-                mode = "fast"
+        if answer_mode == "ai":
+            recommender = self._get_recommender()
+            if recommender is not None:
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(
+                            self._run_recommender_inference,
+                            recommender,
+                            query_text,
+                            filtered_symptoms,
+                        )
+                        answer, knowledge_result = future.result(timeout=15)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("推荐模型推理超时，降级到快速模式")
+                    mode = "fast"
+                except Exception as exc:
+                    logger.error("推荐模型推理失败: %s", exc)
+                    mode = "fast"
 
-            if answer is not None:
-                verified = self.verifier.verify(answer, kb_result)
-                answer = verified["answer"]
-                knowledge = verified.get("knowledge", {})
-                disclaimer = verified.get("disclaimer", "")
-                mode = "ai"
+                if answer is not None:
+                    mode = "ai"
+                    knowledge = knowledge_result
+                    disclaimer = "温馨提示：本结果基于深度学习模型推荐，仅供参考。实际用药请咨询专业中医师。"
 
         if mode == "fast" or answer is None:
             fallback = generate_fallback_answer(query_text, kb_result)
@@ -198,7 +308,7 @@ class TCMDesktopService:
             disclaimer = fallback.get("disclaimer", "")
             mode = "fast"
 
-        history_item = self._append_history(query_text, symptoms, answer, mode)
+        history_item = self._append_history(query_text, filtered_symptoms, answer, mode)
         return {
             "success": True,
             "answer": answer,
@@ -207,6 +317,43 @@ class TCMDesktopService:
             "mode": mode,
             "history_item": history_item,
         }
+
+    def _run_recommender_inference(
+        self, recommender, query_text: str, symptoms: List[str]
+    ):
+        """在独立线程中运行推荐模型推理"""
+        symptom_ids, valid, unknown = recommender.parse_symptoms(
+            " ".join(symptoms) if symptoms else query_text
+        )
+        if not symptom_ids:
+            return None, None
+
+        result = recommender.recommend(symptom_ids, top_k_herb=10, top_k_formula=5)
+
+        # 安全校验
+        safety_result: Optional[Dict[str, Any]] = None
+        try:
+            herb_names = [h["name"] for h in result.get("herbs", [])[:10]]
+            safety_result = recommender.check_safety(herb_names)
+        except Exception:
+            pass
+
+        answer = self._format_recommendation_as_answer(
+            query_text, symptoms, result, safety_result
+        )
+        knowledge = {
+            "symptoms": result.get("symptoms", []),
+            "herbs": [
+                {"name": h["name"], "score": h["score"]}
+                for h in result.get("herbs", [])[:10]
+            ],
+            "formulas": [
+                {"name": f["name"], "score": f["score"]}
+                for f in result.get("formulas", [])[:5]
+            ],
+            "source": "deep_learning_model",
+        }
+        return answer, knowledge
 
     def _append_history(self, query_text: str, symptoms: List[str], answer: str, mode: str) -> Dict[str, Any]:
         with self.history_lock:
@@ -256,6 +403,7 @@ class TCMDesktopService:
         except Exception:
             pass
         try:
-            self.model.unload()
+            if self._recommender is not None:
+                self._recommender.close()
         except Exception:
             pass

@@ -1,5 +1,15 @@
-# 中医药智能问答系统 - 桌面版依赖
-# 安装命令：pip install -r requirements.txt
+# 中医药智能问答系统 — 基础依赖
+# 安装：pip install -r requirements.txt
+#
+# 桌面版使用 Python 标准库 tkinter 构建界面，
+# 核心功能零额外依赖。
+# AI 模式需要额外安装推荐模型依赖（见 requirements-recommender.txt）。
 
-# 当前桌面版主要使用 Python 标准库 tkinter 构建界面
-# 如需开发和测试，可按需自行安装 pytest / black / flake8 等工具
+# ── 测试框架 ──
+pytest>=7.0.0
+
+# ── 代码质量（可选） ──
+ruff>=0.8.0
+
+# ── 类型检查（可选） ──
+# mypy>=1.0.0

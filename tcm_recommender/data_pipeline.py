@@ -2,7 +2,7 @@
 # Licensed under Apache License 2.0
 
 """
-中医药推荐系统 - 大规模数据管线 V4
+中医药推荐系统 - 大规模数据管线
 
 从 2,000+ 药材、500+ 方剂、200 症状、17 证型的知识库中，
 通过组合增强 + 噪声注入 + 证型映射生成 100,000+ 高质量训练样本。
@@ -650,7 +650,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="TCM 数据管线")
     parser.add_argument("--db", default="data/tcm_knowledge.db")
-    parser.add_argument("--output", default="data/train_data_v4.npz")
+    parser.add_argument("--output", default="data/train_data.npz")
     parser.add_argument("--count", type=int, default=100000)
     args = parser.parse_args()
 

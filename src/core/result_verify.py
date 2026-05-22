@@ -99,12 +99,11 @@ class ResultVerifier:
         filtered = content
         
         for pattern in self.sensitive_patterns:
-            # 替换绝对化表述
             filtered = re.sub(
                 pattern,
-                f"[需谨慎参考：{pattern}]",
+                "[该表述涉及绝对化断言，需谨慎参考]",
                 filtered,
-                flags=re.IGNORECASE
+                flags=re.IGNORECASE,
             )
         
         return filtered

@@ -27,13 +27,18 @@ class DataDesensitizer:
     def __init__(self):
         """初始化脱敏器"""
         # 个人信息匹配规则
+        # 常见百家姓（前 100 个）
+        _surnames = (
+            r"[张王李赵刘陈杨黄吴周徐孙朱马胡郭何高林罗郑梁谢宋唐冯韩曹彭曾萧"
+            r"田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦"
+            r"傅方白邹孟熊秦邱侯江尹薛阎段雷贺龙史陶毛常康武乔汤严顾钱覃]"
+        )
         self.patterns = {
-            'phone': r'1[3-9]\d{9}',
-            'email': r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
-            # 使用非捕获组优化，添加词边界避免匹配更长数字串中的片段
-            'id_card': r'\b(?:\d{17}[\dXx]|\d{15})\b',
-            'address': r'(?:省|市|区|县|镇|村|路|街|道|号|栋|单元|室)',
-            'name': r'[张王李赵刘陈杨黄吴周徐孙朱马胡郭何高林罗郑梁谢宋唐冯韩曹彭曾萧田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦傅方白邹孟熊秦邱侯江尹薛阎段雷贺龙史陶毛邱常康武乔汤严顾钱覃]',
+            "phone": r"1[3-9]\d{9}",
+            "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+            "id_card": r"(?<!\d)(?:\d{17}[\dXx]|\d{15})(?!\d)",
+            "address": r"(?:省|市|区|县|镇|村|路|街|道|号|栋|单元|室)",
+            "name": _surnames + r"[一-鿿]{1,2}",
         }
         
         # 脱敏替换符
@@ -89,28 +94,35 @@ class DataDesensitizer:
             return text
         
         desensitized = text
-        
+
+        # 身份证号优先脱敏（18 位数字更特异，避免被手机号正则误匹配）
+        desensitized = re.sub(
+            self.patterns["id_card"],
+            self.replacement["id_card"],
+            desensitized,
+        )
+
         # 手机号脱敏
         desensitized = re.sub(
-            self.patterns['phone'],
-            self.replacement['phone'],
-            desensitized
+            self.patterns["phone"],
+            self.replacement["phone"],
+            desensitized,
         )
-        
+
         # 邮箱脱敏
         desensitized = re.sub(
-            self.patterns['email'],
-            self.replacement['email'],
-            desensitized
+            self.patterns["email"],
+            self.replacement["email"],
+            desensitized,
         )
-        
-        # 身份证号脱敏
+
+        # 姓名脱敏（匹配"姓氏+1~2个汉字"的姓名）
         desensitized = re.sub(
-            self.patterns['id_card'],
-            self.replacement['id_card'],
-            desensitized
+            self.patterns["name"],
+            lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1),
+            desensitized,
         )
-        
+
         return desensitized
     
     def anonymize_query(self, query: str, user_id: str = None) -> str:

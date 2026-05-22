@@ -4,425 +4,538 @@
 """
 中医药推荐系统 - 训练脚本
 
-训练模型以根据症状推荐药材和方剂
+管线：数据加载 -> 特征构建 -> 模型训练 -> 评估保存
 """
 
-import os
-import sys
+import argparse
 import json
 import logging
-import argparse
+import os
+import sys
+import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
-# 添加项目路径
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tcm_recommender.data_loader import TCMDataLoader
-from tcm_recommender.model import create_model, SafetyChecker
+from tcm_recommender.data_pipeline import TCMDataPipeline
+from tcm_recommender.model import TCMNet, create_model
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# ── 常量 ─────────────────────────────────────────
+MAX_SYMPTOMS = 32
+NATURE_LIST = ["寒", "热", "温", "凉", "平"]
+FLAVOR_LIST = ["酸", "苦", "甘", "辛", "咸"]
+
+
+# ═══════════════════════════════════════════════════════════
+# 数据集
+# ═══════════════════════════════════════════════════════════
 
 class TCMDataset(Dataset):
-    """中医药推荐数据集"""
-    
-    def __init__(
-        self,
-        symptoms_list: List[List[int]],
-        herbs_list: List[int],
-        formulas_list: List[int],
-        max_symptoms: int = 20
-    ):
-        self.symptoms_list = symptoms_list
-        self.herbs_list = herbs_list
-        self.formulas_list = formulas_list
-        self.max_symptoms = max_symptoms
-    
+    """训练数据集"""
+
+    def __init__(self, data: Dict[str, np.ndarray], indices: Optional[np.ndarray] = None):
+        if indices is not None:
+            self.symptom_ids = data["symptom_ids"][indices]
+            self.symptom_mask = data["symptom_mask"][indices]
+            self.herb_labels = data["herb_labels"][indices]
+            self.formula_labels = data["formula_labels"][indices]
+            self.syndrome_labels = data["syndrome_labels"][indices]
+        else:
+            self.symptom_ids = data["symptom_ids"]
+            self.symptom_mask = data["symptom_mask"]
+            self.herb_labels = data["herb_labels"]
+            self.formula_labels = data["formula_labels"]
+            self.syndrome_labels = data["syndrome_labels"]
+
     def __len__(self):
-        return len(self.symptoms_list)
-    
+        return len(self.symptom_ids)
+
     def __getitem__(self, idx):
-        # 获取症状序列（padding）
-        symptoms = self.symptoms_list[idx][:self.max_symptoms]
-        symptoms = symptoms + [0] * (self.max_symptoms - len(symptoms))
-        
         return {
-            'symptoms': torch.tensor(symptoms, dtype=torch.long),
-            'herb': torch.tensor(self.herbs_list[idx], dtype=torch.long),
-            'formula': torch.tensor(self.formulas_list[idx], dtype=torch.long)
+            "symptom_ids": torch.from_numpy(self.symptom_ids[idx].astype(np.int64)),
+            "symptom_mask": torch.from_numpy(self.symptom_mask[idx].astype(np.float32)),
+            "herb_labels": torch.from_numpy(self.herb_labels[idx].astype(np.float32)),
+            "formula_label": int(self.formula_labels[idx]),
+            "syndrome_label": int(self.syndrome_labels[idx]),
         }
 
+
+# ═══════════════════════════════════════════════════════════
+# 药材特征构建
+# ═══════════════════════════════════════════════════════════
+
+def build_herb_features(pipeline: TCMDataPipeline) -> Dict[str, torch.Tensor]:
+    """构建药材的字符多热矩阵 + 类别/性味/归经索引"""
+    nh = pipeline.num_herbs
+
+    # ── 字符多热矩阵 ──
+    herb_texts = {}
+    for model_idx in range(1, nh + 1):
+        db_id = pipeline.model_idx_to_herb_db_id[model_idx]
+        herb = pipeline.herbs[db_id]
+        herb_texts[model_idx] = f"{herb.get('efficacy', '')} {herb.get('indications', '')}"
+
+    char_set = set()
+    for text in herb_texts.values():
+        for ch in text:
+            if '\u4e00' <= ch <= '\u9fff':
+                char_set.add(ch)
+    char_list = sorted(char_set)
+    char_to_idx = {ch: i for i, ch in enumerate(char_list)}
+    num_chars = len(char_list)
+
+    char_mh = torch.zeros(nh, num_chars)
+    for mi, text in herb_texts.items():
+        for ch in text:
+            if ch in char_to_idx:
+                char_mh[mi - 1, char_to_idx[ch]] = 1.0
+
+    # ── 类别索引 ──
+    # 收集所有类别名
+    all_categories = sorted(set(
+        pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
+        for mi in range(1, nh + 1)
+    ))
+    cat_to_idx = {c: i + 1 for i, c in enumerate(all_categories)}
+    cat_idx = torch.zeros(nh, dtype=torch.long)
+    for mi in range(1, nh + 1):
+        cat = pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
+        cat_idx[mi - 1] = cat_to_idx.get(cat, 0)
+
+    # ── 药性索引 ──
+    nat_idx = torch.zeros(nh, dtype=torch.long)
+    for mi in range(1, nh + 1):
+        nat = pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("nature", "") or ""
+        found = False
+        for ni, n_name in enumerate(NATURE_LIST, 1):
+            if n_name in nat:
+                nat_idx[mi - 1] = ni
+                found = True
+                break
+        if not found:
+            nat_idx[mi - 1] = len(NATURE_LIST) + 1  # unknown category
+
+    # ── 药味索引 (取第一个) ──
+    flv_idx = torch.zeros(nh, dtype=torch.long)
+    for mi in range(1, nh + 1):
+        flv = pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("flavor", "") or ""
+        found = False
+        for fi, f_name in enumerate(FLAVOR_LIST, 1):
+            if f_name in flv:
+                flv_idx[mi - 1] = fi
+                found = True
+                break
+        if not found:
+            flv_idx[mi - 1] = len(FLAVOR_LIST) + 1  # unknown category
+
+    logger.info("药材特征: chars=%s, categories=%s", num_chars, len(all_categories))
+    return {
+        "char_multihot": char_mh,
+        "category_idx": cat_idx,
+        "nature_idx": nat_idx,
+        "flavor_idx": flv_idx,
+        "num_chars": num_chars,
+        "num_categories": len(all_categories) + 1,  # +1 for padding
+        "num_natures": len(NATURE_LIST) + 2,  # +1 padding +1 unknown
+        "num_flavors": len(FLAVOR_LIST) + 2,
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# 训练器
+# ═══════════════════════════════════════════════════════════
 
 class Trainer:
-    """训练器"""
-    
-    def __init__(
-        self,
-        model: nn.Module,
-        device: str = 'cpu',
-        learning_rate: float = 0.001,
-        weight_decay: float = 1e-5
-    ):
+    def __init__(self, model: TCMNet, herb_features: Dict[str, torch.Tensor],
+                 device: torch.device, lr: float = 1e-4, weight_decay: float = 1e-5,
+                 warmup_steps: int = 500, grad_accum: int = 1,
+                 contrastive_weight: float = 0.2, label_smoothing: float = 0.05):
         self.model = model.to(device)
         self.device = device
-        
+        self.grad_accum = grad_accum
+        self.contrastive_weight = contrastive_weight
+        self.label_smoothing = label_smoothing
+
+        # 药材特征预加载到设备
+        self.herb_char = herb_features["char_multihot"].to(device)
+        self.herb_cat = herb_features["category_idx"].to(device)
+        self.herb_nat = herb_features["nature_idx"].to(device)
+        self.herb_flv = herb_features["flavor_idx"].to(device)
+
         # 损失函数
-        self.herb_criterion = nn.CrossEntropyLoss()
-        self.formula_criterion = nn.CrossEntropyLoss()
-        
+        self.syn_criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=label_smoothing)
+        self.formula_criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=label_smoothing)
+
         # 优化器
-        self.optimizer = optim.AdamW(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=weight_decay
+        no_decay = ["bias", "LayerNorm.weight", "layernorm.weight", "norm.weight"]
+        optimizer_grouped_params = [
+            {"params": [p for n, p in model.named_parameters()
+                        if not any(nd in n for nd in no_decay) and p.requires_grad],
+             "weight_decay": weight_decay},
+            {"params": [p for n, p in model.named_parameters()
+                        if any(nd in n for nd in no_decay) and p.requires_grad],
+             "weight_decay": 0.0},
+        ]
+        self.optimizer = torch.optim.AdamW(optimizer_grouped_params, lr=lr, betas=(0.9, 0.98))
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer, T_0=10, T_mult=2, eta_min=lr * 0.01)
+
+        self.scaler = torch.amp.GradScaler("cuda") if device.type == "cuda" else None
+        self.history = {"train": [], "val": [], "lr": []}
+        self.global_step = 0
+
+    def _herb_bce_loss(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """加权 BCE 损失（处理正负样本不平衡）"""
+        pos_mask = labels > 0.5
+        neg_mask = labels < -0.5
+        normal_mask = ~pos_mask & ~neg_mask  # 0标签（忽略的）
+
+        if pos_mask.sum() == 0:
+            return torch.tensor(0.0, device=self.device)
+
+        # 只计算正类和部分负类
+        pos_weight_val = (neg_mask.float().sum() / pos_mask.float().sum().clamp(min=1)).clamp(1, 50)
+        weight = torch.ones_like(labels)
+        weight[pos_mask] = pos_weight_val
+
+        loss = F.binary_cross_entropy_with_logits(
+            scores[normal_mask | pos_mask],
+            (labels > 0.5).float()[normal_mask | pos_mask],
+            weight=weight[normal_mask | pos_mask],
         )
-        
-        # 学习率调度器
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer,
-            mode='min',
-            factor=0.5,
-            patience=3
-        )
-        
-        # 训练历史
-        self.history = {
-            'train_loss': [],
-            'val_loss': [],
-            'herb_loss': [],
-            'formula_loss': []
-        }
-    
-    def train_epoch(self, dataloader: DataLoader) -> float:
-        """训练一个 epoch"""
+        return loss
+
+    def train_step(self, batch: dict) -> Dict[str, float]:
         self.model.train()
-        total_loss = 0.0
-        herb_loss_sum = 0.0
-        formula_loss_sum = 0.0
-        num_batches = 0
-        
-        pbar = tqdm(dataloader, desc='训练')
-        for batch in pbar:
-            # 准备数据
-            symptoms = batch['symptoms'].to(self.device)
-            herbs = batch['herb'].to(self.device)
-            formulas = batch['formula'].to(self.device)
-            
-            # 前向传播
-            self.optimizer.zero_grad()
-            herb_scores, formula_scores = self.model(symptoms)
-            
-            # 计算损失（只计算非零标签）
-            herb_mask = herbs != 0
-            formula_mask = formulas != 0
-            
+
+        sym_ids = batch["symptom_ids"].to(self.device)
+        sym_mask = batch["symptom_mask"].to(self.device)
+        herb_lbl = batch["herb_labels"].to(self.device)
+        form_lbl = batch["formula_label"].to(self.device)
+        syn_lbl = batch["syndrome_label"].to(self.device)
+
+        # 混合精度 (仅 CUDA)
+        with torch.amp.autocast("cuda", enabled=(self.device.type == "cuda")):
+            syn_logits, herb_scores, form_scores, sv, hv = self.model(
+                sym_ids, sym_mask, self.herb_char, self.herb_cat, self.herb_nat, self.herb_flv)
+
             loss = 0.0
-            if herb_mask.sum() > 0:
-                herb_loss = self.herb_criterion(
-                    herb_scores[herb_mask],
-                    herbs[herb_mask]
-                )
-                loss += herb_loss
-                herb_loss_sum += herb_loss.item()
-            
-            if formula_mask.sum() > 0:
-                formula_loss = self.formula_criterion(
-                    formula_scores[formula_mask],
-                    formulas[formula_mask]
-                )
-                loss += formula_loss
-                formula_loss_sum += formula_loss.item()
-            
-            # 反向传播
-            if loss > 0:
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
-                
-                total_loss += loss.item()
-                num_batches += 1
-                
-                pbar.set_postfix({
-                    'loss': f'{loss.item():.4f}',
-                    'herb': f'{herb_loss.item() if herb_mask.sum() > 0 else 0:.4f}',
-                    'formula': f'{formula_loss.item() if formula_mask.sum() > 0 else 0:.4f}'
-                })
-        
-        avg_loss = total_loss / max(num_batches, 1)
-        return avg_loss
-    
+            metrics = {}
+
+            # 证型分类
+            mask_syn = syn_lbl != 0
+            if mask_syn.sum() > 0:
+                l_syn = self.syn_criterion(syn_logits, syn_lbl)
+                if not torch.isnan(l_syn):
+                    loss += l_syn
+                    metrics["syn_loss"] = l_syn.item()
+
+            # 方剂排序
+            mask_form = form_lbl > 0
+            if mask_form.sum() > 0:
+                l_form = self.formula_criterion(form_scores[mask_form], form_lbl[mask_form])
+            else:
+                l_form = self.formula_criterion(form_scores, form_lbl)
+            if not torch.isnan(l_form):
+                loss += l_form * 0.5
+                metrics["form_loss"] = l_form.item()
+
+            # 药材多标签
+            has_herb = (herb_lbl.abs() > 0.5).sum() > 0
+            if has_herb:
+                l_herb = self._herb_bce_loss(herb_scores, herb_lbl)
+                if not torch.isnan(l_herb) and l_herb.item() > 0:
+                    loss += l_herb * 0.3
+                    metrics["herb_loss"] = l_herb.item()
+
+            # 对比学习
+            l_cont = self.model.contrastive_loss(sv, hv, herb_lbl)
+            if not torch.isnan(l_cont):
+                loss += l_cont * self.contrastive_weight
+                metrics["cont_loss"] = l_cont.item()
+
+        # 反向传播
+        loss = loss / self.grad_accum
+        if self.scaler is not None:
+            self.scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+        metrics["total_loss"] = loss.item() * self.grad_accum
+        return metrics
+
+    def optimizer_step(self):
+        if self.scaler is not None:
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=2.0)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=2.0)
+            self.optimizer.step()
+        self.optimizer.zero_grad()
+        self.scheduler.step()
+        self.global_step += 1
+
     @torch.no_grad()
-    def evaluate(self, dataloader: DataLoader) -> Dict:
-        """评估模型"""
+    def evaluate(self, dataloader: DataLoader) -> Dict[str, float]:
         self.model.eval()
-        total_loss = 0.0
-        herb_loss_sum = 0.0
-        formula_loss_sum = 0.0
-        num_batches = 0
-        correct_herb = 0
-        correct_formula = 0
-        total = 0
-        
-        for batch in tqdm(dataloader, desc='验证'):
-            symptoms = batch['symptoms'].to(self.device)
-            herbs = batch['herb'].to(self.device)
-            formulas = batch['formula'].to(self.device)
-            
-            herb_scores, formula_scores = self.model(symptoms)
-            
-            # 计算损失
-            herb_mask = herbs != 0
-            formula_mask = formulas != 0
-            
-            loss = 0.0
-            if herb_mask.sum() > 0:
-                herb_loss = self.herb_criterion(
-                    herb_scores[herb_mask],
-                    herbs[herb_mask]
-                )
-                loss += herb_loss
-                herb_loss_sum += herb_loss.item()
-                
-                # 计算准确率
-                pred_herb = herb_scores.argmax(dim=1)
-                correct_herb += (pred_herb == herbs).sum().item()
-            
-            if formula_mask.sum() > 0:
-                formula_loss = self.formula_criterion(
-                    formula_scores[formula_mask],
-                    formulas[formula_mask]
-                )
-                loss += formula_loss
-                formula_loss_sum += formula_loss.item()
-                
-                pred_formula = formula_scores.argmax(dim=1)
-                correct_formula += (pred_formula == formulas).sum().item()
-            
-            total += symptoms.size(0)
-            
-            if loss > 0:
-                total_loss += loss.item()
-                num_batches += 1
-        
+        total_syn_loss = total_herb_loss = total_form_loss = 0.0
+        syn_correct = syn_total = 0
+        herb_hits10 = herb_total_pos = 0
+        n_batches = 0
+
+        for batch in tqdm(dataloader, desc="Eval", leave=False):
+            sym_ids = batch["symptom_ids"].to(self.device)
+            sym_mask = batch["symptom_mask"].to(self.device)
+            herb_lbl = batch["herb_labels"].to(self.device)
+            form_lbl = batch["formula_label"].to(self.device)
+            syn_lbl = batch["syndrome_label"].to(self.device)
+
+            syn_logits, herb_scores, form_scores, sv, hv = self.model(
+                sym_ids, sym_mask, self.herb_char, self.herb_cat, self.herb_nat, self.herb_flv)
+
+            # 证型准确率
+            mask_syn = syn_lbl != 0
+            if mask_syn.sum() > 0:
+                pred = syn_logits[mask_syn].argmax(dim=1)
+                syn_correct += (pred == syn_lbl[mask_syn]).sum().item()
+                syn_total += mask_syn.sum().item()
+                l_syn = self.syn_criterion(syn_logits, syn_lbl)
+                if not torch.isnan(l_syn):
+                    total_syn_loss += l_syn.item()
+
+            # 药材 Hit@10
+            has_herb = (herb_lbl.abs() > 0.5).sum(dim=1) > 0
+            if has_herb.any():
+                l_h = self._herb_bce_loss(herb_scores, herb_lbl)
+                if not torch.isnan(l_h):
+                    total_herb_loss += l_h.item()
+                for i in range(herb_scores.size(0)):
+                    if not has_herb[i]:
+                        continue
+                    pos_mask = herb_lbl[i] > 0.5
+                    if pos_mask.sum() == 0:
+                        continue
+                    _, topk = torch.topk(herb_scores[i], k=min(10, herb_scores.shape[1]))
+                    herb_hits10 += sum(1 for idx in topk.tolist() if pos_mask[idx].item())
+                    herb_total_pos += pos_mask.sum().item()
+
+            # 方剂
+            mask_form = form_lbl > 0
+            if mask_form.sum() > 0:
+                l_f = self.formula_criterion(form_scores[mask_form], form_lbl[mask_form])
+            else:
+                l_f = self.formula_criterion(form_scores, form_lbl)
+            if not torch.isnan(l_f):
+                total_form_loss += l_f.item()
+
+            n_batches += 1
+
+        n = max(n_batches, 1)
         return {
-            'loss': total_loss / max(num_batches, 1),
-            'herb_loss': herb_loss_sum / max(num_batches, 1),
-            'formula_loss': formula_loss_sum / max(num_batches, 1),
-            'herb_accuracy': correct_herb / max(total, 1),
-            'formula_accuracy': correct_formula / max(total, 1)
+            "val_loss": (total_syn_loss + total_herb_loss * 0.3 + total_form_loss * 0.5) / n,
+            "syn_acc": syn_correct / max(syn_total, 1),
+            "herb_recall10": herb_hits10 / max(herb_total_pos, 1),
         }
-    
-    def train(
-        self,
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        epochs: int = 50,
-        save_path: str = 'best_model.pth'
-    ):
-        """完整训练流程"""
-        logger.info(f"开始训练，共 {epochs} 个 epoch")
-        logger.info(f"训练数据：{len(train_loader.dataset)} 样本")
-        logger.info(f"验证数据：{len(val_loader.dataset)} 样本")
-        
-        best_val_loss = float('inf')
-        patience_counter = 0
-        early_stop_patience = 10
-        
+
+    def train(self, train_loader: DataLoader, val_loader: DataLoader,
+              epochs: int = 50, save_dir: str = "tcm_recommender",
+              save_prefix: str = "best_model"):
+        best_val_loss = float("inf")
+        patience = 0
+        early_stop_patience = 15
+        os.makedirs(save_dir, exist_ok=True)
+
         for epoch in range(epochs):
-            logger.info(f"\n{'='*50}")
-            logger.info(f"Epoch {epoch+1}/{epochs}")
-            logger.info(f"{'='*50}")
-            
-            # 训练
-            train_loss = self.train_epoch(train_loader)
-            self.history['train_loss'].append(train_loss)
-            logger.info(f"训练损失：{train_loss:.4f}")
-            
+            epoch_start = time.time()
+            self.model.train()
+            epoch_metrics = {"syn_loss": 0, "form_loss": 0, "herb_loss": 0, "cont_loss": 0, "total_loss": 0}
+            n_steps = 0
+
+            pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs}")
+            for batch_idx, batch in enumerate(pbar):
+                metrics = self.train_step(batch)
+                for k, v in metrics.items():
+                    epoch_metrics[k] = epoch_metrics.get(k, 0) + v
+                n_steps += 1
+
+                if (batch_idx + 1) % self.grad_accum == 0:
+                    self.optimizer_step()
+
+                pbar.set_postfix({k: f"{v / n_steps:.3f}" for k, v in epoch_metrics.items()
+                                  if k in ("total_loss", "syn_loss")})
+
+            # 处理最后的不完整梯度累积
+            if (batch_idx + 1) % self.grad_accum != 0:
+                self.optimizer_step()
+
             # 验证
             val_metrics = self.evaluate(val_loader)
-            self.history['val_loss'].append(val_metrics['loss'])
-            self.history['herb_loss'].append(val_metrics['herb_loss'])
-            self.history['formula_loss'].append(val_metrics['formula_loss'])
-            
-            logger.info(f"验证损失：{val_metrics['loss']:.4f}")
-            logger.info(f"  - 药材损失：{val_metrics['herb_loss']:.4f}")
-            logger.info(f"  - 方剂损失：{val_metrics['formula_loss']:.4f}")
-            logger.info(f"  - 药材准确率：{val_metrics['herb_accuracy']:.4f}")
-            logger.info(f"  - 方剂准确率：{val_metrics['formula_accuracy']:.4f}")
-            
-            # 学习率调整
-            self.scheduler.step(val_metrics['loss'])
-            
-            # 保存最佳模型
-            if val_metrics['loss'] < best_val_loss:
-                best_val_loss = val_metrics['loss']
-                self.save_model(save_path)
-                logger.info(f"✓ 保存最佳模型 (验证损失：{best_val_loss:.4f})")
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                logger.info(f"早停计数：{patience_counter}/{early_stop_patience}")
-            
-            # 早停
-            if patience_counter >= early_stop_patience:
-                logger.info("触发早停，结束训练")
-                break
-        
-        logger.info(f"\n训练完成！最佳验证损失：{best_val_loss:.4f}")
-        
-        # 保存训练历史
-        history_path = save_path.replace('.pth', '_history.json')
-        with open(history_path, 'w', encoding='utf-8') as f:
-            json.dump(self.history, f, indent=2)
-        logger.info(f"训练历史已保存到：{history_path}")
-    
-    def save_model(self, path: str):
-        """保存模型"""
-        torch.save({
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'history': self.history
-        }, path)
-        logger.info(f"模型已保存：{path}")
-    
-    def load_model(self, path: str):
-        """加载模型"""
-        checkpoint = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.history = checkpoint.get('history', self.history)
-        logger.info(f"模型已加载：{path}")
+            epoch_time = time.time() - epoch_start
 
+            logger.info(
+                "Epoch %3d | tr_loss=%.4f | val=%.4f syn_acc=%.3f herb_r@10=%.3f | time=%.1fs lr=%.2e",
+                epoch + 1, epoch_metrics["total_loss"] / n_steps,
+                val_metrics["val_loss"], val_metrics["syn_acc"],
+                val_metrics["herb_recall10"], epoch_time,
+                self.optimizer.param_groups[0]["lr"],
+            )
+
+            # 保存
+            if val_metrics["val_loss"] < best_val_loss:
+                best_val_loss = val_metrics["val_loss"]
+                self._save(f"{save_dir}/{save_prefix}.pth", epoch, val_metrics)
+                patience = 0
+            else:
+                patience += 1
+                if patience >= early_stop_patience:
+                    logger.info("Early stopping at epoch %s", epoch + 1)
+                    break
+
+            self.history["train"].append(epoch_metrics["total_loss"] / n_steps)
+            self.history["val"].append(val_metrics["val_loss"])
+
+        logger.info("训练完成, best_val=%.4f", best_val_loss)
+
+    def _save(self, path: str, epoch: int, metrics: dict):
+        torch.save({
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "epoch": epoch,
+            "metrics": metrics,
+            "history": self.history,
+            "config": {
+                "d_model": self.model.d_model,
+                "num_layers": len([m for m in self.model.symptom_encoder.layers]),
+                "version": "v2",
+            },
+        }, path)
+        logger.info("模型已保存: %s", path)
+
+
+# ═══════════════════════════════════════════════════════════
+# 主函数
+# ═══════════════════════════════════════════════════════════
 
 def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(description='中医药推荐系统训练')
-    parser.add_argument('--db', type=str, default='data/tcm_knowledge.db',
-                        help='数据库路径')
-    parser.add_argument('--output', type=str, default='tcm_recommender/best_model.pth',
-                        help='模型输出路径')
-    parser.add_argument('--epochs', type=int, default=50,
-                        help='训练轮数')
-    parser.add_argument('--batch-size', type=int, default=32,
-                        help='批次大小')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='学习率')
-    parser.add_argument('--device', type=str, default='cpu',
-                        help='训练设备 (cpu/cuda)')
-    
+    parser = argparse.ArgumentParser(description="TCM 训练")
+    parser.add_argument("--db", default="data/tcm_knowledge.db")
+    parser.add_argument("--data", default="data/train_data.npz")
+    parser.add_argument("--output", default="tcm_recommender/best_model.pth")
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--samples", type=int, default=100000,
+                        help="生成的训练样本数（如果 npz 不存在则生成）")
+    parser.add_argument("--grad-accum", type=int, default=2)
+    parser.add_argument("--contrastive-weight", type=float, default=0.2)
+    parser.add_argument("--d-model", type=int, default=384,
+                        help="模型维度 (512 for 8M params, 384 for ~5M)")
+    parser.add_argument("--num-layers", type=int, default=4)
     args = parser.parse_args()
-    
-    # 数据库路径
-    db_path = Path(PROJECT_ROOT) / args.db
-    if not db_path.exists():
-        logger.error(f"数据库不存在：{db_path}")
-        return
-    
-    logger.info("="*60)
-    logger.info("  中医药智能推荐系统 - 训练程序")
-    logger.info("="*60)
-    
-    # 加载数据
-    logger.info("\n[1/4] 加载数据...")
-    data_loader = TCMDataLoader(str(db_path))
-    data_loader.load_all_data()
-    
-    # 获取训练数据
-    symptoms_list, herbs_list, formulas_list = data_loader.get_training_data()
-    
-    # 划分训练集和验证集
-    split_idx = int(len(symptoms_list) * 0.9)
-    train_data = TCMDataset(
-        symptoms_list[:split_idx],
-        herbs_list[:split_idx],
-        formulas_list[:split_idx]
-    )
-    val_data = TCMDataset(
-        symptoms_list[split_idx:],
-        herbs_list[split_idx:],
-        formulas_list[split_idx:]
-    )
-    
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=args.batch_size)
-    
-    # 创建模型
-    logger.info("\n[2/4] 创建模型...")
-    model = create_model(
-        num_symptoms=len(data_loader.symptoms),
-        num_herbs=len(data_loader.herbs),
-        num_formulas=len(data_loader.formulas)
-    )
-    
-    # 创建训练器
-    logger.info("\n[3/4] 准备训练...")
-    trainer = Trainer(
-        model=model,
-        device=args.device,
-        learning_rate=args.lr
-    )
-    
-    # 开始训练
-    logger.info("\n[4/4] 开始训练...\n")
-    trainer.train(
-        train_loader=train_loader,
-        val_loader=val_loader,
-        epochs=args.epochs,
-        save_path=args.output
-    )
-    
-    # 测试模型
-    logger.info("\n" + "="*60)
-    logger.info("  测试模型")
-    logger.info("="*60)
-    
-    # 加载最佳模型
-    trainer.load_model(args.output)
-    
-    # 测试推荐
-    test_symptoms = torch.tensor([[1, 2, 3]], dtype=torch.long)  # 乏力，食欲不振，失眠
-    result = model.predict(test_symptoms, top_k=5)
-    
-    herb_names = data_loader.get_herb_names()
-    formula_names = data_loader.get_formula_names()
-    
-    print("\n测试症状：乏力，食欲不振，失眠")
-    print("\n推荐药材 Top-5:")
-    for herb_id, score in result['herbs']:
-        print(f"  {herb_names.get(herb_id, 'Unknown')}: {score:.4f}")
-    
-    print("\n推荐方剂 Top-5:")
-    for formula_id, score in result['formulas']:
-        print(f"  {formula_names.get(formula_id, 'Unknown')}: {score:.4f}")
-    
-    # 安全校验
-    print("\n安全校验:")
-    safety_checker = SafetyChecker(data_loader.incompatible_herbs)
-    top_herbs = [herb_names.get(h[0], '') for h in result['herbs'][:5]]
-    check_result = safety_checker.check_compatibility(top_herbs)
-    
-    if check_result['warnings']:
-        for w in check_result['warnings']:
-            print(f"  {w}")
+
+    device = torch.device(args.device)
+    logger.info("设备: %s", device)
+
+    # ═══ 1. 数据 ═══
+    data_path = Path(args.data)
+    if not data_path.exists():
+        logger.info("生成训练数据 (%s 样本)...", args.samples)
+        pipeline = TCMDataPipeline(args.db)
+        pipeline.load_all()
+        data = pipeline.generate_samples(args.samples)
+        pipeline.save(data, str(data_path))
+        pipeline.close()
     else:
-        print("  ✓ 无配伍禁忌")
-    
-    data_loader.close()
-    logger.info("\n训练完成！")
+        logger.info("加载已有数据: %s", data_path)
+        data = dict(np.load(data_path, allow_pickle=True))
+
+    n_samples = int(data["num_samples"])
+    n_symptoms = int(data["num_symptoms"])
+    n_herbs = int(data["num_herbs"])
+    n_formulas = int(data["num_formulas"])
+    n_syndromes = int(data["num_syndromes"])
+    logger.info("数据: %s 样本, %s 症状, %s 药材, %s 方剂, %s 证型",
+                 n_samples, n_symptoms, n_herbs, n_formulas, n_syndromes)
+
+    # 划分
+    dataset = TCMDataset(data)
+    n_train = int(n_samples * 0.85)
+    n_val = n_samples - n_train
+    train_ds, val_ds = random_split(dataset, [n_train, n_val],
+                                     generator=torch.Generator().manual_seed(42))
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                               drop_last=True, num_workers=0, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                             num_workers=0, pin_memory=True)
+    logger.info("训练集: %s | 验证集: %s", n_train, n_val)
+
+    # ═══ 2. 特征 ═══
+    logger.info("构建药材特征...")
+    pipeline = TCMDataPipeline(args.db)
+    pipeline.load_all()
+    herb_feat = build_herb_features(pipeline)
+    pipeline.close()
+
+    # ═══ 3. 模型 ═══
+    logger.info("创建模型...")
+    model = create_model(
+        num_symptoms=n_symptoms,
+        num_herbs=n_herbs,
+        num_formulas=n_formulas + 1,
+        num_syndromes=n_syndromes + 1,
+        num_chars=herb_feat["num_chars"],
+        num_categories=herb_feat["num_categories"],
+        d_model=args.d_model,
+        nhead=8,
+        num_layers=args.num_layers,
+        dropout=0.1,
+    )
+
+    # ═══ 4. 训练 ═══
+    trainer = Trainer(
+        model, herb_feat, device,
+        lr=args.lr, grad_accum=args.grad_accum,
+        contrastive_weight=args.contrastive_weight,
+    )
+    trainer.train(train_loader, val_loader, epochs=args.epochs, save_prefix="best_model")
+
+    # ═══ 5. 最终测试 ═══
+    logger.info("最终测试...")
+    checkpoint = torch.load(args.output, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    model.to(device)
+
+    # 简单的推理测试
+    val_metrics = trainer.evaluate(val_loader)
+    logger.info("最终验证: loss=%.4f syn_acc=%.3f herb_r@10=%.3f",
+                 val_metrics["val_loss"], val_metrics["syn_acc"], val_metrics["herb_recall10"])
+
+    # 保存最终结果
+    results_path = Path(args.output).with_suffix(".json")
+    results_path.write_text(json.dumps({
+        "val_metrics": {k: float(v) if isinstance(v, (np.floating, float, np.integer, int))
+                        else v for k, v in val_metrics.items()},
+        "config": vars(args),
+    }, indent=2, ensure_ascii=False))
+
+    logger.info("全部完成!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

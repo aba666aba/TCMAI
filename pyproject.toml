@@ -1,0 +1,18 @@
+[project]
+name = "tcmai"
+version = "2.1.0"
+description = "中医药智能问答系统 - Traditional Chinese Medicine Intelligent Q&A System"
+readme = "docs/设计说明.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [
+    { name = "中医药智能问答系统开发团队" },
+]
+keywords = ["tcm", "traditional-chinese-medicine", "deep-learning", "recommender-system"]
+
+[project.optional-dependencies]
+recommender = ["torch>=2.0.0", "numpy>=1.24.0", "tqdm>=4.65.0"]
+dev = ["pytest>=7.0.0", "ruff>=0.8.0"]
+
+[tool.ruff]
+extend = "ruff.toml"

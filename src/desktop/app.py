@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Dict, List, Optional
 
-from core.fallback import detect_symptoms
+from core.symptom_pipeline import SymptomPipeline
 from desktop.service import TCMDesktopService
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,8 @@ class DesktopApp:
             "warning": "#fff3d7",
             "border": "#d7ded8",
         }
-        self.symptom_options = ["乏力", "食欲不振", "失眠", "头痛", "咳嗽", "腹痛", "腹泻", "便秘"]
+        from core.tcm_config import UI_QUICK_SYMPTOMS
+        self.symptom_options = list(UI_QUICK_SYMPTOMS)
 
         self._configure_root()
         self._build_style()
@@ -150,14 +151,9 @@ class DesktopApp:
         pane.add(right, weight=3)
 
         ttk.Label(left, text="请输入您的问题或症状", style="SectionTitle.TLabel").pack(anchor="w")
-        ttk.Label(left, text="支持模式选择、症状快捷标签和结果展示。", style="Muted.TLabel").pack(anchor="w", pady=(6, 18))
+        ttk.Label(left, text="支持症状快捷标签补全和结果展示。", style="Muted.TLabel").pack(anchor="w", pady=(6, 18))
 
-        self.mode_var = tk.StringVar(value="fast")
-        ttk.Label(left, text="回答模式", style="Body.TLabel").pack(anchor="w", pady=(0, 8))
-        ttk.Radiobutton(left, text="快速模式", value="fast", variable=self.mode_var).pack(anchor="w", pady=4)
-        ttk.Radiobutton(left, text="AI 模式（当前环境会自动降级）", value="ai", variable=self.mode_var).pack(anchor="w", pady=4)
-
-        ttk.Label(left, text="问题输入", style="Body.TLabel").pack(anchor="w", pady=(16, 8))
+        ttk.Label(left, text="问题输入", style="Body.TLabel").pack(anchor="w", pady=(6, 8))
         self.query_input = ScrolledText(
             left,
             height=10,
@@ -214,10 +210,8 @@ class DesktopApp:
         self.progress.pack(fill="x")
 
         ttk.Label(right, text="智能回答", style="SectionTitle.TLabel").pack(anchor="w")
-        self.result_mode_var = tk.StringVar(value="等待查询")
-        ttk.Label(right, textvariable=self.result_mode_var, style="Muted.TLabel").pack(anchor="w", pady=(4, 12))
 
-        ttk.Label(right, text="回答内容", style="Body.TLabel").pack(anchor="w")
+        ttk.Label(right, text="回答内容", style="Body.TLabel").pack(anchor="w", pady=(8, 6))
         self.answer_text = ScrolledText(
             right,
             wrap="word",
@@ -295,16 +289,14 @@ class DesktopApp:
 
         self.history_tree = ttk.Treeview(
             list_frame,
-            columns=("timestamp", "mode", "query"),
+            columns=("timestamp", "query"),
             show="headings",
             selectmode="browse",
         )
         self.history_tree.heading("timestamp", text="时间")
-        self.history_tree.heading("mode", text="模式")
         self.history_tree.heading("query", text="问题")
         self.history_tree.column("timestamp", width=170, anchor="w")
-        self.history_tree.column("mode", width=90, anchor="center")
-        self.history_tree.column("query", width=420, anchor="w")
+        self.history_tree.column("query", width=510, anchor="w")
         self.history_tree.pack(fill="both", expand=True)
         self.history_tree.bind("<<TreeviewSelect>>", self._on_history_select)
 
@@ -343,7 +335,7 @@ class DesktopApp:
                 "使用提醒",
                 "本系统仅提供知识参考，不构成医疗诊断或治疗建议。如有持续不适，请及时咨询专业医疗机构或执业医师。",
             ),
-            ("开发团队", "李俊贤、王子璇、周浩宇、刘丁夺"),
+            ("开发团队", "李俊贤、王子璇、周洪宇、刘丁夺"),
         ]
         for title, body in sections:
             card = tk.Frame(frame, bg="#f7faf7", highlightthickness=1, highlightbackground=self.palette["border"])
@@ -414,16 +406,17 @@ class DesktopApp:
         self.submit_button.state(["disabled"])
         self.progress.start(10)
         self.status_var.set("正在分析您的问题，请稍候...")
-        self.result_mode_var.set("处理中")
         self._set_text(self.answer_text, "")
         self._set_text(self.knowledge_text, "")
 
-        thread = threading.Thread(target=self._run_query, args=(query, self.mode_var.get()), daemon=True)
+        thread = threading.Thread(target=self._run_query, args=(query,), daemon=True)
         thread.start()
 
-    def _run_query(self, query: str, mode: str) -> None:
+    def _run_query(self, query: str) -> None:
         try:
-            result = self.service.query(query, detect_symptoms(query), mode)
+            pipeline = SymptomPipeline()
+            detected = pipeline.detect(query)
+            result = self.service.query(query, detected)
             self.result_queue.put(("success", result))
         except Exception as exc:
             logger.exception("桌面端查询失败")
@@ -444,15 +437,11 @@ class DesktopApp:
         self.submit_button.state(["!disabled"])
         if status == "error":
             self.status_var.set("查询失败")
-            self.result_mode_var.set("出现错误")
             messagebox.showerror("查询失败", str(payload))
             return
 
         data: Dict[str, Any] = payload
         self.status_var.set("查询完成")
-        self.result_mode_var.set(
-            f"当前结果：{'AI 模式' if data.get('mode') == 'ai' else '快速模式'}"
-        )
         self.disclaimer_var.set(
             data.get("disclaimer") or "本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。"
         )
@@ -475,12 +464,11 @@ class DesktopApp:
             preview = record.get("query", "").replace("\n", " ")
             if len(preview) > 34:
                 preview = preview[:34] + "..."
-            mode = "AI" if record.get("mode") == "ai" else "快速"
             self.history_tree.insert(
                 "",
                 "end",
                 iid=str(record["id"]),
-                values=(record.get("timestamp", ""), mode, preview),
+                values=(record.get("timestamp", ""), preview),
             )
 
     def _on_history_select(self, _event: Any) -> None:
@@ -489,7 +477,7 @@ class DesktopApp:
             return
         self.selected_history_id = int(selection[0])
         record = next(
-            (item for item in self.service.history_data if item.get("id") == self.selected_history_id),
+            (item for item in self.service.list_history() if item.get("id") == self.selected_history_id),
             None,
         )
         if not record:
@@ -497,7 +485,6 @@ class DesktopApp:
         symptoms = "、".join(record.get("symptoms", [])) or "未识别"
         detail = (
             f"时间：{record.get('timestamp', '')}\n"
-            f"模式：{'AI 模式' if record.get('mode') == 'ai' else '快速模式'}\n"
             f"症状：{symptoms}\n\n"
             f"问题：\n{record.get('query', '')}\n\n"
             f"回答：\n{record.get('answer', '')}"
@@ -553,7 +540,6 @@ class DesktopApp:
                 for item in records:
                     lines.append(
                         f"时间：{item.get('timestamp', '')}\n"
-                        f"模式：{item.get('mode', '')}\n"
                         f"问题：{item.get('query', '')}\n"
                         f"回答：{item.get('answer', '')}\n"
                         + "-" * 50
