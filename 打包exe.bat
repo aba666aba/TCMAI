@@ -10,8 +10,8 @@ echo.
 :: 进入项目目录
 cd /d "%~dp0"
 
-:: 检查 PyInstaller
-where pyinstaller >nul 2>&1
+:: 检查 PyInstaller（通过 python -m 调用最可靠）
+python -m PyInstaller --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [错误] 未找到 PyInstaller，请先安装：
     echo   pip install pyinstaller
@@ -34,7 +34,7 @@ if %ERRORLEVEL% NEQ 0 (
 echo [3/4] 开始打包（预计 3-10 分钟）...
 echo   打包后程序位于 dist\TCMAI_Desktop\
 echo.
-pyinstaller --clean tcmai.spec
+python -m PyInstaller --clean tcmai.spec
 if %ERRORLEVEL% NEQ 0 (
     echo [错误] 打包失败，请检查上方错误信息
     pause
