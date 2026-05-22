@@ -257,8 +257,19 @@ class DesktopApp:
         # 分隔线
         tk.Frame(left, bg=self.palette["border"], height=1).pack(fill="x", pady=(16, 10))
 
-        # 快捷标签
-        ttk.Label(left, text="快捷症状", style="Body.TLabel").pack(anchor="w", pady=(0, 8))
+        # 操作按钮
+        actions = ttk.Frame(left, style="Card.TFrame")
+        actions.pack(fill="x")
+        self.submit_button = ttk.Button(
+            actions, text="提交查询", style="Primary.TButton", command=self._submit_query
+        )
+        self.submit_button.pack(side="left")
+        ttk.Button(actions, text="清空", style="Secondary.TButton", command=self._clear_query).pack(
+            side="left", padx=(8, 0)
+        )
+
+        # 快捷标签（放在最下方）
+        ttk.Label(left, text="快捷症状", style="Body.TLabel").pack(anchor="w", pady=(12, 6))
         tags = ttk.Frame(left, style="Card.TFrame")
         tags.pack(fill="x")
         for index, symptom in enumerate(self.symptom_options):
@@ -279,17 +290,6 @@ class DesktopApp:
             )
             button.grid(row=index // 4, column=index % 4, padx=4, pady=4, sticky="ew")
             tags.grid_columnconfigure(index % 4, weight=1)
-
-        # 操作按钮
-        actions = ttk.Frame(left, style="Card.TFrame")
-        actions.pack(fill="x", pady=(16, 0))
-        self.submit_button = ttk.Button(
-            actions, text="提交查询", style="Primary.TButton", command=self._submit_query
-        )
-        self.submit_button.pack(side="left")
-        ttk.Button(actions, text="清空", style="Secondary.TButton", command=self._clear_query).pack(
-            side="left", padx=(8, 0)
-        )
 
         # 状态
         status_frame = tk.Frame(left, bg=self.palette["card"])
