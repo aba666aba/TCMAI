@@ -101,21 +101,41 @@ def generate_fallback_answer(query: str, kb_result: Optional[Dict] = None) -> Di
                 answer_parts.append(f"针对{symptom}，可考虑：{info['recommendation']}")
 
     answer_parts.append("\n【相关知识】")
-    keywords = extract_keywords(query)
-    for keyword in keywords[:3]:
-        herbs = search_herbs(keyword)
-        formulas = search_formulas(keyword)
 
-        if herbs:
-            answer_parts.append(f"• 相关药材（{keyword}）：")
-            for herb in herbs[:2]:
-                answer_parts.append(f"  - {herb['name']}：{herb['efficacy']}")
-
-        if formulas:
-            answer_parts.append(f"• 相关方剂（{keyword}）：")
-            for formula in formulas[:2]:
-                answer_parts.append(f"  - {formula['name']}：{formula['efficacy']}")
-                answer_parts.append(f"    组成：{formula['composition']}")
+    # 1. 数据库查询结果（直接搜索原查询，不受 TCM_KEYWORDS 限制）
+    if kb_result:
+        has_db_result = False
+        if kb_result.get("herbs"):
+            names = [h["name"] for h in kb_result["herbs"][:5]]
+            answer_parts.append(f"• 相关药材：{'、'.join(names)}")
+            has_db_result = True
+        if kb_result.get("formulas"):
+            names = [f["name"] for f in kb_result["formulas"][:5]]
+            answer_parts.append(f"• 相关方剂：{'、'.join(names)}")
+            has_db_result = True
+        if kb_result.get("patent_medicines"):
+            names = [m["name"] for m in kb_result["patent_medicines"][:5]]
+            answer_parts.append(f"• 相关中成药：{'、'.join(names)}")
+            has_db_result = True
+        if not has_db_result:
+            # 数据库无结果时，降级到关键词搜索（内置知识）
+            keywords = extract_keywords(query)
+            for keyword in keywords[:3]:
+                herbs = search_herbs(keyword)
+                formulas = search_formulas(keyword)
+                if herbs:
+                    answer_parts.append(f"• 相关药材（{keyword}）：")
+                    for herb in herbs[:2]:
+                        answer_parts.append(f"  - {herb['name']}：{herb['efficacy']}")
+                if formulas:
+                    answer_parts.append(f"• 相关方剂（{keyword}）：")
+                    for formula in formulas[:2]:
+                        answer_parts.append(f"  - {formula['name']}：{formula['efficacy']}")
+                        answer_parts.append(f"    组成：{formula['composition']}")
+            if not keywords:
+                answer_parts.append("暂无相关知识")
+    else:
+        answer_parts.append("暂无相关知识")
 
     answer_parts.append("\n【养生建议】")
     sym_set = set(symptoms)
