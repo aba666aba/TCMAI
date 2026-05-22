@@ -37,49 +37,42 @@
 tcmai/
 │
 ├── launcher.py / launcher.pyw    # 桌面启动器（入口）
+├── 快速启动.bat                  # 快速启动脚本
+├── 打包exe.bat                   # PyInstaller 打包脚本
+├── 开发文档.txt                  # 开发手册（软著申请主文档）
+├── pyproject.toml                # 项目元数据（v2.1.0）
+├── requirements.txt              # 全部依赖（含可选标记）
+├── ruff.toml                     # 代码风格配置
+├── tcmai.spec                    # PyInstaller 打包配置
+│
 ├── src/
-│   ├── main.py                   # 命令行入口
 │   ├── core/                     # 核心业务逻辑（原创，软著保护）
-│   │   ├── tcm_config.py         # ★ 统一配置中心（症状/证型/药材/方剂定义）
-│   │   ├── symptom_pipeline.py   # ★ 统一症状处理管线
+│   │   ├── tcm_config.py         # ★ 统一配置中心（33症状/9证型/15药材/14方剂）
+│   │   ├── symptom_pipeline.py   # 统一症状处理管线
 │   │   ├── symptom_analysis.py   # 症状分析器（标准化→证型推断→禁忌检查）
 │   │   ├── fallback.py           # 降级回答引擎（基于规则）
-│   │   ├── knowledge_base.py     # 数据库查询接口
+│   │   ├── knowledge_base.py     # SQLite 数据库查询
 │   │   ├── result_verify.py      # 结果审核与过滤
-│   │   └── data_desensitize.py   # 数据脱敏处理
+│   │   └── data_desensitize.py   # 数据脱敏（中医药白名单保护）
 │   │
 │   ├── desktop/                  # 桌面应用层
-│   │   ├── app.py                # Tkinter 桌面主界面（1280×840）
-│   │   └── service.py            # 桌面业务服务
+│   │   ├── app.py                # Tkinter 桌面界面（1280×840）
+│   │   ├── service.py            # 桌面业务服务层
+│   │   └── runtime.py            # 运行时工具
 │   │
 │   └── ...                       # 其他辅助模块
 │
 ├── tcm_recommender/              # ★ 深度学习推荐子系统
-│   ├── model.py                  # TCMNet Transformer 模型（11.2M 参数）
-│   ├── train.py                  # 训练脚本（多任务损失 + 对比学习）
+│   ├── model.py                  # TCMNet Transformer（~11M 参数，4GB GPU）
+│   ├── train.py                  # 训练器（AMP+多任务+对比学习）
 │   ├── recommend.py              # TCMRecommender 推理接口
-│   ├── data_pipeline.py          # 训练数据生成管线（5阶段生成）
-│   ├── data_expansion.py         # 数据库扩展脚本（基于教材）
-│   ├── best_model.pth            # 当前模型权重（41.6 MB）
-│   └── best_model.json           # 训练配置记录
+│   ├── data_pipeline.py          # 训练数据管线（5阶段 150K 样本）
+│   ├── data_expansion.py         # 数据库扩展（3000+药材）
+│   └── extended_config.py        # 200症状/17证型定义（AI端）
 │
 ├── data/                         # 数据目录
-│   ├── tcm_knowledge.db          # SQLite 数据库（3010 药材, 1095 方剂）
-│   ├── train_data.npz            # 训练数据（94333 样本）
-│   ├── history.json              # 问答历史记录
-│   └── logs/                     # 运行日志
-│
-├── docs/                         # 文档
-│   ├── 操作手册.md               # 用户操作手册
-│   ├── 设计说明.md               # 软件设计说明
-│   └── 项目优化方案.md           # 优化方案文档
-│
-├── pyproject.toml                # 项目元数据
-├── requirements.txt              # 基础依赖
-├── requirements-recommender.txt  # AI 模型依赖
-├── tcm_desktop.spec              # PyInstaller 打包配置
-├── 打包桌面版.bat                # 桌面版打包脚本
-└── 快速启动.bat                  # 快速启动脚本
+│   ├── tcm_knowledge.db          # 3010药材 / 1095方剂 / 125中成药 / 222验方
+│   └── train_data.npz            # 训练数据（~150K 样本）
 ```
 
 ---
@@ -154,7 +147,7 @@ SQLite 数据库操作接口，支持 SQL 注入防护。
 
 ### 环境要求
 
-- **Python**: ≥ 3.10（推荐 3.9+，实际兼容）
+- **Python**: ≥ 3.10
 - **操作系统**: Windows（Tkinter 桌面应用）
 
 ### 快速启动
@@ -220,18 +213,7 @@ pyinstaller tcm_desktop.spec
 ### 训练命令
 
 ```bash
-python tcm_recommender/train.py ^
-  --data data/train_data.npz ^
-  --db data/tcm_knowledge.db ^
-  --epochs 50 ^
-  --batch-size 64 ^
-  --d-model 384 ^
-  --num-layers 4 ^
-  --lr 1e-4 ^
-  --device cuda ^
-  --grad-accum 2 ^
-  --contrastive-weight 0.2 ^
-  --output tcm_recommender/best_model.pth
+python tcm_recommender/train.py --data data/train_data.npz --db data/tcm_knowledge.db --epochs 50 --batch-size 64 --d-model 384 --num-layers 4 --lr 1e-4 --device cuda --grad-accum 2 --contrastive-weight 0.2 --output tcm_recommender/best_model.pth
 ```
 
 ---
@@ -241,13 +223,10 @@ python tcm_recommender/train.py ^
 ### 依赖管理
 
 ```bash
-# 基础依赖
+# 基础依赖（含可选标记）
 pip install -r requirements.txt
 
-# AI 推荐依赖
-pip install -r requirements-recommender.txt
-
-# 全部依赖
+# 全部依赖（含开发工具）
 pip install -e .[recommender,dev]
 
 # 代码检查
@@ -257,7 +236,7 @@ ruff check .
 ### 项目约定
 
 - **编码**: UTF-8
-- **Python**: 3.9+（兼容 3.9/3.10/3.11）
+- **Python**: ≥ 3.10
 - **代码风格**: 遵循 ruff 配置 (`ruff.toml`)
 - **版权**: Apache-2.0，所有原创代码保留软著权益
 
@@ -276,8 +255,9 @@ python tcm_recommender/data_expansion.py
 
 | 提交 | 日期 | 说明 |
 |------|------|------|
-| `HEAD` | 2026-05-22 | V4 重构：模型重命名、清理旧文件、新增核心模块和项目配置 |
-| `a1de053` | 2026-05-22 | V4 升级：100K 级数据管线 + 最新 Transformer 架构 |
+| `HEAD` | 2026-05-22 | V4 三轮优化：DRY养生建议/正则改进/特征缓存/npz校验/死代码清理 |
+| `7952494` | 2026-05-22 | V4 重构：负样本修复/跨包依赖清理/UI同步/死代码清理 |
+| `a1de053` | 2026-05-22 | V4 升级：100K 级数据管线 + Transformer 架构 |
 | `aa5a3fe` | 2026-05-22 | V2.1→V3：数据库扩展到 1024 药材/377 方剂/200 症状/17 证型 |
 | `6498f11` | 2026-04-07 | 重构：Web→Desktop 桌面模块迁移 |
 
