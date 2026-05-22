@@ -6,24 +6,75 @@
 数据脱敏模块
 
 原创功能：用户数据脱敏、隐私保护、日志匿名化
+
+注意：脱敏规则会误伤中医药术语（如"黄芪"被当作"黄"姓姓名），
+因此维护 TCM_WHITELIST 白名单，匹配到白名单中的词条时跳过姓名脱敏。
 """
 
 import logging
 import re
 import hashlib
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# ── 中医药专用白名单 ──────────────────────────────
+# 这些词虽符合"姓氏+1~2汉字"的姓名格式，但实际是中药/方剂名称，
+# 脱敏姓名正则不应匹配它们。从 tcm_config 提取。
+TCM_WHITELIST: Set[str] = {
+    # 药材（常见易误伤）
+    "黄芪", "黄连", "黄柏", "黄芩", "黄精", "黄药子", "黄藤", "黄荆子",
+    "白术", "白芍", "白芷", "白前", "白蔹", "白及", "白茅根", "白附子",
+    "白芥子", "白鲜皮", "白扁豆", "白果", "白花蛇舌草",
+    "陈皮", "陈仓米",
+    "生姜", "干姜", "姜黄",
+    "石斛", "石决明", "石膏", "石韦", "石菖蒲",
+    "龙眼肉", "龙骨", "龙胆草", "龙齿",
+    "何首乌",
+    "吴茱萸", "吴梧桐",
+    "朱砂",
+    "苏木", "苏合香",
+    "杜仲",
+    "秦艽", "秦皮",
+    "防风",
+    "柴胡",
+    "马勃", "马兜铃", "马齿苋", "马钱子",
+    "刘寄奴",
+    "红花", "红藤",
+    "金银花",
+    "连翘",
+    # 方剂（常见）
+    "四君子汤", "四物汤", "八珍汤", "六味地黄丸",
+    "逍遥散", "小柴胡汤", "桂枝汤", "银翘散",
+    "补中益气汤", "归脾汤", "生脉散",
+    "龙胆泻肝汤", "藿香正气散",
+    "温胆汤", "平胃散", "二陈汤",
+    "麻黄汤", "麻杏石甘汤", "小青龙汤",
+    "桑菊饮", "白虎汤", "清胃散",
+    "天麻钩藤饮", "镇肝熄风汤",
+    "血府逐瘀汤", "补阳还五汤",
+    "肾气丸", "右归丸", "左归丸",
+    "茵陈蒿汤", "青蒿鳖甲汤",
+    "金匮肾气丸", "归芍地黄丸",
+    "四逆散", "导赤散", "泻白散",
+    "黄连解毒汤",
+}
+# 最长白名单长度（用于预检加速）
+_MAX_WHITELIST_LEN = max(len(w) for w in TCM_WHITELIST) if TCM_WHITELIST else 0
+# 编译正则：匹配以百家姓开头的白名单词条
+_TCM_PROTECT_PATTERN = re.compile(
+    "|".join(re.escape(w) for w in sorted(TCM_WHITELIST, key=len, reverse=True))
+)
 
 
 class DataDesensitizer:
     """
     数据脱敏器
-    
+
     负责用户数据的脱敏处理，保护用户隐私
     """
-    
+
     def __init__(self):
         """初始化脱敏器"""
         # 个人信息匹配规则
@@ -117,11 +168,23 @@ class DataDesensitizer:
         )
 
         # 姓名脱敏（匹配"姓氏+1~2个汉字"的姓名）
-        desensitized = re.sub(
-            self.patterns["name"],
-            lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1),
-            desensitized,
-        )
+        # 先保护中医药白名单词条（如"黄芪"→不脱敏）
+        protected_spans = []
+        for m in _TCM_PROTECT_PATTERN.finditer(desensitized):
+            protected_spans.append((m.start(), m.end()))
+
+        # 用自定义替换函数检查每个匹配是否在白名单范围内
+        def _replace_name(match):
+            start, end = match.start(), match.end()
+            # 检查是否落在受保护的白名单区间内
+            for ps, pe in protected_spans:
+                if start >= ps and end <= pe:
+                    return match.group(0)  # 不脱敏
+            # 正常脱敏：姓氏保留，其余变*
+            token = match.group(0)
+            return token[0] + "*" * (len(token) - 1)
+
+        desensitized = re.sub(self.patterns["name"], _replace_name, desensitized)
 
         return desensitized
     

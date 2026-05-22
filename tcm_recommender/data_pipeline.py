@@ -122,23 +122,17 @@ class TCMDataPipeline:
         logger.info("  [OK] 方剂: %s", self.num_formulas)
 
     def _load_symptoms(self):
-        try:
-            from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST
-            self.symptoms = list(EXTENDED_SYMPTOM_LIST)
-        except ImportError:
-            from core.tcm_config import SYMPTOM_LIST
-            self.symptoms = list(SYMPTOM_LIST)
+        # 统一使用 extended_config（同包，无需 try-import fallback）
+        from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST
+        self.symptoms = list(EXTENDED_SYMPTOM_LIST)
         self.num_symptoms = len(self.symptoms)
         self.symptom_to_idx = {s: i for i, s in enumerate(self.symptoms)}
         logger.info("  [OK] 症状: %s", self.num_symptoms)
 
     def _load_syndromes(self):
-        try:
-            from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
-            self.syndromes = EXTENDED_SYNDROME_DEFINITIONS
-        except ImportError:
-            from core.tcm_config import SYNDROME_RULES
-            self.syndromes = dict(SYNDROME_RULES)
+        # 统一使用 extended_config（17 证型），替代早期的 SYNDROME_RULES（3 证型）
+        from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
+        self.syndromes = EXTENDED_SYNDROME_DEFINITIONS
         self.num_syndromes = len(self.syndromes)
         logger.info("  [OK] 证型: %s", self.num_syndromes)
 
@@ -158,8 +152,8 @@ class TCMDataPipeline:
             self.herbs[self.model_idx_to_herb_db_id[i]].get("category", "")
             for i in range(1, self.num_herbs + 1)
         ]
-        from core.tcm_config import TOXIC_HERBS
-        toxic_set = set(TOXIC_HERBS)
+        from tcm_recommender.extended_config import EXTENDED_TOXIC_HERBS
+        toxic_set = set(EXTENDED_TOXIC_HERBS)
         self.herb_toxic_mask = np.array(
             [1.0 if self.herb_names[i] in toxic_set else 0.0 for i in range(self.num_herbs)],
             dtype=np.float32,
@@ -334,13 +328,15 @@ class TCMDataPipeline:
                 if hid and hid in self.herb_db_id_to_model_idx:
                     syn_h_indices.append(self.herb_db_id_to_model_idx[hid] - 1)
 
-            # 方剂 → index
+            # 方剂 → index（遍历所有推荐方剂，取第一个匹配的）
             syn_f_label = 0
             if syn_formula_names:
-                f_name = syn_formula_names[0]
-                for fid, f_info in self.formulas.items():
-                    if f_info.get("name") == f_name and fid in self.formula_db_id_to_model_idx:
-                        syn_f_label = self.formula_db_id_to_model_idx[fid]
+                for f_name in syn_formula_names:
+                    for fid, f_info in self.formulas.items():
+                        if f_info.get("name") == f_name and fid in self.formula_db_id_to_model_idx:
+                            syn_f_label = self.formula_db_id_to_model_idx[fid]
+                            break
+                    if syn_f_label != 0:
                         break
 
             # 基础样本
@@ -405,6 +401,21 @@ class TCMDataPipeline:
 
                 hl = np.zeros(nh, dtype=np.float32)
                 hl[h_idx] = 1.0
+
+                # 补充同症状组合下的其他相关药材（通过关联矩阵）
+                if self.symptom_herb_matrix is not None:
+                    co_herb_scores = self.symptom_herb_matrix[list(chosen)].sum(axis=0)  # [nh]
+                    co_herb_scores[h_idx] = 0  # 排除自身
+                    # 选择关联得分 ≥ 50% 最大值的其他药材，最多3味
+                    max_score = co_herb_scores.max()
+                    if max_score > 0:
+                        threshold = max_score * 0.5
+                        extra_candidates = np.where(co_herb_scores >= threshold)[0]
+                        extra_n = min(len(extra_candidates), 3)
+                        if extra_n > 0:
+                            extra = self.rng.choice(extra_candidates, size=extra_n, replace=False)
+                            for ei in extra:
+                                hl[ei] = 1.0
 
                 # 推断证型
                 syn_label = self._infer_syndrome_from_symptoms(set(chosen))
@@ -632,12 +643,105 @@ class TCMDataPipeline:
         logger.info("    有药材标签: %.1f%%", has_herb * 100)
 
     # ═══════════════════════════════════════════════
-    # 4. IO
+    # 4. 药材特征构建（持久化到 npz，避免 train.py 重复计算）
     # ═══════════════════════════════════════════════
 
-    def save(self, result: dict, path: str):
-        """保存为压缩 NPZ 格式"""
-        np.savez_compressed(path, **result)
+    def build_herb_features(self) -> Dict[str, np.ndarray]:
+        """构建药材特征（与 train.py build_herb_features 输出格式一致）
+
+        Returns:
+            dict 包含 char_multihot, category_idx, nature_idx, flavor_idx
+        """
+        nh = self.num_herbs
+        if nh == 0:
+            return {}
+
+        # 字符多热矩阵
+        NATURE_LIST = ["寒", "热", "温", "凉", "平"]
+        FLAVOR_LIST = ["酸", "苦", "甘", "辛", "咸"]
+
+        herb_texts: Dict[int, str] = {}
+        for model_idx in range(1, nh + 1):
+            db_id = self.model_idx_to_herb_db_id[model_idx]
+            herb = self.herbs[db_id]
+            herb_texts[model_idx] = f"{herb.get('efficacy', '')} {herb.get('indications', '')}"
+
+        char_set: set = set()
+        for text in herb_texts.values():
+            for ch in text:
+                if '\u4e00' <= ch <= '\u9fff':
+                    char_set.add(ch)
+        char_list = sorted(char_set)
+        char_to_idx = {ch: i for i, ch in enumerate(char_list)}
+        num_chars = len(char_list)
+
+        char_mh = np.zeros((nh, num_chars), dtype=np.float32)
+        for mi, text in herb_texts.items():
+            for ch in text:
+                if ch in char_to_idx:
+                    char_mh[mi - 1, char_to_idx[ch]] = 1.0
+
+        # 类别索引
+        all_categories = sorted(set(
+            self.herbs[self.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
+            for mi in range(1, nh + 1)
+        ))
+        cat_to_idx = {c: i + 1 for i, c in enumerate(all_categories)}
+        cat_idx = np.zeros(nh, dtype=np.int32)
+        for mi in range(1, nh + 1):
+            cat = self.herbs[self.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
+            cat_idx[mi - 1] = cat_to_idx.get(cat, 0)
+
+        # 药性索引
+        nat_idx = np.zeros(nh, dtype=np.int32)
+        for mi in range(1, nh + 1):
+            nat = self.herbs[self.model_idx_to_herb_db_id[mi]].get("nature", "") or ""
+            found = False
+            for ni, n_name in enumerate(NATURE_LIST, 1):
+                if n_name in nat:
+                    nat_idx[mi - 1] = ni
+                    found = True
+                    break
+            if not found:
+                nat_idx[mi - 1] = len(NATURE_LIST) + 1
+
+        # 药味索引
+        flv_idx = np.zeros(nh, dtype=np.int32)
+        for mi in range(1, nh + 1):
+            flv = self.herbs[self.model_idx_to_herb_db_id[mi]].get("flavor", "") or ""
+            found = False
+            for fi, f_name in enumerate(FLAVOR_LIST, 1):
+                if f_name in flv:
+                    flv_idx[mi - 1] = fi
+                    found = True
+                    break
+            if not found:
+                flv_idx[mi - 1] = len(FLAVOR_LIST) + 1
+
+        logger.info("药材特征: chars=%s, categories=%s", num_chars, len(all_categories))
+        return {
+            "char_multihot": char_mh,
+            "category_idx": cat_idx,
+            "nature_idx": nat_idx,
+            "flavor_idx": flv_idx,
+            "num_chars": num_chars,
+            "num_categories": len(all_categories) + 1,
+            "num_natures": len(NATURE_LIST) + 2,
+            "num_flavors": len(FLAVOR_LIST) + 2,
+        }
+
+    # ═══════════════════════════════════════════════
+    # 5. IO
+    # ═══════════════════════════════════════════════
+
+    def save(self, result: dict, path: str, include_herb_features: bool = True):
+        """保存为压缩 NPZ 格式（可选包含药材特征缓存）"""
+        save_data = dict(result)
+        if include_herb_features and self.num_herbs > 0:
+            feat = self.build_herb_features()
+            save_data["herb_features"] = feat
+            logger.info("药材特征已缓存到 npz")
+        np.savez_compressed(path, **save_data)
         import os
         size_mb = os.path.getsize(path) / (1024 * 1024)
         logger.info("数据已保存: %s (%.1f MB)", path, size_mb)

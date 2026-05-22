@@ -1,0 +1,200 @@
+# TCMAI 中医药智能问答系统 — 开发手册
+
+## 项目概况
+
+中医药桌面应用（Python + PyTorch），支持规则引擎快速模式和深度学习 AI 模式。
+项目路径：`E:\Tom\TCMAI` | Python >=3.10 | GPU: RTX 3050 4GB (CUDA 12.4)
+
+## 数据流架构
+
+```
+用户输入 → TCMDesktopService.query()
+           ├─ AI模式 → TCMRecommender.recommend → 格式化回答 → 输出
+           └─ 快速模式 → generate_fallback_answer() → 输出
+                         └─ detect_symptoms() → 症状分析
+                         └─ search_herbs/formulas → 知识检索
+```
+
+快速模式走规则引擎（src/core/fallback.py），AI模式走深度学习（tcm_recommender/recommend.py）。
+桌面服务层在 src/desktop/service.py 中协调调用流程。
+`symptom_pipeline.py` 提供的症状分析功能供各模块按需调用，不再由 `service.py` 强制串接。
+
+## 数据库表结构 (data/tcm_knowledge.db)
+
+herbs: id, name, category, nature, flavor, meridian, efficacy, indications, usage, contraindications
+formulas: id, name, category, source_book, composition, dosage, functions, indications, usage, modification
+patent_medicines: id, name, category, composition, functions, indications, usage_dosage, contraindications
+folk_remedies: id, disease, remedy, ingredients, method, source
+
+## 环境搭建
+
+```bash
+conda create -n tcmai python=3.10 -y
+conda activate tcmai
+pip install torch==2.6.0+cu124 numpy tqdm pytest ruff --index-url https://download.pytorch.org/whl/cu124
+```
+
+验证：`python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"`
+
+## 目录结构
+
+```
+E:\Tom\TCMAI/
+├── src/
+│   ├── core/                     # 症状分析、知识库、降级回答、脱敏、合规校验
+│   │   ├── symptom_analysis.py   #   症状标准化+证型推断+禁忌检查（9证型）
+│   │   ├── symptom_pipeline.py   #   统一处理管线
+│   │   ├── knowledge_base.py     #   SQLite 查询
+│   │   ├── fallback.py           #   规则引擎降级回答
+│   │   ├── result_verify.py      #   合规校验+溯源
+│   │   ├── data_desensitize.py   #   脱敏（含中医药白名单保护）
+│   │   └── tcm_config.py         #   桌面端配置（33症状/9证型/15内置药材/14方剂）
+│   └── desktop/
+│       ├── app.py                #   tkinter GUI
+│       ├── service.py            #   业务服务层
+│       └── runtime.py            #   运行时工具
+├── tcm_recommender/
+│   ├── model.py                  #   TCMNet: Transformer+双塔+交叉注意力
+│   ├── train.py                  #   训练器: AMP+多任务损失+对比学习
+│   ├── recommend.py              #   推理接口
+│   ├── data_pipeline.py          #   训练数据生成（5阶段管线）
+│   ├── data_expansion.py         #   数据库扩充（3000+药材数据源）
+│   └── extended_config.py        #   200症状/17证型定义（AI端数据源）
+├── data/
+│   ├── tcm_knowledge.db          #   3010药材/1095方剂/125中成药/222验方
+│   └── train_data.npz            #   150380样本, avg 7.5正药材
+├── docs/                         # 软著材料
+├── import_knowledge.py/v2.py     # 知识库导入脚本
+├── launcher.py / launcher.pyw    # 启动入口
+└── tcmai.spec                    # PyInstaller 打包配置
+```
+
+## 启动方式
+
+- 快速模式（规则引擎）：`python launcher.py` 或双击 `快速启动.bat`
+- AI 模式：GUI 中选择"回答模式→AI"
+- 打包 exe：双击 `打包exe.bat`
+
+## TCMNet 模型架构 (model.py)
+
+SymptomEncoder(Embedding+位置编码+4层Transformer+AttentivePooling) → [B,d_model]
+HerbEncoder(CharCNN文本塔+属性Embedding塔, Sigmoid门控融合) → [H,d_model]
+CrossAttentionRanker(症状Q × 药材/方剂K,V) → 逐项评分
+多头输出：证型分类(softmax) + 药材推荐(sigmoid) + 方剂推荐(softmax)
+对比学习：InfoNCE拉近匹配(症状,药材)对
+
+## 训练数据管线 (data_pipeline.py)
+
+5阶段生成150K样本：
+1. 证型驱动(50%)：按17证型定义生成症状变体+推荐药材标签
+2. 药材驱动(20%)：每味药材匹配关联症状
+3. 方剂驱动(12%)：每个方剂匹配症状+药材组成标签
+4. 组合增强(25%)：随机症状组合+关联矩阵top-20标签
+5. 负样本(17%)：零关联症状-药材对（label=-1.0，训练时作为明确负标签参与loss）
+
+## 训练命令
+
+```bash
+# 1 epoch 快速验证
+python -m tcm_recommender.train --db data/tcm_knowledge.db --data data/train_data.npz --output tcm_recommender/best_model.pth --epochs 1 --batch-size 32 --lr 1e-4 --d-model 384 --num-layers 4 --device cuda --grad-accum 2 --contrastive-weight 0.2
+
+# 完整训练（early stopping ~15-25轮收敛）
+python -m tcm_recommender.train --db data/tcm_knowledge.db --data data/train_data.npz --output tcm_recommender/best_model.pth --epochs 30 --batch-size 32 --lr 1e-4 --d-model 384 --num-layers 4 --device cuda --grad-accum 2 --contrastive-weight 0.2
+
+# 重新生成训练数据
+python -m tcm_recommender.data_pipeline --db data/tcm_knowledge.db --output data/train_data.npz --count 150000
+```
+
+参数：`d_model=384`(≈11M参数, 4GB显存上限) / `batch_size=32` / `grad_accum=2` / `lr=1e-4` / early stopping 15轮
+
+## 推理测试
+
+```bash
+python -m tcm_recommender.recommend "发热 恶寒 头痛 鼻塞 鼻流清涕 咳嗽 无汗"
+python -m tcm_recommender.recommend "腰膝酸软 头晕 耳鸣 失眠 盗汗 手足心热 口干" --json
+```
+
+## 代码质量
+
+```bash
+ruff check . && ruff format .
+```
+
+## 数据库说明
+
+清洗后无重复：药材3010种、方剂1095首、中成药125种、验方222条。
+症状-药材关联矩阵：5283非零/602000总数，密度0.88%（基于功效文本子串匹配，精度有限）。
+症状定义：200种（extended_config.py，AI端），33种（tcm_config.py，桌面端），证型定义：17种（AI端）/ 9种（桌面端）。
+
+## 数据源设计原则
+
+两套配置各有侧重，不合并：
+- `tcm_config.py` — 桌面端/规则引擎用：33常见症状、9证型、15内置药材、14内置方剂。轻量，覆盖日常。无外部依赖。
+- `extended_config.py` — AI/训练管线用：200症状、17证型。完整覆盖，同一包内import，无fallback。
+
+**调用链**：
+- `symptom_analysis.py` / `fallback.py` → 引用 `tcm_config.SYNDROME_DEFINITIONS`（9证型，已修复不再引用SYNDROME_RULES的3证型）
+- `data_pipeline.py` → 引用 `extended_config.EXTENDED_SYNDROME_DEFINITIONS`（17证型，直接import无try-except）
+- `data_pipeline._build_indices()` → 引用 `extended_config.EXTENDED_TOXIC_HERBS`（AI端副本，已解决跨包依赖）
+
+## Bug 修复记录
+
+### 第一轮修复（2026-05-22）
+
+#### 高危
+1. **脱敏误伤药材** — `data_desensitize.py` 新增 `TCM_WHITELIST` 白名单（60+药材+30+方剂），姓名正则跳过白名单匹配。修复：黄芪、白术、陈皮等常见药材不再被脱敏为"黄*"、"白*"、"陈*"等。
+2. **证型规则不同步** — `symptom_analysis.py` 从引用 `SYNDROME_RULES`（3证型）改为引用 `SYNDROME_DEFINITIONS`（9证型）。同步扩展禁忌检查（从1条→3类）和调理建议（从2证型→9证型）。
+3. **安全异常被静默** — `service.py` 安全校验 `except: pass` 改为 `except Exception as exc: logger.warning(...)`，异常不再被吞掉。
+4. **负样本无效** — `train.py` 的 `_herb_bce_loss` 重写：将标签 `-1.0` 的负样本纳入 BCE Loss 计算（目标=0），不再被当成忽略类。权重按正负比动态平衡，上限50。
+5. **数据源碎片化** — `data_pipeline.py` 中 `_load_symptoms` 和 `_load_syndromes` 移除 try-import fallback 逻辑，直接导入 `extended_config`（同包，保证可用）。
+
+#### 中危
+6. **养生建议误匹配** — `fallback.py` 和 `service.py` 中 `any(k in str(sym_set))` 改为 `sym_set & {...}` set交集判断，避免单字子串误匹配。
+7. **SQL空条件查询** — `knowledge_base.py` 的 `search()` 方法增加空查询守卫 `if not query or len(query.strip()) == 0`，防止 `LIKE '%%'` 退回全表。
+
+### 第二轮修复（2026-05-22）
+
+#### 优化方向
+1. **`close()` 异常静默** — `service.py` `close()` 的 `except: pass` 改为 `logger.warning(...)`，与Bug#3同模式，统一修复。
+2. **`TOXIC_HERBS` 跨包依赖** — `extended_config.py` 新增 `EXTENDED_TOXIC_HERBS`（AI端副本），`data_pipeline._build_indices()` 改为从同包导入，消除对 `core.tcm_config` 的跨包依赖。
+3. **`sample_weights` 未使用** — `TCMDataset` 新增加载 `sample_weights` 字段；`train_step` 中证型分类损失使用样本加权（权重归一化到均值1），组合增强/负样本的低权重样本贡献降低。
+4. **`UI_QUICK_SYMPTOMS` 不同步** — 从15个扩展为33个（与 `SYMPTOM_LIST` 完全一致），前端快捷标签覆盖所有常见症状。
+5. **死代码清理** — 移除 `fallback.py` 的 `is_model_output_valid()`（未被调用）、`knowledge_base.py` 的 `DatabaseConnectionError`（未使用）、`symptom_analysis.py` 未使用的 `INCOMPATIBLE_HERBS` 导入。
+6. **方剂标签缺失** — `_generate_syndrome_samples` 遍历所有推荐方剂（`syn_formula_names`）而非仅第一个，提高标签命中率。
+7. **单药材标签** — `_generate_herb_samples` 通过 `symptom_herb_matrix` 补充同症状组合下的其他相关药材（最多3味，需 ≥ 50% max 关联得分），每样本从1正标签扩展为多正标签。
+8. **`severity` 硬编码** — 从固定 `3` 改为根据 `SYMPTOM_INFO.description` 含"出血"/"剧痛"等关键词时设为 `5`，其余为 `3`。
+
+### 第三轮修复（2026-05-22）
+
+#### 已完成
+1. **养生建议 DRY** — `tcm_config.py` 新增 `generate_health_tips()` 共享函数 + `_HEALTH_TIPS` 规则表（6组）。`fallback.py` 和 `service.py` 的养生建议逻辑统一调用该函数，消除 24 行重复代码。
+2. **`detect_symptoms` 正则改进** — `fallback.py` 中关键词匹配从 `in` 操作符改为 `re.search`，同步改进 `extract_keywords()`。`query_lower` 无用变量移除。
+3. **白名单"石菖蒲"重复** — `data_desensitize.py` 白名单列表中删除重复条目（`Set` 自动去重但字面不应重复）。
+4. **字符集持久化** — `data_pipeline.py` 新增 `build_herb_features()` 方法，在 `save()` 时自动将药材特征（字符多热矩阵、性味归经索引）缓存到 npz 的 `herb_features` 字段。`train.py` 的 `main()` 优先从 npz 加载缓存，无需连接数据库重建特征。
+5. **npz 字段完整性检查** — `train.py` 在加载 npz 后检查 `sample_weights` 和 `herb_features` 字段是否存在，缺失时打印明确提示，建议用户重新生成数据。
+6. **死代码清理** — `service.py` 移除未使用的 `SymptomPipeline` 导入、`self.pipeline` 赋值和不被使用的 `_pipeline_result` 调用。
+
+#### 待修复/待优化
+1. **`knowledge_base.py` 无 FTS5 全文索引** — 5次 LIKE 全扫是性能瓶颈，建议对 efficacy/indications/functions 字段建 FTS5 虚拟表。
+2. **关联矩阵精度瓶颈** — 当前症状-药材关联基于功效文本子串匹配（密度0.88%），限制了补全关联药材的质量。建议改用语义匹配（如 Sentence-BERT 或基于 embedding 的相似度）。
+3. **`extended_config.py` 定义与 `tcm_config.py` 有重叠** — 两套配置共用部分症状/证型的文本定义，修改时需同步更新两者。长远可考虑用 YAML/JSON 外部配置统一管理。
+4. **`_generate_herb_samples` 关联药材质量受限** — 通过 `symptom_herb_matrix` 补全的关联药材受限于文本匹配精度，部分关联可能不准确。
+
+#### 新增改善方向（本轮发现）
+5. **`data_pipeline.save()` 嵌套字典序列化兼容性** — `herb_features` 以嵌套 dict 存入 npz，通过 pickle 序列化为 0-d object array。跨 Python 大版本可能不兼容。建议未来改用独立 npz 文件或 JSON 元数据文件存储特征缓存。
+6. **`build_herb_features` 重复实现** — `train.py` 和 `data_pipeline.py` 各自的 `build_herb_features` 逻辑几乎一致，违背 DRY。建议将特征构建逻辑统一放在 `data_pipeline.py` 中，`train.py` 仅从 npz 加载或调用 pipeline 方法。
+7. **`fallback.py` `search_herbs`/`search_formulas` 使用 `in` 匹配** — 关键词搜索使用 `in` 操作符可能存在子串误匹配，建议统一改为 `re.search`。
+8. **`result_verify.py` 导入实际均被使用** — 经代码审查，`re`（正则过滤）和 `datetime`（时间戳）均被使用，非死代码。开发文档可移除该项。
+
+## 数据库导入（新增外部数据源时用）
+
+```bash
+python import_knowledge.py         # 基础版（药材+方剂+中成药）
+python import_knowledge_v2.py      # 完整版（含方剂组成解析+本草纲目药理）
+```
+
+## Git 推送
+
+```bash
+git add <files> && git commit -m "message" && git push origin main
+```

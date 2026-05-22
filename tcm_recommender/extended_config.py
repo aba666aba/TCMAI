@@ -680,3 +680,12 @@ EXTENDED_SYNDROME_DEFINITIONS: dict = {
 ],
     },
 }
+
+# ============================================================
+# AI 端毒性药材列表（tcm_config.TOXIC_HERBS 的 AI 端副本）
+# 用于 data_pipeline._build_indices() 构建毒性掩码，
+# 避免跨包依赖 src/core/tcm_config。
+# ============================================================
+EXTENDED_TOXIC_HERBS: list[str] = [
+    "生川乌", "生草乌", "附子", "巴豆", "甘遂", "大戟", "芫花",
+]

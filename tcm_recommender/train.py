@@ -52,12 +52,14 @@ class TCMDataset(Dataset):
             self.herb_labels = data["herb_labels"][indices]
             self.formula_labels = data["formula_labels"][indices]
             self.syndrome_labels = data["syndrome_labels"][indices]
+            self.sample_weights = data.get("sample_weights", np.ones(len(indices), dtype=np.float32))[indices]
         else:
             self.symptom_ids = data["symptom_ids"]
             self.symptom_mask = data["symptom_mask"]
             self.herb_labels = data["herb_labels"]
             self.formula_labels = data["formula_labels"]
             self.syndrome_labels = data["syndrome_labels"]
+            self.sample_weights = data.get("sample_weights", np.ones(len(self.symptom_ids), dtype=np.float32))
 
     def __len__(self):
         return len(self.symptom_ids)
@@ -69,6 +71,7 @@ class TCMDataset(Dataset):
             "herb_labels": torch.from_numpy(self.herb_labels[idx].astype(np.float32)),
             "formula_label": int(self.formula_labels[idx]),
             "syndrome_label": int(self.syndrome_labels[idx]),
+            "sample_weight": float(self.sample_weights[idx]),
         }
 
 
@@ -197,23 +200,42 @@ class Trainer:
         self.global_step = 0
 
     def _herb_bce_loss(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        """加权 BCE 损失（处理正负样本不平衡）"""
-        pos_mask = labels > 0.5
-        neg_mask = labels < -0.5
-        normal_mask = ~pos_mask & ~neg_mask  # 0标签（忽略的）
+        """加权 BCE 损失（处理正负样本不平衡）
+        
+        标签约定：
+          -  1.0 = 正样本（应推荐）
+          - -1.0 = 负样本（不应推荐，参与训练，目标=0）
+          -  0.0 = 未标注（不参与训练）
+        """
+        pos_mask = labels > 0.5        # 正样本
+        neg_mask = labels < -0.5       # 负样本（先前被忽略，现已修复）
+        unknown_mask = ~pos_mask & ~neg_mask  # 0 = 未标注，忽略
 
-        if pos_mask.sum() == 0:
+        has_pos = pos_mask.any()
+        has_neg = neg_mask.any()
+        if not has_pos and not has_neg:
             return torch.tensor(0.0, device=self.device)
 
-        # 只计算正类和部分负类
-        pos_weight_val = (neg_mask.float().sum() / pos_mask.float().sum().clamp(min=1)).clamp(1, 50)
-        weight = torch.ones_like(labels)
-        weight[pos_mask] = pos_weight_val
+        # 参与 loss 计算的 mask
+        active_mask = pos_mask | neg_mask
+        # 目标值：正样本=1，负样本=0
+        targets = torch.zeros_like(scores)
+        targets[pos_mask] = 1.0
+
+        # 权重：负样本权重 = 正样本数/负样本数（平衡），上限50
+        if has_pos and has_neg:
+            neg_weight_val = (pos_mask.float().sum() / neg_mask.float().sum().clamp(min=1)).clamp(1, 50)
+        else:
+            neg_weight_val = 1.0
+
+        weight = torch.ones_like(scores)
+        weight[pos_mask] = 1.0
+        weight[neg_mask] = neg_weight_val
 
         loss = F.binary_cross_entropy_with_logits(
-            scores[normal_mask | pos_mask],
-            (labels > 0.5).float()[normal_mask | pos_mask],
-            weight=weight[normal_mask | pos_mask],
+            scores[active_mask],
+            targets[active_mask],
+            weight=weight[active_mask],
         )
         return loss
 
@@ -225,6 +247,9 @@ class Trainer:
         herb_lbl = batch["herb_labels"].to(self.device)
         form_lbl = batch["formula_label"].to(self.device)
         syn_lbl = batch["syndrome_label"].to(self.device)
+        sample_weight = batch.get("sample_weight", torch.ones(sym_ids.size(0), device=self.device))
+        # 样本权重归一到均值1，防止整体loss scale偏移
+        sw = sample_weight / sample_weight.mean().clamp(min=0.01)
 
         # 混合精度 (仅 CUDA)
         with torch.amp.autocast("cuda", enabled=(self.device.type == "cuda")):
@@ -239,6 +264,8 @@ class Trainer:
             if mask_syn.sum() > 0:
                 l_syn = self.syn_criterion(syn_logits, syn_lbl)
                 if not torch.isnan(l_syn):
+                    # 样本加权
+                    l_syn = (l_syn * sw[mask_syn]).mean() if mask_syn.sum() > 1 else l_syn
                     loss += l_syn
                     metrics["syn_loss"] = l_syn.item()
 
@@ -252,7 +279,7 @@ class Trainer:
                 loss += l_form * 0.5
                 metrics["form_loss"] = l_form.item()
 
-            # 药材多标签
+            # 药材多标签（加权 BCE）
             has_herb = (herb_lbl.abs() > 0.5).sum() > 0
             if has_herb:
                 l_herb = self._herb_bce_loss(herb_scores, herb_lbl)
@@ -472,6 +499,13 @@ def main():
     logger.info("数据: %s 样本, %s 症状, %s 药材, %s 方剂, %s 证型",
                  n_samples, n_symptoms, n_herbs, n_formulas, n_syndromes)
 
+    # 检查 npz 字段完整性
+    if "sample_weights" not in data:
+        logger.warning("npz 缺少 sample_weights 字段（旧数据格式），已自动回退为全1权重。"
+                       "建议用 data_pipeline 重新生成数据以获得样本加权功能。")
+    if "herb_features" not in data:
+        logger.info("npz 缺少 herb_features 缓存（旧数据格式），训练时将连接数据库构建特征。")
+
     # 划分
     dataset = TCMDataset(data)
     n_train = int(n_samples * 0.85)
@@ -484,12 +518,26 @@ def main():
                              num_workers=0, pin_memory=True)
     logger.info("训练集: %s | 验证集: %s", n_train, n_val)
 
-    # ═══ 2. 特征 ═══
-    logger.info("构建药材特征...")
-    pipeline = TCMDataPipeline(args.db)
-    pipeline.load_all()
-    herb_feat = build_herb_features(pipeline)
-    pipeline.close()
+    # ═══ 2. 特征（优先从 npz 加载缓存，无需重复连接数据库） ═══
+    herb_feat_data = data.get("herb_features")
+    if herb_feat_data is not None:
+        logger.info("从 npz 加载缓存的药材特征...")
+        herb_feat = {
+            "char_multihot": torch.from_numpy(herb_feat_data.item()["char_multihot"]),
+            "category_idx": torch.from_numpy(herb_feat_data.item()["category_idx"]),
+            "nature_idx": torch.from_numpy(herb_feat_data.item()["nature_idx"]),
+            "flavor_idx": torch.from_numpy(herb_feat_data.item()["flavor_idx"]),
+            "num_chars": int(herb_feat_data.item()["num_chars"]),
+            "num_categories": int(herb_feat_data.item()["num_categories"]),
+            "num_natures": int(herb_feat_data.item()["num_natures"]),
+            "num_flavors": int(herb_feat_data.item()["num_flavors"]),
+        }
+    else:
+        logger.info("构建药材特征（npz 中无缓存，建议用 data_pipeline 重新生成以加速训练）...")
+        pipeline = TCMDataPipeline(args.db)
+        pipeline.load_all()
+        herb_feat = build_herb_features(pipeline)
+        pipeline.close()
 
     # ═══ 3. 模型 ═══
     logger.info("创建模型...")

@@ -16,7 +16,7 @@ from core.data_desensitize import DataDesensitizer
 from core.fallback import generate_fallback_answer
 from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
-from core.symptom_pipeline import SymptomPipeline
+from core.tcm_config import generate_health_tips
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,6 @@ class TCMDesktopService:
 
     def __init__(self) -> None:
         self.kb = KnowledgeBase()
-        self.pipeline = SymptomPipeline()
         self.verifier = ResultVerifier()
         self.desensitizer = DataDesensitizer()
         self.history_lock = threading.Lock()
@@ -256,21 +255,8 @@ class TCMDesktopService:
             parts.append("✓ 未检测到常见配伍禁忌")
 
         parts.append("\n【养生建议】")
-        sym_set = set(s.lower() for s in (result.get("symptoms", []) or symptoms))
-        if any(k in str(sym_set) for k in ["失眠", "健忘", "心悸"]):
-            parts.append("• 安神助眠：睡前可温水泡脚，避免咖啡浓茶，卧室保持安静昏暗")
-        if any(k in str(sym_set) for k in ["食欲不振", "腹泻", "腹胀", "胃痛"]):
-            parts.append("• 健脾养胃：少食多餐，以小米粥、山药、南瓜等易消化食物为主")
-        if any(k in str(sym_set) for k in ["乏力", "疲倦", "气短", "面色萎黄"]):
-            parts.append("• 补气养血：适当食用红枣、桂圆、瘦肉，避免过度劳累")
-        if any(k in str(sym_set) for k in ["畏寒", "腰膝酸软", "手足冷"]):
-            parts.append("• 温阳驱寒：避免生冷饮食，可适量食用羊肉、生姜、核桃")
-        if any(k in str(sym_set) for k in ["头痛", "头晕", "耳鸣"]):
-            parts.append("• 调养肝肾：保持充足睡眠，避免长时间看屏幕，适当按摩太阳穴")
-        if any(k in str(sym_set) for k in ["咳嗽", "咽喉肿痛", "发热"]):
-            parts.append("• 清肺润燥：多饮温水，少食辛辣，可用梨、银耳、百合煲汤")
-        parts.append("• 情志调畅：保持心情舒畅，避免过度思虑")
-        parts.append("• 起居有常：规律作息，适当运动，避免熬夜")
+        sym_set = set(result.get("symptoms", []) or symptoms)
+        parts.extend(generate_health_tips(sym_set))
 
         return "\n".join(parts)
 
@@ -283,7 +269,6 @@ class TCMDesktopService:
             raise ValueError("症状列表最多支持 20 项")
 
         filtered_symptoms = [s for s in symptoms if isinstance(s, str) and s.strip()]
-        _pipeline_result = self.pipeline.process(query_text, filtered_symptoms)
         kb_result = self.kb.search(query_text)
         answer = None
         knowledge: Any = {}
@@ -356,8 +341,8 @@ class TCMDesktopService:
         try:
             herb_names = [h["name"] for h in result.get("herbs", [])[:10]]
             safety_result = recommender.check_safety(herb_names)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("安全校验异常（已跳过）: %s", exc)
 
         answer = self._format_recommendation_as_answer(
             query_text, symptoms, result, safety_result
@@ -421,10 +406,10 @@ class TCMDesktopService:
     def close(self) -> None:
         try:
             self.kb.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("知识库关闭异常: %s", exc)
         try:
             if self._recommender is not None:
                 self._recommender.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("推荐模型关闭异常: %s", exc)

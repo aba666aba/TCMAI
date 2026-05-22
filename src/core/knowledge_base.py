@@ -8,10 +8,6 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-class DatabaseConnectionError(Exception):
-    pass
-
-
 class KnowledgeBase:
     def __init__(self, db_path: str = None):
         if db_path is None:
@@ -67,6 +63,9 @@ class KnowledgeBase:
     def search(self, query: str) -> Dict[str, Any]:
         with self._lock:
             if not self.conn:
+                return self._empty_result()
+            if not query or len(query.strip()) == 0:
+                logger.warning("收到空查询，跳过搜索")
                 return self._empty_result()
             try:
                 return {
