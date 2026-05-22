@@ -16,3 +16,4 @@ data/history.json
 Thumbs.db
 .idea/  
  
+.qwen/  
