@@ -101,7 +101,7 @@ class AttentivePooling(nn.Module):
         """
         scores = self.attn(x).squeeze(-1)  # [B, L]
         if mask is not None:
-            scores = scores.masked_fill(~mask, -1e9)
+            scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
         weights = F.softmax(scores, dim=-1).unsqueeze(-1)  # [B, L, 1]
         return (x * weights).sum(dim=1)
 
