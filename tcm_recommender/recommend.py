@@ -69,11 +69,18 @@ class TCMRecommender:
         self._symptom_list = EXTENDED_SYMPTOM_LIST
         self._syndrome_names = ["未知"] + list(EXTENDED_SYNDROME_DEFINITIONS.keys())
 
+        # 药材/方剂名称列表
+        self._herb_name_list = self._pipeline.herb_names
+        self._formula_name_list = [
+            self._pipeline.formulas[self._pipeline.model_idx_to_formula_db_id[i]]["name"]
+            for i in range(1, self._pipeline.num_formulas + 1)
+        ]
+
         # 创建模型
         self.model = create_model(
             num_symptoms=len(self._symptom_list),
-            num_herbs=len(self._pipeline.herb_names),
-            num_formulas=len(self._pipeline.formula_names) + 1,
+            num_herbs=len(self._herb_name_list),
+            num_formulas=len(self._formula_name_list) + 1,
             num_syndromes=len(self._syndrome_names),
             num_chars=herb_feat["num_chars"],
             num_categories=herb_feat["num_categories"],
@@ -89,10 +96,6 @@ class TCMRecommender:
 
         # 症状名称→ID 映射
         self.symptom_to_id = {s: i + 1 for i, s in enumerate(self._symptom_list)}
-
-        # 药材索引映射
-        self._herb_name_list = self._pipeline.herb_names
-        self._formula_name_list = self._pipeline.formula_names
 
         # 缓存药材特征
         self._cached_herb_features = herb_feat
@@ -156,29 +159,33 @@ class TCMRecommender:
                 top_k=max(top_k_herb, top_k_formula),
             )
 
-        # 药材结果
-        herb_results = []
-        for herb_idx, score in result["herbs"][:top_k_herb]:
+        # 药材结果（去重：同名药材只保留最高分）
+        herb_scores = result["herbs"]
+        seen_names = {}
+        for herb_idx, score in herb_scores:
             name = self._herb_name_list[herb_idx] if herb_idx < len(self._herb_name_list) else f"药材{herb_idx}"
-            herb_results.append({
-                "id": int(herb_idx),
-                "name": name,
-                "score": float(score),
-                "efficacy": "",
-                "is_toxic": False,
-            })
+            prob = float(torch.sigmoid(torch.tensor(score)))  # logits→概率
+            if name not in seen_names or prob > seen_names[name]["score"]:
+                seen_names[name] = {"id": int(herb_idx), "name": name, "score": prob, "efficacy": "", "is_toxic": False}
 
-        # 方剂结果
+        herb_results = sorted(seen_names.values(), key=lambda x: x["score"], reverse=True)[:top_k_herb]
+
+        # 方剂结果（转概率 + 过滤明显不合理的低分结果）
         formula_results = []
-        for formula_idx, score in result["formulas"][:top_k_formula]:
+        for formula_idx, score in result["formulas"][:top_k_formula * 2]:  # 多取一些待过滤
+            prob = float(torch.sigmoid(torch.tensor(score)))
+            if prob < 0.5:
+                continue  # 概率低于0.5的方剂不够可靠
             name = self._formula_name_list[formula_idx] if formula_idx < len(self._formula_name_list) else f"方剂{formula_idx}"
             formula_results.append({
                 "id": int(formula_idx),
                 "name": name,
-                "score": float(score),
+                "score": prob,
                 "composition": "",
                 "functions": "",
             })
+            if len(formula_results) >= top_k_formula:
+                break
 
         # 证型
         top_syndrome = None
@@ -199,14 +206,18 @@ class TCMRecommender:
         }
 
     def check_safety(self, herb_names: List[str]) -> Dict:
-        """安全检查（十八反/十九畏/孕妇禁用）"""
+        """安全检查（十八反/十九畏/孕妇禁用），同一药名只显示一条警告"""
         import sqlite3
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
 
         warnings = []
+        seen = set()
         for h in herb_names:
-            cur.execute("SELECT contraindications FROM herbs WHERE name = ?", (h,))
+            if h in seen:
+                continue
+            seen.add(h)
+            cur.execute("SELECT contraindications FROM herbs WHERE name = ? LIMIT 1", (h,))
             row = cur.fetchone()
             if row and row[0]:
                 warnings.append("%s: %s" % (h, row[0][:100]))
@@ -227,15 +238,15 @@ class TCMRecommender:
 
         if result.get('syndrome'):
             s = result['syndrome']
-            lines.append("\n证型：%s (置信度: %.4f)" % (s['name'], s['confidence']))
+            lines.append("\n证型：%s (概率: %.1f%%)" % (s['name'], s['confidence'] * 100))
 
         lines.append("\n推荐药材:")
         for i, h in enumerate(result['herbs'], 1):
-            lines.append("  %d. %s (置信度: %.4f)" % (i, h['name'], h['score']))
+            lines.append("  %d. %s (概率: %.1f%%)" % (i, h['name'], h['score'] * 100))
 
         lines.append("\n推荐方剂:")
         for i, f in enumerate(result['formulas'], 1):
-            lines.append("  %d. %s (置信度: %.4f)" % (i, f['name'], f['score']))
+            lines.append("  %d. %s (概率: %.1f%%)" % (i, f['name'], f['score'] * 100))
 
         lines.append("\n安全校验:")
         herb_names = [h['name'] for h in result['herbs'][:10]]

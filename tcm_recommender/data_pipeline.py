@@ -244,7 +244,7 @@ class TCMDataPipeline:
     # 2. 样本生成
     # ═══════════════════════════════════════════════
 
-    def generate_samples(self, target_count: int = 100000) -> Dict[str, np.ndarray]:
+    def generate_samples(self, target_count: int = 150000) -> Dict[str, np.ndarray]:
         """主生成函数：生成 target_count 个训练样本"""
         logger.info("=" * 50)
         logger.info("开始生成 %s 个训练样本...", target_count)
@@ -292,7 +292,7 @@ class TCMDataPipeline:
         logger.info("  组合增强: %s 样本", len(aug_samples[0]))
 
         # ── 阶段 5: 负样本 ──
-        neg_samples = self._generate_negative_samples(target_count // 10)
+        neg_samples = self._generate_negative_samples(target_count // 6)  # 提高负样本比例
         all_symptoms.extend(neg_samples[0])
         all_herb_labels.extend(neg_samples[1])
         all_formula_labels.extend(neg_samples[2])
@@ -466,10 +466,11 @@ class TCMDataPipeline:
         return syms, herbs, forms, syns, weights
 
     def _generate_augmented_samples(self, count: int):
-        """组合增强：随机组合症状 + 基于关联矩阵生成标签"""
+        """组合增强：随机组合症状 + 基于关联矩阵生成标签（限制正标签数≤20）"""
         syms, herbs, forms, syns, weights = [], [], [], [], []
         ns, nh = self.num_symptoms, self.num_herbs
         all_s_indices = list(range(ns))
+        MAX_POS_HERBS = 20
 
         for _ in range(count):
             # 随机 2-6 个症状
@@ -477,22 +478,25 @@ class TCMDataPipeline:
             chosen = sorted(self.rng.choice(all_s_indices, size=min(k, ns), replace=False))
 
             # 基于关联矩阵计算药材标签
-            herb_scores = self.symptom_herb_matrix[chosen].sum(axis=0)
-            # 选择得分 > 0 的或 top-k
+            herb_scores = self.symptom_herb_matrix[chosen].sum(axis=0)  # [nh]
             hl = np.zeros(nh, dtype=np.float32)
+
             if herb_scores.max() > 0:
-                threshold = herb_scores.max() * 0.3
-                for hi in range(nh):
-                    if herb_scores[hi] >= threshold and herb_scores[hi] > 0:
-                        hl[hi] = 1.0
-            # 如果所有为零，取关联最强的几个
-            if hl.sum() == 0:
-                top_k = min(5, (herb_scores > 0).sum())
-                if top_k > 0:
-                    top_indices = np.argsort(herb_scores)[-top_k:]
-                    for hi in top_indices:
-                        if herb_scores[hi] > 0:
-                            hl[hi] = 1.0
+                # 要求药材至少匹配2个症状，且得分 ≥ 0.5*max
+                min_hits = min(2, len(chosen))
+                threshold = herb_scores.max() * 0.5
+                # 得分满足条件的候选药材
+                candidates = np.where((herb_scores >= threshold) & (herb_scores > 0))[0]
+                if len(candidates) == 0:
+                    # 降级：取 top-10
+                    top_n = min(10, int((herb_scores > 0).sum()))
+                    if top_n > 0:
+                        candidates = np.argsort(herb_scores)[-top_n:]
+                # 如果还是太多，只取 top-20
+                if len(candidates) > MAX_POS_HERBS:
+                    candidates = candidates[np.argsort(herb_scores[candidates])[-MAX_POS_HERBS:]]
+                for hi in candidates:
+                    hl[hi] = 1.0
 
             # 方剂标签
             f_scores = self.symptom_formula_matrix[chosen].sum(axis=0)

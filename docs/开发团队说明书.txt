@@ -1,0 +1,204 @@
+╔══════════════════════════════════════════════════════════════╗
+║           中医药智能问答系统 (TCMAI) — 开发团队说明书          ║
+║                    版本 2.1.0 · 2026-05-22                   ║
+╚══════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+一、项目概述
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+项目名称：中医药智能问答系统 (TCMAI)
+项目路径：E:\Tom\TCMAI
+许可证：Apache-2.0
+Python 要求：>=3.10（当前环境 3.9.25 需升级，见环境要求章节）
+
+项目结构：
+├── src/                           # 核心业务逻辑（症状分析、知识库、合规校验）
+│   ├── main.py                    # 系统主入口
+│   ├── core/                      # 核心模块（症状分析、知识库、降级回答、合规校验）
+│   └── desktop/                   # tkinter 桌面 GUI + 业务服务层
+├── tcm_recommender/               # 深度学习推荐子系统（PyTorch）
+│   ├── model.py                   # TCMNet 多任务模型架构
+│   ├── train.py                   # 训练脚本 + Trainer 类
+│   ├── recommend.py               # 推理接口 TCMRecommender
+│   ├── data_pipeline.py           # 训练数据生成管线
+│   ├── data_expansion.py          # 数据库扩充脚本（3000+ 药材 / 1000+ 方剂）
+│   └── extended_config.py         # 扩展配置（200 症状 / 17 证型）
+├── data/                          # 数据库 + 训练数据
+│   ├── tcm_knowledge.db           # SQLite 知识库（3497 药材 / 1019 方剂 / 63 中成药 / 221 验方）
+│   ├── train_data.npz             # 最新训练数据（152283 样本，平均 7.7 正药材/样本）
+│   └── create_tcm_db.sql          # 建库 SQL
+├── docs/                          # 文档（操作手册、设计说明、软著材料）
+├── launcher.py / launcher.pyw     # 启动入口
+└── tcmai.spec                     # PyInstaller 打包配置
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+二、当前模型状况 (2026-05-22)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+模型权重：tcm_recommender\best_model.pth （旧版，待重新训练）
+旧模型指标：val_loss=1.01, syn_acc=96.4%, herb_recall@10=25.7%
+旧模型配置：d_model=256, num_layers=2, epochs=1, samples=100000
+旧数据问题：平均 40.3 正药材/样本（标签膨胀严重、区分度不足）、药材同名未去重
+
+已改进（数据管线已更新、代码已修复，模型尚未重训）：
+- 数据管线 data_pipeline.py 已优化：组合增强阶段限制正药材数 ≤ 20，使用 0.5×max 阈值替代 0.3×
+- 新生成训练数据 152283 样本，平均 7.7 正药材/样本（中位数 6）
+- 负样本比例从 1/10 提升到 1/6
+- 推理接口 recommend.py 已修复：同名药材去重保留最高分、logits→sigmoid 概率显示、方剂概率过滤 (<0.5 不显示)
+- 安全检查 check_safety 已修复：同药名只显示一条警告
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+三、环境要求
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【操作系统】Windows 10/11 64 位
+
+【Python 环境】Python >= 3.10（推荐用 Anaconda 创建独立环境）
+当前环境（待升级）：D:\Anaconda3 — Python 3.9.25（需升级到 3.10+）
+以下训练命令假设在 conda 环境 tcmai 中执行。首次使用前请创建环境：
+  conda create -n tcmai python=3.10 -y && conda activate tcmai
+
+【GPU】（可选，训练和推理均可用 CPU 替代，但训练速度慢约 30 倍）
+推荐：NVIDIA GPU 4GB+ VRAM, CUDA 12.x
+当前：NVIDIA GeForce RTX 3050 Laptop GPU, 4096 MiB, CUDA 12.4
+
+【核心依赖】
+PyTorch >= 2.0.0（GPU 版安装命令见下方）
+安装 GPU 版 PyTorch（CUDA 12.4）：
+  pip install torch==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+安装 CPU 版 PyTorch：
+  pip install torch>=2.0.0
+其他依赖：
+  pip install numpy>=1.24.0 tqdm>=4.65.0 pytest>=7.0.0 ruff>=0.8.0
+
+【验证安装】
+  python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA可用: {torch.cuda.is_available()}')"
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+四、训练指令（以下命令均在项目根目录 E:\Tom\TCMAI 下执行）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+4.1 重新生成训练数据（如需调整数据管线后重跑）
+  python -m tcm_recommender.data_pipeline --db data/tcm_knowledge.db --output data/train_data.npz --samples 150000
+
+4.2 单次完整训练（GPU，推荐参数）
+  python -m tcm_recommender.train --db data/tcm_knowledge.db --data data/train_data.npz --output tcm_recommender/best_model.pth --epochs 30 --batch-size 32 --lr 1e-4 --d-model 384 --num-layers 4 --device cuda --grad-accum 2 --contrastive-weight 0.2
+
+4.3 单次训练（CPU，无 GPU 时使用）
+  python -m tcm_recommender.train --db data/tcm_knowledge.db --data data/train_data.npz --output tcm_recommender/best_model.pth --epochs 30 --batch-size 16 --lr 1e-4 --d-model 256 --num-layers 2 --device cpu --grad-accum 4 --contrastive-weight 0.2
+
+4.4 仅推理测试（验证模型效果）
+  python -m tcm_recommender.recommend "发热 恶寒 头痛 鼻塞 鼻流清涕 咳嗽 无汗"
+
+4.5 JSON 格式查看详细得分
+  python -m tcm_recommender.recommend "腰膝酸软 头晕 耳鸣 失眠 盗汗 手足心热 口干" --json
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+五、训练参数说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+--d-model     模型核心维度（越大容量越大，384 ≈ 11M 参数，256 ≈ 5M 参数；4GB GPU 建议 ≤384）
+--num-layers  Transformer 编码器层数（推荐 4 层；2 层欠拟合、6 层过拟合且 VRAM 不够）
+--batch-size  批大小（GPU 4GB 建议 32；CPU 建议 16）
+--lr          学习率（AdamW 推荐 1e-4）
+--epochs      最大训练轮数（30 轮配合 early stopping，实际约 15-25 轮收敛）
+--grad-accum  梯度累积步数（模拟更大 batch，GPU 用 2，CPU 用 4）
+--device      运行设备（cuda / cpu）
+--contrastive-weight  对比学习损失权重（0.2 适中；过高会压制主任务）
+
+训练自动执行 early stopping（验证损失连续 15 轮不下降则停止）。
+最优模型自动保存到 --output 指定路径，指标保存到同名 .json 文件。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+六、模型架构说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TCMNet（定义在 tcm_recommender/model.py）是一个多任务推荐模型：
+
+症状编码器 SymptomEncoder
+  → Embedding + 可学习位置编码 + 6/4 层 Pre-LN Transformer + AttentivePooling
+  → 输出 [batch_size, d_model] 的症状表征向量
+
+药材编码器 HerbEncoder（双塔）
+  → 文本塔：CharCNN（药材功效+主治文字的字符多热矩阵 → 全连接）
+  → 属性塔：分类/性/味 3 路 Embedding → 拼接 → 投影
+  → Sigmoid 门控融合文本特征和属性特征
+  → 输出 [num_herbs, d_model] 的药材嵌入矩阵
+
+交叉注意力排序器 CrossAttentionRanker
+  → 症状表征(Q) × 药材/方剂嵌入(K,V) 做交叉注意力
+  → 逐项打分 → 输出 [batch_size, num_items] 的原始评分
+
+多任务输出头
+  → 证型分类头 SyndromeHead：3 层 MLP → softmax 输出
+  → 药材推荐头：CrossAttentionRanker → sigmoid 多标签
+  → 方剂推荐头：CrossAttentionRanker → softmax 分类
+
+对比学习 ContrastiveLoss
+  → 症状表征和药材嵌入分别投影到 256 维
+  → InfoNCE 损失：拉近匹配的(症状,药材)对、推远不匹配对
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+七、桌面应用启动
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+模式一：快速启动（基于规则引擎，不需要 PyTorch 模型）
+  双击 快速启动.bat 或运行 python launcher.py
+
+模式二：AI 模式（加载深度学习模型推荐）
+  在桌面 GUI 的"回答模式"下拉菜单中选择 AI（需模型文件存在）
+
+模式三：打包为 exe
+  双击 打包exe.bat（基于 PyInstaller，使用 tcmai.spec 配置）
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+八、数据质量控制
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+8.1 数据库问题
+药材表 herbs 存在 448 组同名条目（如"防风"3条、"人参"3条），
+3497 总条目中仅 3000 个唯一药名。推理时已按同名去重处理。
+如需彻底修复，可执行 SQL 清理（注意合并禁忌/功效信息）：
+  DELETE FROM herbs WHERE id NOT IN (SELECT MIN(id) FROM herbs GROUP BY name)
+
+8.2 关联矩阵
+症状-药材关联矩阵：7275 非零关联 / 200×3497 = 699400 总数，密度 1.04%
+每症状关联药材数：平均 36.4，中位数 6.5，最大值 526（"咳嗽"、"发热"等常见症状）
+关联基于功效/主治文本子串匹配，精确度有限。如需改进可用 LLM 或专家标注。
+
+8.3 训练数据检查
+  python -c "import numpy as np; d=np.load('data/train_data.npz',allow_pickle=True); hl=d['herb_labels']; pos=(hl>0).sum(axis=1); print(f'样本={len(pos)}, 平均正药材={pos.mean():.1f}, 中位数={np.median(pos):.0f}, 有药材标签={(pos>0).mean()*100:.0f}%, 有证型标签={(d[\"syndrome_labels\"]>0).mean()*100:.0f}%')"
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+九、代码质量
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Lint 检查（基于 ruff.toml 配置）：
+  ruff check .
+格式化：
+  ruff format .
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+十、软件著作权申报注意事项
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+项目正在进行软件著作权申请，需准备：
+- 操作手册 → docs/操作手册.md / docs/软著-操作手册.txt
+- 设计说明书 → docs/设计说明.md / docs/软著-设计说明书.txt
+- 源代码（前 30 页 + 后 30 页，每页 50 行）
+  → docs/软著-源代码-前30页.txt / docs/软著-源代码-后30页.txt
+
+注意事项：
+- 文档和代码修改时需同步更新软著材料
+- 注释内容计入每页 50 行限制
+- 非核心文件（如 _check_*.py、临时脚本）建议在最终提交前清理
