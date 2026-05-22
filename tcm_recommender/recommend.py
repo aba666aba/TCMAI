@@ -20,7 +20,7 @@ import torch
 
 # 项目路径
 if getattr(sys, 'frozen', False):
-    PROJECT_ROOT = Path(sys.executable).parent.parent
+    PROJECT_ROOT = Path(sys.executable).parent
 else:
     PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))

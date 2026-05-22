@@ -1,0 +1,16 @@
+# 打包输出
+dist/
+build/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 日志
+data/logs/
+data/history.json
+
+# 系统
+.DS_Store
+Thumbs.db

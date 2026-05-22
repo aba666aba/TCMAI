@@ -7,10 +7,14 @@ from pathlib import Path
 
 if getattr(sys, "frozen", False):
     ROOT_DIR = Path(sys.executable).parent
+    # PyInstaller 依赖包目录
     internal_path = ROOT_DIR / "_internal"
     if internal_path.exists():
         sys.path.insert(0, str(internal_path))
-        sys.path.insert(0, str(internal_path / "src"))
+    # 项目源码目录（打包时放置在根目录）
+    src_path = ROOT_DIR / "src"
+    if src_path.exists():
+        sys.path.insert(0, str(src_path))
 else:
     ROOT_DIR = Path(__file__).resolve().parent
     sys.path.insert(0, str(ROOT_DIR / "src"))
