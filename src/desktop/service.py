@@ -13,37 +13,73 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional
 
 from core.data_desensitize import DataDesensitizer
-from core.fallback import generate_fallback_answer
 from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
 from core.tcm_config import generate_health_tips
+from core.intelligent_search import IntelligentSearch
 
 logger = logging.getLogger(__name__)
 
 
-def format_knowledge_for_display(kb_result: Dict[str, Any]) -> str:
-    if not kb_result:
+def format_intelligent_knowledge_for_display(intel_result: Dict[str, Any]) -> str:
+    """格式化智能搜索结果为展示文本"""
+    if not intel_result:
         return "暂无相关知识"
 
     parts: List[str] = []
-    if kb_result.get("herbs"):
-        parts.append(f"相关药材：{', '.join(item['name'] for item in kb_result['herbs'][:5])}")
-    if kb_result.get("formulas"):
-        parts.append(f"相关方剂：{', '.join(item['name'] for item in kb_result['formulas'][:5])}")
-    if kb_result.get("patent_medicines"):
-        parts.append(
-            f"相关中成药：{', '.join(item['name'] for item in kb_result['patent_medicines'][:5])}"
-        )
-    if kb_result.get("folk_remedies"):
-        parts.append(
-            "相关民间验方："
-            + ", ".join(
-                item.get("remedy", item.get("disease", "验方"))
-                for item in kb_result["folk_remedies"][:5]
+
+    # 症状识别摘要
+    symptoms = intel_result.get("symptoms", [])
+    if symptoms:
+        parts.append(f"【症状识别】{'、'.join(symptoms)}")
+
+    # 搜索摘要
+    summary = intel_result.get("search_summary", "")
+    if summary:
+        parts.append(f"【搜索摘要】{summary}")
+
+    # 推理出的证型
+    syndromes = intel_result.get("inferred_syndromes", [])
+    if syndromes:
+        syndrome_parts = []
+        for syn in syndromes[:2]:
+            syndrome_parts.append(
+                f"{syn['syndrome']}({syn['score']:.0%})"
             )
+        parts.append(f"【推断证型】{'，'.join(syndrome_parts)}")
+
+    # 推荐的方剂
+    recommended = intel_result.get("recommended_formulas", [])
+    if recommended:
+        formula_parts = []
+        for ref in recommended[:5]:
+            formula_parts.append(
+                f"{ref['formula']}（{ref['syndrome']}：{ref['description']}）"
+            )
+        parts.append(f"【推荐方剂】{'；'.join(formula_parts)}")
+
+    # 知识库搜索到的方剂
+    db_formulas = intel_result.get("formulas", [])
+    if db_formulas:
+        parts.append(
+            f"【知识库方剂】{', '.join(f['name'] for f in db_formulas[:5])}"
         )
 
-    return "；".join(parts) if parts else "暂无相关知识"
+    # 药材
+    db_herbs = intel_result.get("herbs", [])
+    if db_herbs:
+        parts.append(
+            f"【相关药材】{', '.join(h['name'] for h in db_herbs[:5])}"
+        )
+
+    # 中成药
+    db_patents = intel_result.get("patent_medicines", [])
+    if db_patents:
+        parts.append(
+            f"【相关中成药】{', '.join(p['name'] for p in db_patents[:5])}"
+        )
+
+    return "\n".join(parts) if parts else "暂无相关知识"
 
 
 class TCMDesktopService:
@@ -260,7 +296,20 @@ class TCMDesktopService:
 
         return "\n".join(parts)
 
-    def query(self, query_text: str, symptoms: List[str], answer_mode: str = "ai") -> Dict[str, Any]:
+    def query(self, query_text: str, symptoms: List[str]) -> Dict[str, Any]:
+        """纯 AI 模式查询（已移除快速模式降级）
+
+        Args:
+            query_text: 用户输入的查询文本
+            symptoms: 已检测的症状列表
+
+        Returns:
+            包含 AI 推荐结果 + 智能搜索增强的完整回答
+
+        Raises:
+            ValueError: 输入参数校验失败
+            RuntimeError: AI 模型不可用或推理失败
+        """
         if not query_text or len(query_text.strip()) < 1 or len(query_text) > 1000:
             raise ValueError("查询内容长度需要在 1-1000 个字符之间")
         if not isinstance(symptoms, list):
@@ -269,58 +318,85 @@ class TCMDesktopService:
             raise ValueError("症状列表最多支持 20 项")
 
         filtered_symptoms = [s for s in symptoms if isinstance(s, str) and s.strip()]
-        kb_result = self.kb.search(query_text)
+
+        # ========== 智能搜索（增强 AI 结果的补充知识） ==========
+        intel_result = self.kb.intelligent_search(query_text)
+        intel_knowledge_text = format_intelligent_knowledge_for_display(intel_result)
+
+        # ========== 加载 AI 模型 ==========
+        recommender = self._get_recommender()
+        if recommender is None:
+            raise RuntimeError(
+                "AI 模型不可用。请检查：\n"
+                "1. PyTorch 是否已安装\n"
+                "2. 模型文件 tcm_recommender/best_model.pth 是否存在\n"
+                "3. 知识库文件 data/tcm_knowledge.db 是否存在"
+            )
+
+        # ========== AI 模型推理（最多重试 2 次） ==========
         answer = None
-        knowledge: Any = {}
-        disclaimer = ""
-        mode = answer_mode
+        knowledge_result = None
 
-        if answer_mode == "ai":
-            recommender = self._get_recommender()
-            if recommender is not None:
-                for attempt in range(2):
-                    try:
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(
-                                self._run_recommender_inference,
-                                recommender,
-                                query_text,
-                                filtered_symptoms,
-                            )
-                            answer, knowledge_result = future.result(timeout=60)
-                        break  # 成功则跳出重试循环
-                    except concurrent.futures.TimeoutError:
-                        if attempt == 0:
-                            logger.warning("推荐模型推理超时，重试一次…")
-                            continue
-                        logger.warning("推荐模型推理再次超时，降级到快速模式")
-                        mode = "fast"
-                    except Exception as exc:
-                        logger.error("推荐模型推理失败(%s): %s", type(exc).__name__, exc)
-                        if attempt == 0:
-                            logger.info("重试推荐模型推理…")
-                            continue
-                        mode = "fast"
+        for attempt in range(2):
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        self._run_recommender_inference,
+                        recommender,
+                        query_text,
+                        filtered_symptoms,
+                    )
+                    answer, knowledge_result = future.result(timeout=60)
+                break  # 成功则跳出重试循环
+            except concurrent.futures.TimeoutError:
+                if attempt == 0:
+                    logger.warning("推荐模型推理超时，重试一次…")
+                    continue
+                raise RuntimeError("AI 模型推理超时，请稍后重试。若持续超时，请检查 GPU/CPU 负载。")
+            except Exception as exc:
+                logger.error("推荐模型推理失败(%s): %s", type(exc).__name__, exc)
+                if attempt == 0:
+                    logger.info("重试推荐模型推理…")
+                    continue
+                raise RuntimeError(f"AI 模型推理失败：{exc}")
 
-                if answer is not None:
-                    mode = "ai"
-                    knowledge = knowledge_result
-                    disclaimer = "温馨提示：本结果基于深度学习模型推荐，仅供参考。实际用药请咨询专业中医师。"
+        if answer is None:
+            raise RuntimeError("AI 模型未返回结果，请稍后重试。")
 
-        if mode == "fast" or answer is None:
-            fallback = generate_fallback_answer(query_text, kb_result)
-            answer = fallback["answer"]
-            knowledge = format_knowledge_for_display(kb_result)
-            disclaimer = fallback.get("disclaimer", "")
-            mode = "fast"
+        # ========== 用智能搜索增强 AI 回答 ==========
+        final_answer = answer
+        if intel_knowledge_text and intel_knowledge_text != "暂无相关知识":
+            # 将智能搜索发现嵌入回答
+            enrichment = f"\n【智能搜索发现】\n{intel_knowledge_text}"
+            # 放在安全提示之前
+            if "【安全提示】" in final_answer:
+                final_answer = final_answer.replace(
+                    "【安全提示】", enrichment + "\n\n【安全提示】"
+                )
+            else:
+                final_answer += enrichment
 
-        history_item = self._append_history(query_text, filtered_symptoms, answer, mode)
+        knowledge = knowledge_result or {}
+        if intel_result.get("recommended_formulas"):
+            knowledge["intelligent_search"] = {
+                "symptoms": intel_result.get("symptoms", []),
+                "inferred_syndromes": [
+                    s["syndrome"] for s in intel_result.get("inferred_syndromes", [])
+                ],
+                "recommended_formulas": [
+                    f["name"] for f in intel_result.get("recommended_formulas", [])
+                ],
+            }
+
+        disclaimer = "温馨提示：本结果基于深度学习模型推荐，仅供参考。实际用药请咨询专业中医师。"
+
+        history_item = self._append_history(query_text, filtered_symptoms, final_answer, "ai")
         return {
             "success": True,
-            "answer": answer,
+            "answer": final_answer,
             "knowledge": knowledge,
             "disclaimer": disclaimer,
-            "mode": mode,
+            "mode": "ai",
             "history_item": history_item,
         }
 
@@ -349,6 +425,7 @@ class TCMDesktopService:
         )
         knowledge = {
             "symptoms": result.get("symptoms", []),
+            "syndrome": result.get("syndrome", {}),
             "herbs": [
                 {"name": h["name"], "score": h["score"]}
                 for h in result.get("herbs", [])[:10]

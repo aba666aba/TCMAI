@@ -9,7 +9,6 @@
 """
 
 from .data_desensitize import DataDesensitizer
-from .fallback import generate_fallback_answer
 from .knowledge_base import KnowledgeBase
 from .result_verify import ResultVerifier
 from .symptom_analysis import SymptomAnalyzer
@@ -21,5 +20,4 @@ __all__ = [
     "ResultVerifier",
     "SymptomAnalyzer",
     "SymptomPipeline",
-    "generate_fallback_answer",
 ]

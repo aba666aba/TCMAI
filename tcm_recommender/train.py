@@ -466,7 +466,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--device", default="cpu")
-    parser.add_argument("--samples", type=int, default=100000,
+    parser.add_argument("--samples", type=int, default=500000,
                         help="生成的训练样本数（如果 npz 不存在则生成）")
     parser.add_argument("--grad-accum", type=int, default=2)
     parser.add_argument("--contrastive-weight", type=float, default=0.2)

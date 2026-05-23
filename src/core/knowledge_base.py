@@ -311,6 +311,67 @@ class KnowledgeBase:
 
         return results
 
+    # ================================================================
+    # 智能搜索（多策略融合搜索）
+    # ================================================================
+
+    def intelligent_search(self, query: str) -> Dict[str, Any]:
+        """智能搜索：同义词扩展 + 证型推理 + 多关键词融合
+
+        自动处理口语化表达（"睡不着"→"失眠"、"没力气"→"乏力"），
+        并根据症状推断证型，推荐对应方剂。
+
+        Args:
+            query: 用户查询文本（口语化或标准化均可）
+
+        Returns:
+            包含 expanded_queries, symptoms, syndromes,
+            recommended_formulas, herbs, formulas 等字段的完整结果
+        """
+        try:
+            from core.intelligent_search import IntelligentSearch
+
+            searcher = IntelligentSearch(self)
+            result = searcher.search(query)
+            return result
+        except ImportError:
+            logger.warning("智能搜索模块不可用，降级到普通搜索")
+            kb_result = self.search(query)
+            return {
+                "query": query,
+                "symptoms": [],
+                "inferred_syndromes": [],
+                "recommended_formulas": [],
+                "herbs": kb_result.get("herbs", []),
+                "formulas": kb_result.get("formulas", []),
+                "patent_medicines": kb_result.get("patent_medicines", []),
+                "folk_remedies": kb_result.get("folk_remedies", []),
+                "search_summary": "使用普通搜索模式",
+            }
+        except Exception as exc:
+            logger.error("智能搜索异常: %s", exc)
+            kb_result = self.search(query)
+            return {
+                "query": query,
+                "symptoms": [],
+                "inferred_syndromes": [],
+                "recommended_formulas": [],
+                "herbs": kb_result.get("herbs", []),
+                "formulas": kb_result.get("formulas", []),
+                "patent_medicines": kb_result.get("patent_medicines", []),
+                "folk_remedies": kb_result.get("folk_remedies", []),
+                "search_summary": f"搜索异常，降级到普通模式",
+            }
+
+    def get_symptom_suggestions(self, partial: str, max_results: int = 8) -> List[str]:
+        """根据输入前缀获取症状建议（模糊匹配）"""
+        try:
+            from core.intelligent_search import IntelligentSearch
+            searcher = IntelligentSearch(self)
+            return searcher.get_symptom_suggestions(partial, max_results)
+        except Exception:
+            return []
+
     def close(self):
         with self._lock:
             if self.conn:

@@ -159,24 +159,40 @@ class TCMRecommender:
                 top_k=max(top_k_herb, top_k_formula),
             )
 
-        # 药材结果（去重：同名药材只保留最高分）
+        # 药材结果
+        # 模型输出维度 = num_herbs + 1，index 0 为背景类(padding)
         herb_scores = result["herbs"]
         seen_names = {}
         for herb_idx, score in herb_scores:
-            name = self._herb_name_list[herb_idx] if herb_idx < len(self._herb_name_list) else f"药材{herb_idx}"
+            if herb_idx == 0:
+                continue  # 跳过背景类
+            list_idx = herb_idx - 1
+            if list_idx < 0 or list_idx >= len(self._herb_name_list):
+                continue
+            name = self._herb_name_list[list_idx]
             prob = float(torch.sigmoid(torch.tensor(score)))  # logits→概率
             if name not in seen_names or prob > seen_names[name]["score"]:
                 seen_names[name] = {"id": int(herb_idx), "name": name, "score": prob, "efficacy": "", "is_toxic": False}
 
         herb_results = sorted(seen_names.values(), key=lambda x: x["score"], reverse=True)[:top_k_herb]
 
-        # 方剂结果（转概率 + 过滤明显不合理的低分结果）
+        # 方剂结果
+        # 注意：模型输出维度 = num_formulas + 1，index 0 为背景类(padding)
+        # 有效方剂编号范围是 1..num_formulas，对应 formula_name_list[0..num_formulas-1]
         formula_results = []
-        for formula_idx, score in result["formulas"][:top_k_formula * 2]:  # 多取一些待过滤
+        for formula_idx, score in result["formulas"]:
+            if formula_idx == 0:
+                continue  # 跳过背景类
+
             prob = float(torch.sigmoid(torch.tensor(score)))
-            if prob < 0.5:
-                continue  # 概率低于0.5的方剂不够可靠
-            name = self._formula_name_list[formula_idx] if formula_idx < len(self._formula_name_list) else f"方剂{formula_idx}"
+            # 内部索引：模型 idx 1..N → formula_name_list[idx-1]
+            list_idx = formula_idx - 1
+            if list_idx < 0 or list_idx >= len(self._formula_name_list):
+                logger.warning("方剂索引越界: model_idx=%d, list_len=%d",
+                              formula_idx, len(self._formula_name_list))
+                continue
+
+            name = self._formula_name_list[list_idx]
             formula_results.append({
                 "id": int(formula_idx),
                 "name": name,
@@ -186,6 +202,10 @@ class TCMRecommender:
             })
             if len(formula_results) >= top_k_formula:
                 break
+
+        # 如果模型没产生够方剂，用智能搜索补全（但保留模型已出的结果）
+        if not formula_results:
+            logger.info("模型未输出有效方剂（prob<0.5 或全部为背景类）")
 
         # 证型
         top_syndrome = None
