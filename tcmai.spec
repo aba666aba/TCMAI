@@ -21,7 +21,7 @@ datas = [
     # 扩展配置（被 recommend.py 和 data_pipeline.py 引用）
     (str(root / "tcm_recommender" / "extended_config.py"), "tcm_recommender"),
     # 快速启动脚本（打包后放入根目录）
-    (str(root / "快速启动.bat"), "."),
+    (str(root / "scripts" / "快速启动.bat"), "."),
 ]
 
 # ── 源码目录（作为包加入）──

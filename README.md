@@ -36,17 +36,21 @@
 ```
 tcmai/
 │
-├── launcher.py / launcher.pyw    # 桌面启动器（入口）
-├── 快速启动.bat                  # 快速启动脚本
-├── 打包exe.bat                   # PyInstaller 打包脚本
-├── 开发文档.txt                  # 开发手册（软著申请主文档）
-├── pyproject.toml                # 项目元数据（v2.1.0）
-├── requirements.txt              # 全部依赖（含可选标记）
-├── ruff.toml                     # 代码风格配置
-├── tcmai.spec                    # PyInstaller 打包配置
+├── launcher.pyw                 # 桌面启动器（唯一入口）
+├── launcher.py                  # 启动模块（被入口导入）
+├── pyproject.toml               # 项目元数据（v2.1.0）
+├── requirements.txt             # 全部依赖（含可选标记）
+├── ruff.toml                    # 代码风格配置
+├── tcmai.spec                   # PyInstaller 打包配置
 │
-├── src/
-│   ├── core/                     # 核心业务逻辑（原创，软著保护）
+├── scripts/                     # 工具脚本
+│   ├── 快速启动.bat             # 快速启动脚本
+│   ├── 打包exe.bat              # PyInstaller 打包脚本
+│   ├── import_knowledge.py/v2.py  # 知识库导入脚本
+│   └── ...                      # 其他辅助脚本
+│
+├── src/                         # 源码目录
+│   ├── core/                    # 核心业务逻辑（原创，软著保护）
 │   │   ├── tcm_config.py         # ★ 统一配置中心（33症状/9证型/15药材/14方剂）
 │   │   ├── symptom_pipeline.py   # 统一症状处理管线
 │   │   ├── symptom_analysis.py   # 症状分析器（标准化→证型推断→禁忌检查）
@@ -157,7 +161,7 @@ SQLite 数据库操作接口，支持 SQL 注入防护。
 pip install -r requirements.txt
 
 # 2. 直接运行（双击即可）
-快速启动.bat
+scripts\快速启动.bat
 
 # 3. 或命令行启动
 python launcher.py
@@ -177,9 +181,9 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 ### 桌面版打包
 
 ```bash
-打包桌面版.bat
+scripts\打包exe.bat
 # 或
-pyinstaller tcm_desktop.spec
+pyinstaller tcmai.spec
 ```
 
 ---

@@ -7,8 +7,8 @@ echo   中医药智能问答系统 - EXE 打包脚本
 echo ============================================
 echo.
 
-:: 进入项目目录
-cd /d "%~dp0"
+:: 进入项目根目录
+cd /d "%~dp0.."
 
 :: 检查 PyInstaller（通过 python -m 调用最可靠）
 python -m PyInstaller --version >nul 2>&1
