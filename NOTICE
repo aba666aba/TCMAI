@@ -1,0 +1,24 @@
+TCMAI 中医药智能方剂生成系统
+Copyright (C) 2026 中医药智能问答系统
+Licensed under Apache License 2.0
+
+本系统使用了以下开源项目，特此致谢：
+
+- Qwen2.5 (Apache 2.0)
+  https://github.com/QwenLM/Qwen2.5
+  Copyright 2024 Alibaba Group
+
+- PyTorch (BSD)
+  https://pytorch.org
+
+- HuggingFace Transformers (Apache 2.0)
+  https://github.com/huggingface/transformers
+
+- bitsandbytes (MIT)
+  https://github.com/bitsandbytes-foundation/bitsandbytes
+
+- NetworkX (BSD)
+  https://github.com/networkx/networkx
+
+- Matplotlib (BSD)
+  https://github.com/matplotlib/matplotlib
