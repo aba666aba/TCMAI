@@ -968,18 +968,18 @@ class KnowledgeGraphView(ttk.Frame):
                           fill="#a0a0a0", outline="", tags=("shadow",))
 
             # 底色圆
-            c.create_oval(x - r, y - r, x + r, y + r,
+            oid = c.create_oval(x - r, y - r, x + r, y + r,
                           fill=color, outline="#ffffff", width=2,
                           tags=(f"node_{n}", "node"))
 
             # 标签（放在图形中心，白色文字）
             label = name if len(name) <= 4 else name[:3] + "…"
             fs = max(8, min(12, int(r * 0.75)))
-            c.create_text(x, y, text=label,
+            tid = c.create_text(x, y, text=label,
                           font=("Microsoft YaHei UI", fs, "bold"),
                           fill="#ffffff", anchor="center",
                           tags=(f"label_{n}", "label"))
-            self._canvas_items[n] = {"oval": n, "text": n, "r": r, "color": color}
+            self._canvas_items[n] = {"oval": oid, "text": tid, "r": r, "color": color}
 
         # 高亮中心
         if center_node and center_node in self._canvas_items:
