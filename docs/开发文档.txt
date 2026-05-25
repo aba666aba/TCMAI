@@ -81,6 +81,9 @@ E:\Tom\TCMAI/
 │       ├── builder.py            #   TCMKnowledgeGraph 构建器（12种关系边）
 │       ├── query.py              #   KnowledgeGraphQuery 查询（症状→证型→药材/方剂推荐）
 │       └── recommender.py        #   KG增强推荐器（模型+KG双通道融合+安全检测）
+├── src/nlu/                      # NLU 自然语言理解引擎
+│   ├── engine.py                 #   Qwen2.5-1.5B 4-bit 加载与推理
+│   └── __init__.py
 ├── tcm_recommender/
 │   ├── model.py                  #   TCMNet: Transformer+双塔+交叉注意力
 │   ├── train.py                  #   训练器: AMP+多任务损失+对比学习

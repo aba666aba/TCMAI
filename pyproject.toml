@@ -1,17 +1,17 @@
 [project]
 name = "tcmai"
-version = "2.1.0"
-description = "中医药智能问答系统 - Traditional Chinese Medicine Intelligent Q&A System"
-readme = "docs/设计说明.md"
+version = "3.0.0"
+description = "中医药智能方剂生成系统 - Traditional Chinese Medicine Intelligent Formula Generation System"
+readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [
-    { name = "中医药智能问答系统开发团队" },
+    { name = "中医药智能方剂生成系统开发团队" },
 ]
-keywords = ["tcm", "traditional-chinese-medicine", "deep-learning", "recommender-system"]
+keywords = ["tcm", "traditional-chinese-medicine", "deep-learning", "nlu", "knowledge-graph"]
 
 [project.optional-dependencies]
-recommender = ["torch>=2.0.0", "numpy>=1.24.0", "tqdm>=4.65.0"]
+recommender = ["torch>=2.0.0", "numpy>=1.24.0", "tqdm>=4.65.0", "transformers>=4.40.0", "bitsandbytes>=0.43.0"]
 dev = ["pytest>=7.0.0", "ruff>=0.8.0"]
 
 [tool.ruff]
