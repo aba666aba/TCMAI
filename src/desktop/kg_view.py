@@ -170,6 +170,13 @@ class KnowledgeGraphView(ttk.Frame):
         self._pending_callback = None  # KG 加载完毕后要执行的回调
 
         self._build_ui()
+        # 初始化节点类型变量（全部开启）
+        self.type_vars = {
+            "Symptom": tk.BooleanVar(value=True),
+            "Syndrome": tk.BooleanVar(value=True),
+            "Herb": tk.BooleanVar(value=True),
+            "Formula": tk.BooleanVar(value=True),
+        }
 
     # ═══════════════════════════════════════════
     # UI 构建
@@ -181,7 +188,6 @@ class KnowledgeGraphView(ttk.Frame):
         if self.standalone:
             self._build_search_toolbar()
             self._build_edge_filter_bar()
-            self._build_filter_bar()
         else:
             self._build_compact_toolbar()
 
@@ -307,26 +313,54 @@ class KnowledgeGraphView(ttk.Frame):
         ttk.Button(row1, text="📷 导出PNG", command=self._export_png, width=10).pack(side="right", padx=(0, 4))
 
     def _build_edge_filter_bar(self):
-        """边类型过滤栏（模式预设 + 多选 checkbox）"""
+        """边类型过滤（单选模式）"""
         bar = tk.Frame(self, bg="#f5f5f5", padx=10, pady=3)
         bar.pack(fill="x")
-        tk.Label(bar, text="边:", bg="#f5f5f5",
+        tk.Label(bar, text="显示:", bg="#f5f5f5",
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
 
-        self._edge_vars = {}
-        edge_labels = {
-            "belongs_to": "症状→证型", "recommends_herb": "证型→药材",
-            "recommends_formula": "证型→方剂", "composes": "药材→方剂",
-            "associated_with_herb": "症状↔药材",
-            "incompatible_with": "相反相畏", "co_occurs_with": "药材共现",
-        }
-        for etype, elabel in edge_labels.items():
-            var = tk.BooleanVar(value=True)
-            self._edge_vars[etype] = var
-            cb = tk.Checkbutton(bar, text=elabel, variable=var,
-                                bg="#f5f5f5", command=self._redraw_current,
-                                font=("Microsoft YaHei UI", 8))
-            cb.pack(side="left", padx=2)
+        self._edge_mode = tk.StringVar(value="all")
+        edge_modes = [
+            ("all", "全部关系"),
+            ("syndrome", "证型关联"),
+            ("herb", "药材关联"),
+            ("formula", "方剂关联"),
+            ("triple", "三节点关联"),
+            ("incompatible", "禁忌"),
+        ]
+        for mode_val, mode_label in edge_modes:
+            rb = tk.Radiobutton(bar, text=mode_label, variable=self._edge_mode,
+                                value=mode_val, bg="#f5f5f5",
+                                font=("Microsoft YaHei UI", 9),
+                                command=self._apply_edge_mode)
+            rb.pack(side="left", padx=4)
+
+    def _apply_edge_mode(self):
+        """根据 _edge_mode 设置边过滤，并重绘"""
+        mode = self._edge_mode.get()
+        # 节点全部显示
+        for v in self.type_vars.values():
+            v.set(True)
+        self._redraw_current()
+
+    def _get_active_edges(self) -> set:
+        """根据当前模式返回要显示的边类型集合"""
+        mode = self._edge_mode.get()
+        all_edges = {"belongs_to", "recommends_herb", "recommends_formula",
+                     "composes", "associated_with_herb", "incompatible_with", "co_occurs_with"}
+        if mode == "all":
+            return all_edges
+        elif mode == "syndrome":
+            return {"belongs_to", "recommends_herb", "recommends_formula"}
+        elif mode == "herb":
+            return {"associated_with_herb", "composes", "co_occurs_with"}
+        elif mode == "formula":
+            return {"recommends_formula", "composes", "associated_with_herb"}
+        elif mode == "triple":
+            return {"belongs_to", "recommends_herb", "composes", "associated_with_herb"}
+        elif mode == "incompatible":
+            return {"incompatible_with"}
+        return all_edges
 
     def _build_compact_toolbar(self):
         """嵌入模式：紧凑搜索栏"""
@@ -342,32 +376,24 @@ class KnowledgeGraphView(ttk.Frame):
         ttk.Button(toolbar, text="搜索", command=self._do_search, width=4).pack(side="left", padx=(0, 4))
         ttk.Button(toolbar, text="重置", command=self._reset_view, width=4).pack(side="left")
 
-    def _build_filter_bar(self):
-        """节点类型过滤栏（多选 checkbox）"""
-        filter_frame = tk.Frame(self, bg="#f0f0f0", padx=10, pady=4)
-        filter_frame.pack(fill="x")
-        tk.Label(filter_frame, text="节点:", bg="#f0f0f0",
-                 font=("Microsoft YaHei UI", 9)).pack(side="left")
-        self.type_vars = {}
-        node_labels = {"Symptom": "症状", "Syndrome": "证型", "Herb": "药材", "Formula": "方剂"}
-        for tname, tlabel in node_labels.items():
-            var = tk.BooleanVar(value=True)
-            self.type_vars[tname] = var
-            cb = tk.Checkbutton(filter_frame, text=tlabel, variable=var,
-                                bg="#f0f0f0", command=self._redraw_current,
-                                font=("Microsoft YaHei UI", 9))
-            cb.pack(side="left", padx=(4, 0))
+    # 节点类型变量（全开，不再提供多选 UI）
+    type_vars: dict = {}
 
     def _build_legend(self, parent):
-        """图例"""
+        """图例（中文标签）"""
+        legend_names = {
+            "Symptom": "症状", "Syndrome": "证型", "Herb": "药材",
+            "Formula": "方剂", "PatentMedicine": "中成药", "FolkRemedy": "验方",
+        }
         for tname, color in NODE_COLORS.items():
             if tname in {"Category", "Meridian", "Nature", "Flavor"}:
-                continue  # 辅助节点隐藏在图例中
+                continue
+            label = legend_names.get(tname, tname)
             dot = tk.Canvas(parent, width=12, height=12, bg=parent["bg"],
                             highlightthickness=0)
             dot.create_oval(1, 1, 11, 11, fill=color, outline="")
             dot.pack(side="left", padx=(8, 2))
-            tk.Label(parent, text=tname, bg=parent["bg"],
+            tk.Label(parent, text=label, bg=parent["bg"],
                      font=("Microsoft YaHei UI", 8)).pack(side="left")
 
     # ═══════════════════════════════════════════
@@ -879,9 +905,12 @@ class KnowledgeGraphView(ttk.Frame):
         self._cv_pos = pos  # 原始数据坐标
         self._cv_zoom = 1.0
 
-        # 画边
+        # 画边（按当前模式过滤）
+        active_edges = self._get_active_edges()
         for u, v, data in sub.edges(data=True):
             etype = data.get("type", "")
+            if etype not in active_edges:
+                continue
             ecolor = EDGE_COLORS.get(etype, "#ccc")
             x1, y1 = to_canvas(pos[u][0], pos[u][1])
             x2, y2 = to_canvas(pos[v][0], pos[v][1])
