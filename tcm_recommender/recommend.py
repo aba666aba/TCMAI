@@ -14,7 +14,7 @@ import json
 import logging
 import argparse
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 
