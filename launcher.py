@@ -44,29 +44,21 @@ _logger = logging.getLogger("launcher")
 
 def main() -> None:
     try:
-        from desktop.splash import SplashScreen
         from desktop.runtime import hide_console_window, show_error_dialog
         import tkinter as tk
 
         hide_console_window()
         _logger.info("中医药智能问答系统启动")
 
-        # ── 先创建主窗口（初始隐藏，避免闪烁）──
+        # ── 直接创建主窗口（跳过启动画面）──
         from desktop.app import DesktopApp
         root = tk.Tk()
         root.withdraw()
         app = DesktopApp(root)
-        root.state("zoomed")  # 最大化（尚未显示）
+        root.state("zoomed")
+        root.deiconify()
 
-        # ── 创建全屏置顶启动画面（覆盖在主窗口之上）──
-        splash = SplashScreen(parent=root)
-        root.deiconify()  # 显示主窗口（被 splash 完全覆盖）
-
-        # ── 后台加载知识图谱和推理管线 ──
-        _BgLoader(splash, _logger).start()
-
-        # ── 进入主循环（splash 和主窗口共享同一个事件循环）──
-        # 后台加载完成后 splash 自动关闭，露出主窗口
+        # ── 进入主循环 ──
         root.mainloop()
 
     except Exception as exc:
@@ -77,84 +69,16 @@ def main() -> None:
             pass
 
 
-class _BgLoader:
-    """
-    Splash 期间在后台线程预加载知识图谱。
-    通过队列将进度推送到主线程，由 after() 轮询更新 Splash UI。
-    """
-
-    MIN_DISPLAY = 9.0  # Splash 最少显示秒数
-
-    def __init__(self, splash, logger):
-        self.splash = splash
-        self.log = logger
-        self._progress_q = queue.Queue()  # (stage_index_or_None, progress, message)
-        self._ready = False
-        self._start_ts = time.time()
-
-    def start(self):
-        """启动后台加载线程和主线程轮询"""
-        threading.Thread(target=self._bg_work, daemon=True).start()
-        self.splash.root.after(200, self._poll_progress)
-
-    # ── 后台线程 ──
-
-    def _bg_work(self):
-        """后台线程：执行真实初始化"""
-        try:
-            self._send_stage(2)  # "正在建立知识库连接..."
-            time.sleep(1.5)
-
-            self._send_stage(3)  # "正在加载知识图谱..."
-            self.log.info("后台预加载知识图谱...")
-            from desktop.kg_view import get_kg
-            get_kg()
-            self.log.info("知识图谱预加载完成")
-
-            self._send_stage(4)  # "正在启动智能引擎..."
-            time.sleep(1.5)
-
-            self._send("正在初始化推理管线...")
-            self.log.info("后台预加载推理管线...")
-            try:
-                from tcm_recommender.data_pipeline import TCMDataPipeline
-                _pipeline = TCMDataPipeline()
-                _pipeline.load_all()
-                self.log.info("推理管线预加载完成")
-            except Exception as exc:
-                self.log.warning("推理管线预加载失败(不影响启动): %s", exc)
-
-            self._send("准备就绪...")
-            time.sleep(1.0)
-        except Exception as exc:
-            self.log.warning("后台初始化异常(不影响启动): %s", exc)
-        finally:
-            self._ready = True
-
-    def _send_stage(self, index):
-        self._progress_q.put("正在加载，请稍候...")
-
-    def _send(self, message):
-        self._progress_q.put(message)
-
-    # ── 主线程轮询 ──
-
-    def _poll_progress(self):
-        """主线程执行：消费消息队列，更新 Splash UI"""
-        try:
-            while True:
-                msg = self._progress_q.get_nowait()
-                self.splash.update_message(msg)
-        except queue.Empty:
-            pass
-
-        # 检查是否完成
-        elapsed = time.time() - self._start_ts
-        if self._ready and elapsed >= self.MIN_DISPLAY:
-            self.log.info("后台初始化完成，启动主窗口")
-            self.splash.close()
-            return
-
-        # 继续轮询
-        self.splash.root.after(200, self._poll_progress)
+# ──────────────────────────────────────────────
+# _BgLoader 暂注释——跳过启动画面后不再使用
+# 保留代码以备后续恢复
+# ──────────────────────────────────────────────
+# class _BgLoader:
+#     MIN_DISPLAY = 9.0
+#     def __init__(self, splash, logger): ...
+#     def start(self): ...
+#     def _bg_work(self): ...
+#     def _send_stage(self, index): ...
+#     def _send(self, message): ...
+#     def _poll_progress(self): ...
 
