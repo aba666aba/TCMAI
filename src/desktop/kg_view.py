@@ -919,8 +919,10 @@ class KnowledgeGraphView(ttk.Frame):
         pad_y = max((max(ys) - min(ys)) * 0.3, 1)
         x_min, x_max = min(xs) - pad_x, max(xs) + pad_x
         y_min, y_max = min(ys) - pad_y, max(ys) + pad_y
-        cw = max(c.winfo_width(), 100)  # 至少 100 避免除零
-        ch = max(c.winfo_height(), 100)
+        # 确保画布已布局再取尺寸，否则默认用 800×600
+        c.update_idletasks()
+        cw = max(c.winfo_width(), 800)
+        ch = max(c.winfo_height(), 600)
         scale_x = cw / (x_max - x_min) if x_max > x_min else 1
         scale_y = ch / (y_max - y_min) if y_max > y_min else 1
         s = min(scale_x, scale_y) * 0.85
