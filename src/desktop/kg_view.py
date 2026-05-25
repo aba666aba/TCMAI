@@ -315,10 +315,10 @@ class KnowledgeGraphView(ttk.Frame):
 
         self._edge_vars = {}
         edge_labels = {
-            "belongs_to": "症状→证型", "recommends_herb": "证→药",
-            "recommends_formula": "证→方", "composes": "药→方",
-            "associated_with_herb": "症↔药",
-            "incompatible_with": "相反相畏", "co_occurs_with": "共现",
+            "belongs_to": "症状→证型", "recommends_herb": "证型→药材",
+            "recommends_formula": "证型→方剂", "composes": "药材→方剂",
+            "associated_with_herb": "症状↔药材",
+            "incompatible_with": "相反相畏", "co_occurs_with": "药材共现",
         }
         for etype, elabel in edge_labels.items():
             var = tk.BooleanVar(value=True)
@@ -349,10 +349,11 @@ class KnowledgeGraphView(ttk.Frame):
         tk.Label(filter_frame, text="节点:", bg="#f0f0f0",
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
         self.type_vars = {}
-        for tname in ["Symptom", "Syndrome", "Herb", "Formula"]:
+        node_labels = {"Symptom": "症状", "Syndrome": "证型", "Herb": "药材", "Formula": "方剂"}
+        for tname, tlabel in node_labels.items():
             var = tk.BooleanVar(value=True)
             self.type_vars[tname] = var
-            cb = tk.Checkbutton(filter_frame, text=tname, variable=var,
+            cb = tk.Checkbutton(filter_frame, text=tlabel, variable=var,
                                 bg="#f0f0f0",
                                 font=("Microsoft YaHei UI", 9))
             cb.pack(side="left", padx=(4, 0))
