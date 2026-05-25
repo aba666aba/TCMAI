@@ -596,41 +596,25 @@ class KnowledgeGraphView(ttk.Frame):
         if self._current_subgraph is not None:
             self._expand_history.append(set(self._current_subgraph.nodes))
 
-        # BFS 收集 2 跳内的关联节点（只走核心关系边，避免发散）
-        CORE_EDGE_TYPES = {"belongs_to", "recommends_herb", "recommends_formula",
-                           "composes", "associated_with_herb"}
+        # 收集 1 跳关联节点（直接相关，不过度扩散）
         visited = {center_node}
-        queue = [(center_node, 0)]  # (node, depth)
-        center_type = g.nodes[center_node].get("type", "?")
-        center_name = g.nodes[center_node].get("name", center_node)
-        logger.info("_show_subgraph_all: 中心节点 %s (%s)", center_name, center_type)
-
-        while queue:
-            n, depth = queue.pop(0)
-            if depth >= 2:
+        for _, nbr, ed in g.edges(center_node, data=True):
+            etype = ed.get("type", "")
+            if etype in {"has_nature", "has_flavor", "has_meridian", "belongs_to_category",
+                         "co_occurs_with"}:
                 continue
-            for _, nbr, ed in g.edges(n, data=True):
-                etype = ed.get("type", "")
-                if etype not in CORE_EDGE_TYPES:
-                    continue
-                if nbr not in visited:
-                    nt = g.nodes[nbr].get("type", "?")
-                    nn = g.nodes[nbr].get("name", nbr)
-                    logger.info("  depth=%d 出边[%s]: %s (%s)", depth + 1, etype, nn, nt)
-                    visited.add(nbr)
-                    queue.append((nbr, depth + 1))
-            for nbr, _, ed in g.in_edges(n, data=True):
-                etype = ed.get("type", "")
-                if etype not in CORE_EDGE_TYPES:
-                    continue
-                if nbr not in visited:
-                    nt = g.nodes[nbr].get("type", "?")
-                    nn = g.nodes[nbr].get("name", nbr)
-                    logger.info("  depth=%d 入边[%s]: %s (%s)", depth + 1, etype, nn, nt)
-                    visited.add(nbr)
-                    queue.append((nbr, depth + 1))
+            visited.add(nbr)
+        for nbr, _, ed in g.in_edges(center_node, data=True):
+            etype = ed.get("type", "")
+            if etype in {"has_nature", "has_flavor", "has_meridian", "belongs_to_category",
+                         "co_occurs_with"}:
+                continue
+            visited.add(nbr)
 
-        logger.info("_show_subgraph_all: 共收集 %d 个节点", len(visited))
+        logger.info("_show_subgraph_all: 中心节点 %s (%s), 共收集 %d 个节点",
+                     g.nodes[center_node].get("name", center_node),
+                     g.nodes[center_node].get("type", "?"),
+                     len(visited))
         # 统计节点类型分布
         type_counts = {}
         for n in visited:
