@@ -44,21 +44,26 @@ _logger = logging.getLogger("launcher")
 
 def main() -> None:
     try:
+        from desktop.splash import SplashScreen
         from desktop.runtime import hide_console_window, show_error_dialog
         import tkinter as tk
 
         hide_console_window()
         _logger.info("中医药智能问答系统启动")
 
-        # ── 直接创建主窗口（跳过启动画面）──
+        # ── 先创建主窗口（隐藏），再盖启动动画 ──
         from desktop.app import DesktopApp
         root = tk.Tk()
         root.withdraw()
         app = DesktopApp(root)
         root.state("zoomed")
-        root.deiconify()
+
+        # ── 启动动画（覆盖在主窗口之上）──
+        splash = SplashScreen(parent=root)
+        splash.animate_and_close(duration=1.2)
 
         # ── 进入主循环 ──
+        root.deiconify()
         root.mainloop()
 
     except Exception as exc:
