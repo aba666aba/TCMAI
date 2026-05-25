@@ -300,12 +300,7 @@ class KnowledgeGraphView(ttk.Frame):
                                     values=["spring", "circular", "kamada_kawai", "shell"],
                                     width=10, state="readonly", font=("Microsoft YaHei UI", 9))
         layout_menu.pack(side="left")
-        def _on_layout_change(*_):
-            if self._current_subgraph:
-                self._redraw_current()
-        layout_menu.bind("<<ComboboxSelected>>", _on_layout_change)
-        layout_menu.bind("<FocusOut>", _on_layout_change)
-        # Also handle via a button
+        # 仅通过"应用布局"按钮触发重绘
         ttk.Button(row1, text="应用布局", command=self._redraw_current, width=8).pack(side="left", padx=(4, 0))
         
         # 导出
@@ -329,7 +324,7 @@ class KnowledgeGraphView(ttk.Frame):
             var = tk.BooleanVar(value=True)
             self._edge_vars[etype] = var
             cb = tk.Checkbutton(bar, text=elabel, variable=var,
-                                bg="#f5f5f5", command=self._redraw_current,
+                                bg="#f5f5f5",
                                 font=("Microsoft YaHei UI", 8))
             cb.pack(side="left", padx=2)
 
@@ -358,7 +353,7 @@ class KnowledgeGraphView(ttk.Frame):
             var = tk.BooleanVar(value=True)
             self.type_vars[tname] = var
             cb = tk.Checkbutton(filter_frame, text=tname, variable=var,
-                                bg="#f0f0f0", command=self._update_filters,
+                                bg="#f0f0f0",
                                 font=("Microsoft YaHei UI", 9))
             cb.pack(side="left", padx=(4, 0))
 
@@ -696,9 +691,13 @@ class KnowledgeGraphView(ttk.Frame):
 
     def _go_back(self):
         """后退到上一个展开状态"""
+        logger.info("_go_back: 历史深度 %d", len(self._expand_history))
         if not self._expand_history:
+            logger.info("_go_back: 历史为空，无法后退")
             return
         prev = self._expand_history.pop()
+        logger.info("_go_back: 取出历史状态，剩余 %d，节点数 %d",
+                     len(self._expand_history), len(prev))
         if self._current_subgraph is not None:
             current_nodes = set(self._current_subgraph.nodes)
             # 找上一个状态中不在当前子图中的节点作为中心
@@ -710,6 +709,7 @@ class KnowledgeGraphView(ttk.Frame):
                     break
             if center is None:
                 center = next(iter(prev))
+            logger.info("_go_back: 以 %s 为中心重绘", center)
             self._show_subgraph_given_nodes(center, list(prev))
 
     # ── 右键菜单 ──
@@ -739,7 +739,10 @@ class KnowledgeGraphView(ttk.Frame):
     def _redraw_current(self):
         """使用当前设置重绘子图"""
         if self._current_subgraph is None:
+            logger.info("_redraw_current: 无当前子图，跳过")
             return
+        logger.info("_redraw_current: 清除布局缓存，重绘 %s 个节点",
+                     self._current_subgraph.number_of_nodes())
         # 清除布局缓存强制重新计算
         sub_key = frozenset(self._current_subgraph.nodes)
         if sub_key in self._pos_cache:
@@ -950,10 +953,16 @@ class KnowledgeGraphView(ttk.Frame):
         return None
 
     def _cv_on_press(self, e):
+        logger.info("_cv_on_press: (%d, %d)", e.x, e.y)
         self._cv_drag_start = (e.x, e.y)
         node = self._cv_get_node(e.x, e.y)
         if node:
+            logger.info("_cv_on_press: 点击节点 %s", node)
             self._selected_node = node
+            # 保存当前视图到展开历史（用于后退）
+            if self._current_subgraph is not None:
+                self._expand_history.append(set(self._current_subgraph.nodes))
+                logger.info("_cv_on_press: 保存历史，当前深度 %d", len(self._expand_history))
             # 显示1跳子图
             self._show_subgraph(node)
 
