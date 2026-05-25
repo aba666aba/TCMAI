@@ -962,8 +962,8 @@ class KnowledgeGraphView(ttk.Frame):
             r = NODE_RADIUS.get(ntype, 10)
             color = NODE_COLORS_HEX.get(ntype, "#bdc3c7")
 
-            # 阴影（偏移 3px）
-            c.create_oval(x - r + 3, y - r + 3, x + r + 3, y + r + 3,
+            # 阴影（偏移 1px）
+            c.create_oval(x - r + 1, y - r + 1, x + r + 1, y + r + 1,
                           fill="#a0a0a0", outline="", tags=("shadow",))
 
             # 底色圆
