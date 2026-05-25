@@ -744,6 +744,12 @@ class KnowledgeGraphView(ttk.Frame):
             return
         logger.info("_redraw_current: 清除布局缓存，重绘 %s 个节点",
                      self._current_subgraph.number_of_nodes())
+        # 确保至少选择 2 种节点类型
+        active_types = {t for t, v in self.type_vars.items() if v.get()}
+        if len(active_types) < 2:
+            logger.warning("_redraw_current: 至少选择2种节点类型，自动恢复全部")
+            for v in self.type_vars.values():
+                v.set(True)
         # 清除布局缓存强制重新计算
         sub_key = frozenset(self._current_subgraph.nodes)
         if sub_key in self._pos_cache:
@@ -899,11 +905,19 @@ class KnowledgeGraphView(ttk.Frame):
             c.create_oval(x - r + 1, y - r + 1, x + r + 1, y + r + 1,
                           fill="#a0a0a0", outline="", tags=("shadow",))
 
-            # 底色圆（纯色，无文字）
+            # 底色圆
             oid = c.create_oval(x - r, y - r, x + r, y + r,
                           fill=color, outline="#ffffff", width=2,
                           tags=(f"node_{n}", "node"))
-            self._canvas_items[n] = {"oval": oid, "r": r, "color": color}
+
+            # 标签（放在图形中心）
+            label = name if len(name) <= 4 else name[:3] + "…"
+            fs = max(8, min(12, int(r * 0.75)))
+            tid = c.create_text(x, y, text=label,
+                          font=("Microsoft YaHei UI", fs, "bold"),
+                          fill="#ffffff", anchor="center",
+                          tags=(f"label_{n}", "label"))
+            self._canvas_items[n] = {"oval": oid, "text": tid, "r": r, "color": color}
 
         # 高亮中心
         if center_node and center_node in self._canvas_items:
@@ -955,7 +969,19 @@ class KnowledgeGraphView(ttk.Frame):
         """滚轮缩放（基于 Canvas.scale，单操作 O(1)）"""
         factor = 1.1 if e.delta > 0 else 0.9
         self._tk_canvas.scale("all", e.x, e.y, factor, factor)
-        # 不再需要同步调整字体（节点无文字）
+        # 同步调整标签字体（scale 不会缩放字体）
+        for n, ci in self._canvas_items.items():
+            tid = ci.get("text")
+            if tid is None:
+                continue
+            try:
+                old_fs = self._tk_canvas.itemcget(tid, "font")
+                sz = int(str(old_fs).split()[-1])
+                new_sz = max(6, min(18, int(sz * factor)))
+                self._tk_canvas.itemconfig(tid,
+                    font=("Microsoft YaHei UI", new_sz, "bold"))
+            except Exception:
+                pass
 
     def _cv_on_motion(self, e):
         """悬停高亮：放大节点"""
