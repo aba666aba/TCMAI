@@ -44,22 +44,16 @@ class SplashScreen:
 
         self.root.update_idletasks()
 
-    def animate_and_close(self, duration: float = 1.2):
-        """执行缩放动画后自动关闭"""
+    def animate_and_close(self, duration: float = 1.0):
+        """透明度淡出动画后自动关闭"""
         def _anim():
-            sw = self.root.winfo_screenwidth()
-            sh = self.root.winfo_screenheight()
-            steps = 30
-            for i in range(steps + 1):
+            steps = 20
+            for i in range(steps, -1, -1):
                 if not self.root.winfo_exists():
                     return
-                t = i / steps
-                eased = t * t * (3 - 2 * t)
-                scale = 1.0 - eased * 0.85
+                alpha = i / steps
                 try:
-                    self.root.geometry(
-                        f"{int(sw*scale)}x{int(sh*scale)}+{(sw-int(sw*scale))//2}+{(sh-int(sh*scale))//2}"
-                    )
+                    self.root.attributes("-alpha", alpha)
                 except Exception:
                     pass
                 time.sleep(duration / steps)
