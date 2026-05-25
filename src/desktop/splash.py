@@ -3,11 +3,16 @@ TCMAI 启动画面
 
 炫酷的加载界面，在后台初始化时展示品牌形象和加载进度。
 """
+
+import logging
 import tkinter as tk
 import threading
 import time
 from pathlib import Path
 from typing import Optional, Callable
+
+
+logger = logging.getLogger(__name__)
 
 
 class SplashScreen:
@@ -43,12 +48,12 @@ class SplashScreen:
         self.root.geometry(f"{sw}x{sh}+0+0")
 
         # 颜色
-        self.BG_DEEP = "#0d2818"      # 最深绿
-        self.BG_MID = "#1a3a2b"       # 中绿
-        self.ACCENT = "#c8953e"       # 金色
-        self.ACCENT_LIGHT = "#e8c46a" # 亮金
-        self.TEXT_LIGHT = "#e8f0ea"   # 浅白绿
-        self.TEXT_MUTED = "#8aae96"   # 灰绿
+        self.BG_DEEP = "#0d2818"  # 最深绿
+        self.BG_MID = "#1a3a2b"  # 中绿
+        self.ACCENT = "#c8953e"  # 金色
+        self.ACCENT_LIGHT = "#e8c46a"  # 亮金
+        self.TEXT_LIGHT = "#e8f0ea"  # 浅白绿
+        self.TEXT_MUTED = "#8aae96"  # 灰绿
 
         self._progress = 0.0
         self._message = "正在加载，请稍候..."
@@ -71,7 +76,8 @@ class SplashScreen:
         # 实际宽度近似
         try:
             bar_width = self.progress_container.winfo_width() - 10 or 520
-        except Exception:
+        except Exception as exc:
+            logger.warning("获取进度条宽度失败，使用默认值: %s", exc)
             bar_width = 520
         seg = 120  # 光条长度
         self._anim_pos += self._anim_dir * 6
@@ -103,23 +109,28 @@ class SplashScreen:
         icon_frame.pack(pady=(0, 16))
 
         for i, color in enumerate([self.ACCENT, self.ACCENT_LIGHT, self.ACCENT]):
-            dot = tk.Canvas(icon_frame, width=18, height=18, bg=self.BG_DEEP,
-                            highlightthickness=0)
+            dot = tk.Canvas(
+                icon_frame, width=18, height=18, bg=self.BG_DEEP, highlightthickness=0
+            )
             dot.create_oval(1, 1, 17, 17, fill=color, outline="")
             dot.pack(side="left", padx=6)
 
         # ── 标题 ──
         title = tk.Label(
-            inner, text="中医药智能问答系统",
-            bg=self.BG_DEEP, fg=self.TEXT_LIGHT,
+            inner,
+            text="中医药智能问答系统",
+            bg=self.BG_DEEP,
+            fg=self.TEXT_LIGHT,
             font=("Microsoft YaHei UI", 32, "bold"),
         )
         title.pack(pady=(14, 8))
 
         # ── 副标题 ──
         subtitle = tk.Label(
-            inner, text="基于深度学习的中医药知识推荐",
-            bg=self.BG_DEEP, fg=self.TEXT_MUTED,
+            inner,
+            text="基于深度学习的中医药知识推荐",
+            bg=self.BG_DEEP,
+            fg=self.TEXT_MUTED,
             font=("Microsoft YaHei UI", 14, "bold"),
         )
         subtitle.pack(pady=(0, 24))
@@ -127,26 +138,32 @@ class SplashScreen:
         # ── 加载消息 ──
         self.msg_var = tk.StringVar(value=self._message)
         msg = tk.Label(
-            inner, textvariable=self.msg_var,
-            bg=self.BG_DEEP, fg=self.ACCENT,
+            inner,
+            textvariable=self.msg_var,
+            bg=self.BG_DEEP,
+            fg=self.ACCENT,
             font=("Microsoft YaHei UI", 18, "bold"),
         )
         msg.pack(pady=(0, 20))
 
         # ── 进度条 ──
-        self.progress_container = tk.Frame(inner, bg=self.BG_MID, height=10,
-                                       highlightthickness=0)
+        self.progress_container = tk.Frame(
+            inner, bg=self.BG_MID, height=10, highlightthickness=0
+        )
         self.progress_container.pack(fill="x", padx=40)
         self.progress_container.pack_propagate(False)
 
-        self.progress_bar = tk.Frame(self.progress_container, bg=self.ACCENT,
-                                      height=10, highlightthickness=0)
+        self.progress_bar = tk.Frame(
+            self.progress_container, bg=self.ACCENT, height=10, highlightthickness=0
+        )
         self.progress_bar.place(x=0, y=0, width=0, height=10)
 
         # ─️ 底部文字 ──
         bottom = tk.Label(
-            inner, text="基于 TCMNet Transformer 架构",
-            bg=self.BG_DEEP, fg=self.TEXT_MUTED,
+            inner,
+            text="基于 TCMNet Transformer 架构",
+            bg=self.BG_DEEP,
+            fg=self.TEXT_MUTED,
             font=("Microsoft YaHei UI", 12, "bold"),
         )
         bottom.pack(pady=(24, 0))
@@ -185,20 +202,33 @@ class SplashScreen:
 
         def _worker():
             try:
-                # 先跑一段自动进度
-                for i in range(len(self.STAGES)):
+                # 先跑一段自动进度（8 步动画）
+                for i in range(8):
                     if not self._running:
                         return
-                    self.set_stage(i)
-                    time.sleep(duration / len(self.STAGES) * 0.3)
+                    pct = (i + 1) / 8 * 0.7
+                    bar_width = int(
+                        max(0, min(1, pct))
+                        * (self.progress_container.winfo_width() or 560)
+                    )
+                    self.progress_bar.config(width=bar_width)
+                    self.root.update_idletasks()
+                    time.sleep(duration / 8 * 0.3)
 
                 # 执行实际工作
-                self.update_progress(0.7, "正在完成初始化...")
+                self.update_message("正在完成初始化...")
+                bar_width = int(0.7 * (self.progress_container.winfo_width() or 560))
+                self.progress_bar.config(width=bar_width)
+                self.root.update_idletasks()
                 work_function()
 
-                self.update_progress(1.0, "启动完成！")
+                self.update_message("启动完成！")
+                bar_width = self.progress_container.winfo_width() or 560
+                self.progress_bar.config(width=bar_width)
+                self.root.update_idletasks()
                 time.sleep(0.5)
             except Exception as e:
+                logger.warning("启动画面后台工作函数执行失败: %s", e)
                 error[0] = e
             finally:
                 if error[0] is None:

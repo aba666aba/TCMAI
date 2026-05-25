@@ -3,7 +3,7 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class KnowledgeBase:
             self.conn = None
             self.is_available = False
 
-    def _empty_result(self) -> Dict[str, Any]:
+    def _empty_result(self) -> dict[str, Any]:
         return {
             "herbs": [],
             "formulas": [],
@@ -60,7 +60,7 @@ class KnowledgeBase:
             "efficacy": [],
         }
 
-    def search(self, query: str) -> Dict[str, Any]:
+    def search(self, query: str) -> dict[str, Any]:
         with self._lock:
             if not self.conn:
                 return self._empty_result()
@@ -79,7 +79,7 @@ class KnowledgeBase:
                 logger.error("知识库搜索失败: %s", exc)
                 return self._empty_result()
 
-    def _search_herbs(self, keyword: str) -> List[Dict]:
+    def _search_herbs(self, keyword: str) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -93,7 +93,7 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_formulas(self, keyword: str) -> List[Dict]:
+    def _search_formulas(self, keyword: str) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -107,7 +107,7 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_patent_medicines(self, keyword: str) -> List[Dict]:
+    def _search_patent_medicines(self, keyword: str) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -121,7 +121,7 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_folk_remedies(self, keyword: str) -> List[Dict]:
+    def _search_folk_remedies(self, keyword: str) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -134,8 +134,8 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_efficacy(self, keyword: str) -> List[Dict]:
-        results: List[Dict[str, Any]] = []
+    def _search_efficacy(self, keyword: str) -> list[dict]:
+        results: list[dict[str, Any]] = []
         cursor = self.conn.cursor()
 
         cursor.execute(
@@ -221,7 +221,7 @@ class KnowledgeBase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def match_symptoms(self, symptoms: List[str]) -> List[Dict]:
+    def match_symptoms(self, symptoms: list[str]) -> list[dict]:
         if not symptoms:
             return []
 
@@ -231,7 +231,7 @@ class KnowledgeBase:
 
             max_symptoms_count = 20
             max_symptom_length = 100
-            params: List[str] = []
+            params: list[str] = []
             for symptom in symptoms[:max_symptoms_count]:
                 if not isinstance(symptom, str):
                     continue
@@ -255,7 +255,7 @@ class KnowledgeBase:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def search_by_category(self, category: str, limit: int = 10) -> Dict[str, List[Dict]]:
+    def search_by_category(self, category: str, limit: int = 10) -> dict[str, list[dict]]:
         results = {"herbs": [], "formulas": [], "patent_medicines": [], "folk_remedies": []}
         with self._lock:
             if not self.conn:
@@ -315,7 +315,7 @@ class KnowledgeBase:
     # 智能搜索（多策略融合搜索）
     # ================================================================
 
-    def intelligent_search(self, query: str) -> Dict[str, Any]:
+    def intelligent_search(self, query: str) -> dict[str, Any]:
         """智能搜索：同义词扩展 + 证型推理 + 多关键词融合
 
         自动处理口语化表达（"睡不着"→"失眠"、"没力气"→"乏力"），
@@ -363,7 +363,7 @@ class KnowledgeBase:
                 "search_summary": f"搜索异常，降级到普通模式",
             }
 
-    def get_symptom_suggestions(self, partial: str, max_results: int = 8) -> List[str]:
+    def get_symptom_suggestions(self, partial: str, max_results: int = 8) -> list[str]:
         """根据输入前缀获取症状建议（模糊匹配）"""
         try:
             from core.intelligent_search import IntelligentSearch

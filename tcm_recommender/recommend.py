@@ -14,7 +14,7 @@ import json
 import logging
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -102,7 +102,7 @@ class TCMRecommender:
 
         logger.info("推荐器初始化完成")
 
-    def parse_symptoms(self, symptom_text: str) -> Tuple[List[int], List[str], List[str]]:
+    def parse_symptoms(self, symptom_text: str) -> tuple[list[int], list[str], list[str]]:
         """解析症状文本（精确匹配，症状由上游 NLU 或关键词模块提取）"""
         for sep in [' ', ',', '，', '、', ';', '；']:
             symptom_text = symptom_text.replace(sep, ' ')
@@ -127,8 +127,8 @@ class TCMRecommender:
         return symptom_ids, valid_symptoms, unknown_symptoms
 
     def recommend(
-        self, symptoms: List[int], top_k_herb: int = 10, top_k_formula: int = 5
-    ) -> Dict:
+        self, symptoms: list[int], top_k_herb: int = 10, top_k_formula: int = 5
+    ) -> dict:
         """推荐药材和方剂"""
         if not symptoms:
             return {
@@ -216,7 +216,7 @@ class TCMRecommender:
             "formulas": formula_results,
         }
 
-    def check_safety(self, herb_names: List[str]) -> Dict:
+    def check_safety(self, herb_names: list[str]) -> dict:
         """安全检查（十八反/十九畏/孕妇禁用），同一药名只显示一条警告"""
         import sqlite3
         conn = sqlite3.connect(self.db_path)

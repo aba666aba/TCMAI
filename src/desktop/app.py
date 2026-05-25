@@ -7,7 +7,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from core.symptom_pipeline import SymptomPipeline
 from desktop.service import TCMDesktopService
@@ -15,6 +15,7 @@ from desktop.service import TCMDesktopService
 # 知识图谱可视化（可选依赖）
 try:
     from desktop.kg_view import KnowledgeGraphView
+
     HAS_KG = True
 except ImportError as exc:
     logger.warning("知识图谱模块加载失败: %s", exc)
@@ -50,6 +51,7 @@ class DesktopApp:
             "shadow": "#dfdcd5",
         }
         from core.tcm_config import UI_QUICK_SYMPTOMS
+
         self.symptom_options = list(UI_QUICK_SYMPTOMS)[:5]
 
         self._configure_root()
@@ -71,41 +73,46 @@ class DesktopApp:
         """通过 DWM API 设置深色标题栏"""
         try:
             import ctypes
+
             dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
 
             DWMWA_USE_IMMERSIVE_DARK_MODE = 20
             DWMWA_CAPTION_COLOR = 35
 
             hwnd = ctypes.windll.user32.GetAncestor(
-                self.root.winfo_id(), 2  # GA_ROOT
+                self.root.winfo_id(),
+                2,  # GA_ROOT
             )
             if not hwnd:
                 return
 
             dark = ctypes.c_int(1)
             dwmapi.DwmSetWindowAttribute(
-                hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(dark), ctypes.sizeof(dark)
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                ctypes.byref(dark),
+                ctypes.sizeof(dark),
             )
 
             # 标题栏颜色 BGR(深绿): 0x002B3A1A = RGB 0x1A3A2B
             color = ctypes.c_int(0x002B3A1A)
             try:
                 dwmapi.DwmSetWindowAttribute(
-                    hwnd, DWMWA_CAPTION_COLOR,
-                    ctypes.byref(color), ctypes.sizeof(color)
+                    hwnd, DWMWA_CAPTION_COLOR, ctypes.byref(color), ctypes.sizeof(color)
                 )
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as exc:
+                logger.warning(
+                    "设置 DWM 标题栏颜色失败(可能不支持的 Windows 版本): %s", exc
+                )
+        except Exception as exc:
+            logger.warning("设置深色标题栏失败: %s", exc)
 
     def _build_style(self) -> None:
         style = ttk.Style()
         try:
             style.theme_use("clam")
-        except tk.TclError:
-            pass
+        except tk.TclError as exc:
+            logger.warning("设置 ttk 主题'clam'失败，使用默认主题: %s", exc)
 
         style.configure(".", font=("Microsoft YaHei UI", 10))
         style.configure("App.TFrame", background=self.palette["bg"])
@@ -167,7 +174,10 @@ class DesktopApp:
         )
         style.map(
             "Primary.TButton",
-            background=[("active", self.palette["primary_hover"]), ("disabled", "#96b8ab")],
+            background=[
+                ("active", self.palette["primary_hover"]),
+                ("disabled", "#96b8ab"),
+            ],
         )
         # 次要按钮
         style.configure(
@@ -233,7 +243,9 @@ class DesktopApp:
         hero.pack(fill="x")
         # 装饰顶线
         tk.Frame(hero, bg=self.palette["accent"], height=3).pack(fill="x", pady=(0, 12))
-        ttk.Label(hero, text="中医药智能问答系统", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(hero, text="中医药智能问答系统", style="Title.TLabel").pack(
+            anchor="w"
+        )
         ttk.Label(
             hero,
             text="基于深度学习的中医药知识推荐 · 支持症状辨证与方剂推荐",
@@ -268,51 +280,81 @@ class DesktopApp:
         container.pack(fill="both", expand=True)
 
         # ── 搜索区域（顶部固定） ──
-        search_area = tk.Frame(container, bg=self.palette["card"], padx=20, pady=14,
-                               highlightthickness=1, highlightbackground=self.palette["border"])
+        search_area = tk.Frame(
+            container,
+            bg=self.palette["card"],
+            padx=20,
+            pady=14,
+            highlightthickness=1,
+            highlightbackground=self.palette["border"],
+        )
         search_area.pack(fill="x", pady=(0, 6))
 
-        tk.Frame(search_area, bg=self.palette["accent"], height=2).pack(fill="x", pady=(0, 8))
+        tk.Frame(search_area, bg=self.palette["accent"], height=2).pack(
+            fill="x", pady=(0, 8)
+        )
 
         input_row = tk.Frame(search_area, bg=self.palette["card"])
         input_row.pack(fill="x")
 
         self.query_input = tk.Text(
-            input_row, height=1, wrap="word",
+            input_row,
+            height=1,
+            wrap="word",
             font=("Microsoft YaHei UI", 12),
-            relief="solid", bd=1,
+            relief="solid",
+            bd=1,
             background=self.palette["input_bg"],
             foreground=self.palette["text"],
             insertbackground=self.palette["primary"],
-            highlightthickness=0, padx=12, pady=4,
+            highlightthickness=0,
+            padx=12,
+            pady=4,
         )
         self.query_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
         self.clear_button = ttk.Button(
-            input_row, text="清空", style="Primary.TButton", width=6,
-            command=self._clear_query
+            input_row,
+            text="清空",
+            style="Primary.TButton",
+            width=6,
+            command=self._clear_query,
         )
         self.clear_button.pack(side="right")
 
         self.submit_button = ttk.Button(
-            input_row, text="搜索", style="Primary.TButton", width=6,
-            command=self._submit_query
+            input_row,
+            text="搜索",
+            style="Primary.TButton",
+            width=6,
+            command=self._submit_query,
         )
         self.submit_button.pack(side="right", padx=(6, 0))
 
         # 快捷标签
         tags_row = tk.Frame(search_area, bg=self.palette["card"])
         tags_row.pack(fill="x", pady=(6, 0))
-        tk.Label(tags_row, text="快捷: ", bg=self.palette["card"],
-                 fg=self.palette["muted"], font=("Microsoft YaHei UI", 9)).pack(side="left")
+        tk.Label(
+            tags_row,
+            text="快捷: ",
+            bg=self.palette["card"],
+            fg=self.palette["muted"],
+            font=("Microsoft YaHei UI", 9),
+        ).pack(side="left")
         for symptom in self.symptom_options:
             btn = tk.Button(
-                tags_row, text=symptom,
-                relief="flat", bd=0,
-                bg=self.palette["tag_bg"], fg=self.palette["primary"],
-                activebackground=self.palette["tag_hover"], activeforeground="#ffffff",
-                cursor="hand2", font=("Microsoft YaHei UI", 9),
-                padx=10, pady=3,
+                tags_row,
+                text=symptom,
+                relief="flat",
+                bd=0,
+                bg=self.palette["tag_bg"],
+                fg=self.palette["primary"],
+                activebackground=self.palette["tag_hover"],
+                activeforeground="#ffffff",
+                cursor="hand2",
+                font=("Microsoft YaHei UI", 9),
+                padx=10,
+                pady=3,
                 command=lambda v=symptom: self._append_symptom(v),
             )
             btn.pack(side="left", padx=2)
@@ -321,12 +363,18 @@ class DesktopApp:
         status_line = tk.Frame(search_area, bg=self.palette["card"])
         status_line.pack(fill="x", pady=(4, 0))
         self.status_var = tk.StringVar(value="输入症状，搜索中医药知识")
-        tk.Label(status_line, textvariable=self.status_var,
-                 bg=self.palette["card"], fg=self.palette["primary"],
-                 font=("Microsoft YaHei UI", 10, "bold")).pack(side="left")
+        tk.Label(
+            status_line,
+            textvariable=self.status_var,
+            bg=self.palette["card"],
+            fg=self.palette["primary"],
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(side="left")
         self.progress = ttk.Progressbar(
-            status_line, mode="indeterminate", length=140,
-            style="green.Horizontal.TProgressbar"
+            status_line,
+            mode="indeterminate",
+            length=140,
+            style="green.Horizontal.TProgressbar",
         )
         self.progress.pack(side="right")
 
@@ -341,19 +389,29 @@ class DesktopApp:
         top_panel = ttk.Frame(result_tab, style="Card.TFrame", padding=10)
         top_panel.pack(fill="both", expand=True)
 
-        tk.Frame(top_panel, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 8))
-        tk.Label(top_panel, text="推荐结果",
-                 bg=self.palette["card"], fg=self.palette["primary"],
-                 font=("Microsoft YaHei UI", 13, "bold")).pack(anchor="w")
+        tk.Frame(top_panel, bg=self.palette["primary"], height=2).pack(
+            fill="x", pady=(0, 8)
+        )
+        tk.Label(
+            top_panel,
+            text="推荐结果",
+            bg=self.palette["card"],
+            fg=self.palette["primary"],
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(anchor="w")
 
         self.answer_text = tk.Text(
-            top_panel, wrap="word",
+            top_panel,
+            wrap="word",
             font=("Microsoft YaHei UI", 11),
-            relief="flat", bd=0,
+            relief="flat",
+            bd=0,
             background=self.palette["card"],
             foreground=self.palette["text"],
-            padx=6, pady=6,
-            height=10, state="disabled",
+            padx=6,
+            pady=6,
+            height=10,
+            state="disabled",
             highlightthickness=0,
         )
         self.answer_text.pack(fill="both", expand=True)
@@ -369,6 +427,7 @@ class DesktopApp:
         if HAS_KG:
             try:
                 from desktop.kg_view import KnowledgeGraphView
+
                 self._home_kg_view = KnowledgeGraphView(
                     self._home_kg_frame, standalone=False
                 )
@@ -376,14 +435,18 @@ class DesktopApp:
                 self._home_kg_view._show_placeholder()
             except Exception as exc:
                 import traceback
+
                 traceback.print_exc()
-                tk.Label(self._home_kg_frame, text=f"知识图谱加载失败: {exc}",
-                         fg="#c00").pack(expand=True)
+                tk.Label(
+                    self._home_kg_frame, text=f"知识图谱加载失败: {exc}", fg="#c00"
+                ).pack(expand=True)
 
         # ── 免责声明（底部） ──
         disclaimer_frame = tk.Frame(
-            container, bg=self.palette["warning_bg"],
-            highlightthickness=1, highlightbackground=self.palette["warning_border"]
+            container,
+            bg=self.palette["warning_bg"],
+            highlightthickness=1,
+            highlightbackground=self.palette["warning_border"],
         )
         disclaimer_frame.pack(fill="x", pady=(4, 0))
         tk.Label(
@@ -399,7 +462,8 @@ class DesktopApp:
         tk.Label(
             disclaimer_frame,
             textvariable=self.disclaimer_var,
-            justify="left", wraplength=1200,
+            justify="left",
+            wraplength=1200,
             bg=self.palette["warning_bg"],
             fg=self.palette["warning_fg"],
             font=("Microsoft YaHei UI", 9),
@@ -408,33 +472,42 @@ class DesktopApp:
     def _build_kg_tab(self) -> None:
         """独立知识图谱标签页"""
         if not HAS_KG:
-            tk.Label(self.kg_tab, text="知识图谱模块不可用",
-                     fg="#888", font=("Microsoft YaHei UI", 12)
-                     ).pack(expand=True)
+            tk.Label(
+                self.kg_tab,
+                text="知识图谱模块不可用",
+                fg="#888",
+                font=("Microsoft YaHei UI", 12),
+            ).pack(expand=True)
             return
 
         try:
             from desktop.kg_view import KnowledgeGraphView
+
             self._kg_tab_view = KnowledgeGraphView(self.kg_tab, standalone=True)
             self._kg_tab_view.pack(fill="both", expand=True)
             # 延迟加载，避免阻塞主界面初始化
             self.root.after(300, self._delayed_kg_overview)
         except Exception as exc:
             import traceback
+
             traceback.print_exc()
-            tk.Label(self.kg_tab, text=f"知识图谱加载失败: {exc}",
-                     fg="#c00", font=("Microsoft YaHei UI", 12)
-                     ).pack(expand=True)
+            tk.Label(
+                self.kg_tab,
+                text=f"知识图谱加载失败: {exc}",
+                fg="#c00",
+                font=("Microsoft YaHei UI", 12),
+            ).pack(expand=True)
 
     def _delayed_kg_overview(self):
         """延迟加载 KG 概览图"""
         try:
-            if hasattr(self, '_kg_tab_view') and self._kg_tab_view is not None:
+            if hasattr(self, "_kg_tab_view") and self._kg_tab_view is not None:
                 self._kg_tab_view._show_overview_graph()
         except Exception as exc:
             logger.exception("知识图谱概览加载失败")
-            tk.Label(self.kg_tab, text=f"知识图谱概览生成失败: {exc}",
-                     fg="#c00").pack(expand=True)
+            tk.Label(self.kg_tab, text=f"知识图谱概览生成失败: {exc}", fg="#c00").pack(
+                expand=True
+            )
 
     def _build_history_tab(self) -> None:
         wrapper = ttk.Frame(self.history_tab, style="App.TFrame")
@@ -443,21 +516,36 @@ class DesktopApp:
         toolbar = ttk.Frame(wrapper, style="Card.TFrame", padding=16)
         toolbar.pack(fill="x")
         # 卡片内阴影顶线
-        tk.Frame(toolbar, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 12))
-        ttk.Label(toolbar, text="查询历史", style="SectionTitle.TLabel").pack(side="left")
+        tk.Frame(toolbar, bg=self.palette["primary"], height=2).pack(
+            fill="x", pady=(0, 12)
+        )
+        ttk.Label(toolbar, text="查询历史", style="SectionTitle.TLabel").pack(
+            side="left"
+        )
         self.history_search_var = tk.StringVar()
-        entry = ttk.Entry(toolbar, textvariable=self.history_search_var, width=36, font=("Microsoft YaHei UI", 10))
+        entry = ttk.Entry(
+            toolbar,
+            textvariable=self.history_search_var,
+            width=36,
+            font=("Microsoft YaHei UI", 10),
+        )
         entry.pack(side="right", padx=(8, 0))
         entry.bind("<KeyRelease>", lambda _event: self._load_history())
-        ttk.Button(toolbar, text="导出全部", style="Secondary.TButton", command=self._export_history).pack(
-            side="right", padx=(8, 0)
-        )
-        ttk.Button(toolbar, text="清空历史", style="Secondary.TButton", command=self._clear_history).pack(
-            side="right", padx=(8, 0)
-        )
-        ttk.Button(toolbar, text="刷新", style="Secondary.TButton", command=self._load_history).pack(
-            side="right", padx=(8, 0)
-        )
+        ttk.Button(
+            toolbar,
+            text="导出全部",
+            style="Secondary.TButton",
+            command=self._export_history,
+        ).pack(side="right", padx=(8, 0))
+        ttk.Button(
+            toolbar,
+            text="清空历史",
+            style="Secondary.TButton",
+            command=self._clear_history,
+        ).pack(side="right", padx=(8, 0))
+        ttk.Button(
+            toolbar, text="刷新", style="Secondary.TButton", command=self._load_history
+        ).pack(side="right", padx=(8, 0))
 
         content = ttk.Panedwindow(wrapper, orient="horizontal")
         content.pack(fill="both", expand=True, pady=(14, 0))
@@ -467,8 +555,12 @@ class DesktopApp:
         content.add(detail_frame, weight=2)
 
         # 列表装饰顶线
-        tk.Frame(list_frame, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 12))
-        ttk.Label(list_frame, text="记录列表", style="SectionTitle.TLabel").pack(anchor="w")
+        tk.Frame(list_frame, bg=self.palette["primary"], height=2).pack(
+            fill="x", pady=(0, 12)
+        )
+        ttk.Label(list_frame, text="记录列表", style="SectionTitle.TLabel").pack(
+            anchor="w"
+        )
 
         tree_frame = ttk.Frame(list_frame, style="Card.TFrame")
         tree_frame.pack(fill="both", expand=True, pady=(8, 0))
@@ -492,13 +584,20 @@ class DesktopApp:
         self.history_tree.bind("<<TreeviewSelect>>", self._on_history_select)
 
         # 详情装饰顶线
-        tk.Frame(detail_frame, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 12))
+        tk.Frame(detail_frame, bg=self.palette["primary"], height=2).pack(
+            fill="x", pady=(0, 12)
+        )
 
         actions = ttk.Frame(detail_frame, style="Card.TFrame")
         actions.pack(fill="x")
-        ttk.Label(actions, text="记录详情", style="SectionTitle.TLabel").pack(side="left")
+        ttk.Label(actions, text="记录详情", style="SectionTitle.TLabel").pack(
+            side="left"
+        )
         ttk.Button(
-            actions, text="删除当前记录", style="Secondary.TButton", command=self._delete_selected_history
+            actions,
+            text="删除当前记录",
+            style="Secondary.TButton",
+            command=self._delete_selected_history,
         ).pack(side="right")
 
         self.history_detail = ScrolledText(
@@ -510,17 +609,24 @@ class DesktopApp:
         )
         self.history_detail.pack(fill="both", expand=True, pady=(12, 0))
         self._configure_output_text(self.history_detail)
-        self._set_text(self.history_detail, "选择左侧一条记录后，这里会显示完整问题、回答、症状和时间。")
+        self._set_text(
+            self.history_detail,
+            "选择左侧一条记录后，这里会显示完整问题、回答、症状和时间。",
+        )
 
     def _build_about_tab(self) -> None:
         frame = ttk.Frame(self.about_tab, style="Card.TFrame", padding=28)
         frame.pack(fill="both", expand=True)
 
         # 卡片内阴影顶线
-        tk.Frame(frame, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 16))
+        tk.Frame(frame, bg=self.palette["primary"], height=2).pack(
+            fill="x", pady=(0, 16)
+        )
 
         ttk.Label(frame, text="关于系统", style="SectionTitle.TLabel").pack(anchor="w")
-        ttk.Label(frame, text="中医药智能问答系统", style="SectionSubtitle.TLabel").pack(anchor="w", pady=(2, 18))
+        ttk.Label(
+            frame, text="中医药智能问答系统", style="SectionSubtitle.TLabel"
+        ).pack(anchor="w", pady=(2, 18))
 
         sections = [
             (
@@ -542,8 +648,12 @@ class DesktopApp:
         ]
         for title, body in sections:
             card = tk.Frame(
-                frame, bg="#f7faf7", highlightthickness=1, highlightbackground=self.palette["border"],
-                padx=16, pady=14,
+                frame,
+                bg="#f7faf7",
+                highlightthickness=1,
+                highlightbackground=self.palette["border"],
+                padx=16,
+                pady=14,
             )
             card.pack(fill="x", pady=(0, 10))
             tk.Label(
@@ -621,7 +731,8 @@ class DesktopApp:
 
     def _run_query(self, query: str) -> None:
         try:
-            from src.desktop.service import detect_symptoms_nlu
+            from desktop.service import detect_symptoms_nlu
+
             # NLU 优先，失败降级关键词
             detected = detect_symptoms_nlu(query)
             logger.info("检测到症状: %s", detected)
@@ -640,7 +751,7 @@ class DesktopApp:
                 status, payload = self.result_queue.get_nowait()
                 self._finish_query(status, payload)
         except queue.Empty:
-            pass
+            pass  # 队列为空是正常的轮询状态，无需处理
         self.root.after(120, self._poll_queue)
 
     def _finish_query(self, status: str, payload: Any) -> None:
@@ -652,18 +763,19 @@ class DesktopApp:
             messagebox.showerror("AI 查询失败", str(payload))
             return
 
-        data: Dict[str, Any] = payload
+        data: dict[str, Any] = payload
         answer = data.get("answer", "")
 
         self.status_var.set("✅ AI 模型回答完成")
         self.disclaimer_var.set(
-            data.get("disclaimer") or "本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。"
+            data.get("disclaimer")
+            or "本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。"
         )
         self._set_text(self.answer_text, answer)
         self._load_history()
 
         # ── 切换到推荐结果标签页 ──
-        if hasattr(self, '_home_notebook'):
+        if hasattr(self, "_home_notebook"):
             self._home_notebook.select(0)  # 0 = 推荐结果
 
         # ── 搜索后更新知识图谱标签页 ──
@@ -672,7 +784,11 @@ class DesktopApp:
                 knowledge = data.get("knowledge", {})
                 symptoms = knowledge.get("symptoms", [])
                 syndrome_info = knowledge.get("syndrome", {})
-                syndrome_name = syndrome_info.get("name") if isinstance(syndrome_info, dict) else None
+                syndrome_name = (
+                    syndrome_info.get("name")
+                    if isinstance(syndrome_info, dict)
+                    else None
+                )
                 herb_names = [h["name"] for h in knowledge.get("herbs", [])]
                 formula_names = [f["name"] for f in knowledge.get("formulas", [])]
 
@@ -687,11 +803,16 @@ class DesktopApp:
                 self.status_var.set(f"⚠ 知识图谱加载失败: {exc}")
 
     def _load_history(self) -> None:
-        search = self.history_search_var.get().strip().lower() if hasattr(self, "history_search_var") else ""
+        search = (
+            self.history_search_var.get().strip().lower()
+            if hasattr(self, "history_search_var")
+            else ""
+        )
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
 
         import difflib
+
         for record in self.service.list_history():
             haystack = f"{record.get('query', '')} {record.get('answer', '')}".lower()
             if search:
@@ -722,7 +843,11 @@ class DesktopApp:
             return
         self.selected_history_id = int(selection[0])
         record = next(
-            (item for item in self.service.list_history() if item.get("id") == self.selected_history_id),
+            (
+                item
+                for item in self.service.list_history()
+                if item.get("id") == self.selected_history_id
+            ),
             None,
         )
         if not record:
@@ -773,7 +898,11 @@ class DesktopApp:
             title="导出历史记录",
             defaultextension=".json",
             initialfile="tcm_history_export.json",
-            filetypes=[("JSON 文件", "*.json"), ("文本文件", "*.txt"), ("所有文件", "*.*")],
+            filetypes=[
+                ("JSON 文件", "*.json"),
+                ("文本文件", "*.txt"),
+                ("所有文件", "*.*"),
+            ],
         )
         if not file_path:
             return
@@ -781,17 +910,18 @@ class DesktopApp:
         path = Path(file_path)
         try:
             if path.suffix.lower() == ".txt":
-                lines: List[str] = []
+                lines: list[str] = []
                 for item in records:
                     lines.append(
                         f"时间：{item.get('timestamp', '')}\n"
                         f"问题：{item.get('query', '')}\n"
-                        f"回答：{item.get('answer', '')}\n"
-                        + "-" * 50
+                        f"回答：{item.get('answer', '')}\n" + "-" * 50
                     )
                 path.write_text("\n".join(lines), encoding="utf-8")
             else:
-                path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+                path.write_text(
+                    json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
             messagebox.showinfo("导出成功", f"历史记录已导出到：\n{path}")
         except Exception as exc:
             messagebox.showerror("导出失败", str(exc))

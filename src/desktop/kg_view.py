@@ -4,15 +4,17 @@
 嵌入 Tkinter 的交互式知识图谱查看器。
 使用 matplotlib 渲染，支持搜索、缩放和节点点击查看详情。
 """
+
 import logging
 import math
 import threading
 import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Dict, List, Optional
+from typing import Optional
 
 import matplotlib
+
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
@@ -22,21 +24,28 @@ logger = logging.getLogger(__name__)
 
 # ── 实体类型颜色方案 ──
 NODE_COLORS = {
-    "Symptom": "#e74c3c",       # 红 — 症状
-    "Syndrome": "#9b59b6",      # 紫 — 证型
-    "Herb": "#27ae60",          # 绿 — 药材
-    "Formula": "#2980b9",       # 蓝 — 方剂
-    "PatentMedicine": "#f39c12",# 橙 — 中成药
-    "FolkRemedy": "#95a5a6",    # 灰 — 验方
-    "Category": "#1abc9c",      # 青 — 分类
-    "Meridian": "#e67e22",      # 橙黄 — 归经
-    "Nature": "#e91e63",        # 粉 — 性
-    "Flavor": "#00bcd4",        # 青蓝 — 味
+    "Symptom": "#e74c3c",  # 红 — 症状
+    "Syndrome": "#9b59b6",  # 紫 — 证型
+    "Herb": "#27ae60",  # 绿 — 药材
+    "Formula": "#2980b9",  # 蓝 — 方剂
+    "PatentMedicine": "#f39c12",  # 橙 — 中成药
+    "FolkRemedy": "#95a5a6",  # 灰 — 验方
+    "Category": "#1abc9c",  # 青 — 分类
+    "Meridian": "#e67e22",  # 橙黄 — 归经
+    "Nature": "#e91e63",  # 粉 — 性
+    "Flavor": "#00bcd4",  # 青蓝 — 味
 }
 NODE_SIZE_MAP = {
-    "Symptom": 200, "Syndrome": 280, "Herb": 160,
-    "Formula": 220, "PatentMedicine": 180, "FolkRemedy": 140,
-    "Category": 120, "Meridian": 120, "Nature": 100, "Flavor": 100,
+    "Symptom": 200,
+    "Syndrome": 280,
+    "Herb": 160,
+    "Formula": 220,
+    "PatentMedicine": 180,
+    "FolkRemedy": 140,
+    "Category": 120,
+    "Meridian": 120,
+    "Nature": 100,
+    "Flavor": 100,
 }
 EDGE_COLORS = {
     "belongs_to": "#e74c3c",
@@ -56,6 +65,7 @@ EDGE_COLORS = {
 # ── 中文字体 ──
 _CN_FONT = None
 import os as _os
+
 _win_fonts = [
     _os.path.expandvars(r"%WINDIR%\Fonts\msyh.ttc"),
     _os.path.expandvars(r"%WINDIR%\Fonts\simhei.ttf"),
@@ -64,15 +74,19 @@ _win_fonts = [
 for _fp in _win_fonts:
     if _os.path.exists(_fp):
         from matplotlib.font_manager import FontProperties
+
         _CN_FONT = FontProperties(fname=_fp, size=11)
         # 同时设全局字体，消除 matplotlib 后端警告
         import matplotlib as _mpl
-        _mpl.rcParams["font.sans-serif"] = [_CN_FONT.get_name()] + _mpl.rcParams["font.sans-serif"]
+
+        _mpl.rcParams["font.sans-serif"] = [_CN_FONT.get_name()] + _mpl.rcParams[
+            "font.sans-serif"
+        ]
         _mpl.rcParams["axes.unicode_minus"] = False
         break
 
 
-KG_INSTANCE = None       # 全局缓存图谱实例
+KG_INSTANCE = None  # 全局缓存图谱实例
 _KG_LOCK = threading.Lock()  # 构建锁，防止并发构建
 
 
@@ -93,6 +107,7 @@ def get_kg(*, force_rebuild: bool = False):
 
         import os, sys, pickle
         from pathlib import Path
+
         project_root = Path(__file__).resolve().parents[2]
         if str(project_root / "src") not in sys.path:
             sys.path.insert(0, str(project_root / "src"))
@@ -106,9 +121,13 @@ def get_kg(*, force_rebuild: bool = False):
                 with open(cache_path, "rb") as f:
                     g = pickle.load(f)
                 from kg.query import KnowledgeGraphQuery
+
                 q = KnowledgeGraphQuery(g)
-                logger.info("知识图谱从缓存加载: %s 节点, %s 边",
-                             g.number_of_nodes(), g.number_of_edges())
+                logger.info(
+                    "知识图谱从缓存加载: %s 节点, %s 边",
+                    g.number_of_nodes(),
+                    g.number_of_edges(),
+                )
                 KG_INSTANCE = (g, q)
                 return KG_INSTANCE
             except Exception as exc:
@@ -116,6 +135,7 @@ def get_kg(*, force_rebuild: bool = False):
 
         # 缓存不存在或不可用 → 重新构建
         from kg.builder import TCMKnowledgeGraph
+
         logger.info("构建知识图谱（首次较慢，后续将使用缓存）...")
         kg = TCMKnowledgeGraph()
         kg.build()
@@ -125,8 +145,12 @@ def get_kg(*, force_rebuild: bool = False):
         try:
             with open(cache_path, "wb") as f:
                 pickle.dump(g, f, protocol=4)
-            logger.info("知识图谱已缓存到磁盘: %s (%d 节点, %d 边)",
-                         cache_path, g.number_of_nodes(), g.number_of_edges())
+            logger.info(
+                "知识图谱已缓存到磁盘: %s (%d 节点, %d 边)",
+                cache_path,
+                g.number_of_nodes(),
+                g.number_of_edges(),
+            )
         except Exception as exc:
             logger.warning("缓存写入失败: %s", exc)
         KG_INSTANCE = (g, q)
@@ -152,17 +176,17 @@ class KnowledgeGraphView(ttk.Frame):
         self._current_subgraph = None
         self._selected_node = None
         self._expand_history = []  # 展开历史栈
-        self._all_node_ids = []     # 当前子图节点列表
+        self._all_node_ids = []  # 当前子图节点列表
         # 缩放相关
-        self._base_x_range = None      # 基准 x 范围（用于计算缩放因子）
-        self._current_zoom = 1.0       # 当前缩放因子
+        self._base_x_range = None  # 基准 x 范围（用于计算缩放因子）
+        self._current_zoom = 1.0  # 当前缩放因子
         # 快速 Canvas 渲染（替代 matplotlib，极致性能）
-        self._tk_canvas = None          # tkinter Canvas 控件
-        self._canvas_items = {}         # {node_id: {"oval": id, "text": id}}
-        self._edge_items = []           # [line_id, ...]
+        self._tk_canvas = None  # tkinter Canvas 控件
+        self._canvas_items = {}  # {node_id: {"oval": id, "text": id}}
+        self._edge_items = []  # [line_id, ...]
         self._canvas_bg = None
         # Canvas 交互状态
-        self._drag_start = None         # 拖拽平移起始点
+        self._drag_start = None  # 拖拽平移起始点
         # 右侧知识面板
         self.knowledge_text = None
         # 异步加载相关
@@ -207,28 +231,45 @@ class KnowledgeGraphView(ttk.Frame):
             left_frame.pack(side="left", fill="both", expand=True)
 
             # 右侧知识面板
-            right_frame = tk.Frame(main_frame, bg="#fcfcfc", width=300,
-                                    highlightthickness=1, highlightbackground="#ddd")
+            right_frame = tk.Frame(
+                main_frame,
+                bg="#fcfcfc",
+                width=300,
+                highlightthickness=1,
+                highlightbackground="#ddd",
+            )
             right_frame.pack(side="right", fill="y")
             right_frame.pack_propagate(False)
 
             # 知识面板标题
-            tk.Label(right_frame, text="📖 知识详情",
-                     bg="#fcfcfc", fg="#256a4b",
-                     font=("Microsoft YaHei UI", 12, "bold"),
-                     anchor="w", padx=12, pady=10).pack(fill="x")
+            tk.Label(
+                right_frame,
+                text="📖 知识详情",
+                bg="#fcfcfc",
+                fg="#256a4b",
+                font=("Microsoft YaHei UI", 12, "bold"),
+                anchor="w",
+                padx=12,
+                pady=10,
+            ).pack(fill="x")
             tk.Frame(right_frame, bg="#ddd", height=1).pack(fill="x")
 
             self.detail_text = ScrolledText(
-                right_frame, wrap="word",
+                right_frame,
+                wrap="word",
                 font=("Microsoft YaHei UI", 10),
-                relief="flat", bd=0,
-                bg="#fcfcfc", fg="#333",
-                padx=12, pady=10,
+                relief="flat",
+                bd=0,
+                bg="#fcfcfc",
+                fg="#333",
+                padx=12,
+                pady=10,
                 highlightthickness=0,
             )
             self.detail_text.pack(fill="both", expand=True)
-            self.detail_text.insert("1.0", "💡 点击节点查看详情\n\n双击展开邻域 | 右键更多操作")
+            self.detail_text.insert(
+                "1.0", "💡 点击节点查看详情\n\n双击展开邻域 | 右键更多操作"
+            )
             self.detail_text.config(state="disabled")
 
             canvas_parent = left_frame
@@ -251,73 +292,117 @@ class KnowledgeGraphView(ttk.Frame):
 
         # 右键菜单
         self._context_menu = tk.Menu(self, tearoff=0)
-        self._context_menu.add_command(label="🔍 查看详情", command=self._ctx_show_detail)
+        self._context_menu.add_command(
+            label="🔍 查看详情", command=self._ctx_show_detail
+        )
         self._context_menu.add_command(label="⬆ 展开邻域", command=self._ctx_expand)
-        self._context_menu.add_command(label="🎯 设为中心", command=self._ctx_set_center)
+        self._context_menu.add_command(
+            label="🎯 设为中心", command=self._ctx_set_center
+        )
         self._context_menu.add_separator()
         self._context_menu.add_command(label="📋 复制名称", command=self._ctx_copy_name)
 
         if not self.standalone:
             # 嵌入模式：底部节点详情（用 ScrolledText 支持滚动）
-            detail_frame = tk.Frame(self, bg="#fcfcfc", padx=10, pady=6,
-                                    highlightthickness=1, highlightbackground="#ddd")
+            detail_frame = tk.Frame(
+                self,
+                bg="#fcfcfc",
+                padx=10,
+                pady=6,
+                highlightthickness=1,
+                highlightbackground="#ddd",
+            )
             detail_frame.pack(fill="x")
-            
+
             # 标题行
             detail_header = tk.Frame(detail_frame, bg="#fcfcfc")
             detail_header.pack(fill="x")
-            tk.Label(detail_header, text="📖 节点详情",
-                     bg="#fcfcfc", fg="#256a4b",
-                     font=("Microsoft YaHei UI", 10, "bold")).pack(side="left")
-            
-            self.detail_text = ScrolledText(detail_frame, height=8, wrap="word",
-                                        font=("Microsoft YaHei UI", 9),
-                                        relief="flat", bd=0,
-                                        bg="#fcfcfc", fg="#555",
-                                        highlightthickness=0)
+            tk.Label(
+                detail_header,
+                text="📖 节点详情",
+                bg="#fcfcfc",
+                fg="#256a4b",
+                font=("Microsoft YaHei UI", 10, "bold"),
+            ).pack(side="left")
+
+            self.detail_text = ScrolledText(
+                detail_frame,
+                height=8,
+                wrap="word",
+                font=("Microsoft YaHei UI", 9),
+                relief="flat",
+                bd=0,
+                bg="#fcfcfc",
+                fg="#555",
+                highlightthickness=0,
+            )
             self.detail_text.pack(fill="x", pady=(4, 0))
-            self.detail_text.insert("1.0", "💡 点击节点查看详情 | 双击展开邻域 | 右键更多操作")
+            self.detail_text.insert(
+                "1.0", "💡 点击节点查看详情 | 双击展开邻域 | 右键更多操作"
+            )
             self.detail_text.config(state="disabled")
 
     def _build_search_toolbar(self):
         """独立模式：完整搜索工具栏"""
         toolbar = tk.Frame(self, bg="#f0f0f0", padx=10, pady=6)
         toolbar.pack(fill="x")
-        
+
         # 第一行：搜索
         row1 = tk.Frame(toolbar, bg="#f0f0f0")
         row1.pack(fill="x")
-        tk.Label(row1, text="搜索:", bg="#f0f0f0",
-                 font=("Microsoft YaHei UI", 10)).pack(side="left")
+        tk.Label(
+            row1, text="搜索:", bg="#f0f0f0", font=("Microsoft YaHei UI", 10)
+        ).pack(side="left")
         self.search_var = tk.StringVar()
-        self.search_entry = tk.Entry(row1, textvariable=self.search_var,
-                                     width=30, font=("Microsoft YaHei UI", 10))
+        self.search_entry = tk.Entry(
+            row1,
+            textvariable=self.search_var,
+            width=30,
+            font=("Microsoft YaHei UI", 10),
+        )
         self.search_entry.pack(side="left", padx=(6, 6))
         self.search_entry.bind("<Return>", lambda e: self._do_search())
-        ttk.Button(row1, text="搜索", command=self._do_search).pack(side="left", padx=(0, 4))
-        ttk.Button(row1, text="重置", command=self._reset_view).pack(side="left", padx=(0, 4))
-        ttk.Button(row1, text="←后退", command=self._go_back).pack(side="left", padx=(4, 4))
-        
+        ttk.Button(row1, text="搜索", command=self._do_search).pack(
+            side="left", padx=(0, 4)
+        )
+        ttk.Button(row1, text="重置", command=self._reset_view).pack(
+            side="left", padx=(0, 4)
+        )
+        ttk.Button(row1, text="←后退", command=self._go_back).pack(
+            side="left", padx=(4, 4)
+        )
+
         # 布局切换
-        tk.Label(row1, text="布局:", bg="#f0f0f0",
-                 font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(12, 2))
+        tk.Label(row1, text="布局:", bg="#f0f0f0", font=("Microsoft YaHei UI", 9)).pack(
+            side="left", padx=(12, 2)
+        )
         self._layout_var = tk.StringVar(value="circular")
-        layout_menu = ttk.Combobox(row1, textvariable=self._layout_var,
-                                    values=["spring", "circular", "kamada_kawai", "shell"],
-                                    width=10, state="readonly", font=("Microsoft YaHei UI", 9))
+        layout_menu = ttk.Combobox(
+            row1,
+            textvariable=self._layout_var,
+            values=["spring", "circular", "kamada_kawai", "shell"],
+            width=10,
+            state="readonly",
+            font=("Microsoft YaHei UI", 9),
+        )
         layout_menu.pack(side="left")
         # 仅通过"应用布局"按钮触发重绘
-        ttk.Button(row1, text="应用布局", command=self._redraw_current, width=8).pack(side="left", padx=(4, 0))
-        
+        ttk.Button(row1, text="应用布局", command=self._redraw_current, width=8).pack(
+            side="left", padx=(4, 0)
+        )
+
         # 导出
-        ttk.Button(row1, text="📷 导出PNG", command=self._export_png, width=10).pack(side="right", padx=(0, 4))
+        ttk.Button(row1, text="📷 导出PNG", command=self._export_png, width=10).pack(
+            side="right", padx=(0, 4)
+        )
 
     def _build_edge_filter_bar(self):
         """边类型过滤（单选模式）"""
         bar = tk.Frame(self, bg="#f5f5f5", padx=10, pady=3)
         bar.pack(fill="x")
-        tk.Label(bar, text="显示:", bg="#f5f5f5",
-                 font=("Microsoft YaHei UI", 9)).pack(side="left")
+        tk.Label(bar, text="显示:", bg="#f5f5f5", font=("Microsoft YaHei UI", 9)).pack(
+            side="left"
+        )
 
         self._edge_mode = tk.StringVar(value="all")
         edge_modes = [
@@ -329,10 +414,15 @@ class KnowledgeGraphView(ttk.Frame):
             ("incompatible", "禁忌"),
         ]
         for mode_val, mode_label in edge_modes:
-            rb = tk.Radiobutton(bar, text=mode_label, variable=self._edge_mode,
-                                value=mode_val, bg="#f5f5f5",
-                                font=("Microsoft YaHei UI", 9),
-                                command=self._apply_edge_mode)
+            rb = tk.Radiobutton(
+                bar,
+                text=mode_label,
+                variable=self._edge_mode,
+                value=mode_val,
+                bg="#f5f5f5",
+                font=("Microsoft YaHei UI", 9),
+                command=self._apply_edge_mode,
+            )
             rb.pack(side="left", padx=4)
 
     def _apply_edge_mode(self):
@@ -346,8 +436,15 @@ class KnowledgeGraphView(ttk.Frame):
     def _get_active_edges(self) -> set:
         """根据当前模式返回要显示的边类型集合"""
         mode = self._edge_mode.get()
-        all_edges = {"belongs_to", "recommends_herb", "recommends_formula",
-                     "composes", "associated_with_herb", "incompatible_with", "co_occurs_with"}
+        all_edges = {
+            "belongs_to",
+            "recommends_herb",
+            "recommends_formula",
+            "composes",
+            "associated_with_herb",
+            "incompatible_with",
+            "co_occurs_with",
+        }
         if mode == "all":
             return all_edges
         elif mode == "syndrome":
@@ -366,15 +463,24 @@ class KnowledgeGraphView(ttk.Frame):
         """嵌入模式：紧凑搜索栏"""
         toolbar = tk.Frame(self, bg="#f5f5f5", padx=6, pady=4)
         toolbar.pack(fill="x")
-        tk.Label(toolbar, text="🔍", bg="#f5f5f5",
-                 font=("Microsoft YaHei UI", 10)).pack(side="left")
+        tk.Label(
+            toolbar, text="🔍", bg="#f5f5f5", font=("Microsoft YaHei UI", 10)
+        ).pack(side="left")
         self.search_var = tk.StringVar()
-        self.search_entry = tk.Entry(toolbar, textvariable=self.search_var,
-                                     width=20, font=("Microsoft YaHei UI", 9))
+        self.search_entry = tk.Entry(
+            toolbar,
+            textvariable=self.search_var,
+            width=20,
+            font=("Microsoft YaHei UI", 9),
+        )
         self.search_entry.pack(side="left", padx=(4, 4))
         self.search_entry.bind("<Return>", lambda e: self._do_search())
-        ttk.Button(toolbar, text="搜索", command=self._do_search, width=4).pack(side="left", padx=(0, 4))
-        ttk.Button(toolbar, text="重置", command=self._reset_view, width=4).pack(side="left")
+        ttk.Button(toolbar, text="搜索", command=self._do_search, width=4).pack(
+            side="left", padx=(0, 4)
+        )
+        ttk.Button(toolbar, text="重置", command=self._reset_view, width=4).pack(
+            side="left"
+        )
 
     # 节点类型变量（全开，不再提供多选 UI）
     type_vars: dict = {}
@@ -382,19 +488,25 @@ class KnowledgeGraphView(ttk.Frame):
     def _build_legend(self, parent):
         """图例（中文标签）"""
         legend_names = {
-            "Symptom": "症状", "Syndrome": "证型", "Herb": "药材",
-            "Formula": "方剂", "PatentMedicine": "中成药", "FolkRemedy": "验方",
+            "Symptom": "症状",
+            "Syndrome": "证型",
+            "Herb": "药材",
+            "Formula": "方剂",
+            "PatentMedicine": "中成药",
+            "FolkRemedy": "验方",
         }
         for tname, color in NODE_COLORS.items():
             if tname in {"Category", "Meridian", "Nature", "Flavor"}:
                 continue
             label = legend_names.get(tname, tname)
-            dot = tk.Canvas(parent, width=12, height=12, bg=parent["bg"],
-                            highlightthickness=0)
+            dot = tk.Canvas(
+                parent, width=12, height=12, bg=parent["bg"], highlightthickness=0
+            )
             dot.create_oval(1, 1, 11, 11, fill=color, outline="")
             dot.pack(side="left", padx=(8, 2))
-            tk.Label(parent, text=label, bg=parent["bg"],
-                     font=("Microsoft YaHei UI", 8)).pack(side="left")
+            tk.Label(
+                parent, text=label, bg=parent["bg"], font=("Microsoft YaHei UI", 8)
+            ).pack(side="left")
 
     # ═══════════════════════════════════════════
     # 图谱加载与绘制
@@ -463,13 +575,26 @@ class KnowledgeGraphView(ttk.Frame):
             self._tk_canvas.update_idletasks()
             cw = max(self._tk_canvas.winfo_width(), 800)
             ch = max(self._tk_canvas.winfo_height(), 600)
-            self._tk_canvas.create_text(cw/2, ch/2, text=text,
-                font=("Microsoft YaHei UI", 14), fill="#999", justify="center")
+            self._tk_canvas.create_text(
+                cw / 2,
+                ch / 2,
+                text=text,
+                font=("Microsoft YaHei UI", 14),
+                fill="#999",
+                justify="center",
+            )
         else:
             self.ax.clear()
-            self.ax.text(0.5, 0.5, text,
-                         transform=self.ax.transAxes, ha="center", va="center",
-                         fontsize=14, color="#999")
+            self.ax.text(
+                0.5,
+                0.5,
+                text,
+                transform=self.ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=14,
+                color="#999",
+            )
             self.ax.set_xlim(0, 1)
             self.ax.set_ylim(0, 1)
             self.ax.axis("off")
@@ -487,10 +612,7 @@ class KnowledgeGraphView(ttk.Frame):
         g = self.graph
 
         # 取度数最高的前 15 个方剂（按组成药材数排序）
-        formula_nodes = [
-            n for n in g.nodes
-            if g.nodes[n].get("type") == "Formula"
-        ]
+        formula_nodes = [n for n in g.nodes if g.nodes[n].get("type") == "Formula"]
         formula_nodes.sort(key=lambda n: g.degree(n), reverse=True)
         formula_nodes = formula_nodes[:15]
         if not formula_nodes:
@@ -503,14 +625,22 @@ class KnowledgeGraphView(ttk.Frame):
         for fn in formula_nodes:
             for pred in g.predecessors(fn):
                 if g.nodes[pred].get("type") == "Herb":
-                    if any(d.get("type") == "composes" for _, v, d in g.edges(pred, data=True) if v == fn):
+                    if any(
+                        d.get("type") == "composes"
+                        for _, v, d in g.edges(pred, data=True)
+                        if v == fn
+                    ):
                         all_nodes.add(pred)
 
         # 收集推荐这些方剂的证型
         for fn in formula_nodes:
             for pred in g.predecessors(fn):
                 if g.nodes[pred].get("type") == "Syndrome":
-                    if any(d.get("type") == "recommends_formula" for _, v, d in g.edges(pred, data=True) if v == fn):
+                    if any(
+                        d.get("type") == "recommends_formula"
+                        for _, v, d in g.edges(pred, data=True)
+                        if v == fn
+                    ):
                         all_nodes.add(pred)
 
         all_nodes = list(all_nodes)
@@ -529,13 +659,26 @@ class KnowledgeGraphView(ttk.Frame):
             self._tk_canvas.update_idletasks()
             cw = max(self._tk_canvas.winfo_width(), 800)
             ch = max(self._tk_canvas.winfo_height(), 600)
-            self._tk_canvas.create_text(cw/2, ch/2, text="正在加载知识图谱...\n请稍候",
-                font=("Microsoft YaHei UI", 16), fill="#999", justify="center")
+            self._tk_canvas.create_text(
+                cw / 2,
+                ch / 2,
+                text="正在加载知识图谱...\n请稍候",
+                font=("Microsoft YaHei UI", 16),
+                fill="#999",
+                justify="center",
+            )
         else:
             self.ax.clear()
-            self.ax.text(0.5, 0.5, "正在加载知识图谱...\n\n请稍候",
-                         transform=self.ax.transAxes, ha="center", va="center",
-                         fontsize=14, color="#999")
+            self.ax.text(
+                0.5,
+                0.5,
+                "正在加载知识图谱...\n\n请稍候",
+                transform=self.ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=14,
+                color="#999",
+            )
             self.ax.set_xlim(0, 1)
             self.ax.set_ylim(0, 1)
             self.ax.axis("off")
@@ -550,7 +693,9 @@ class KnowledgeGraphView(ttk.Frame):
 
         if self.graph is None:
             self._load_graph_async(
-                on_done=lambda: self._do_search() if self.search_var.get().strip() else None
+                on_done=lambda: (
+                    self._do_search() if self.search_var.get().strip() else None
+                )
             )
             return
 
@@ -565,7 +710,7 @@ class KnowledgeGraphView(ttk.Frame):
         center = matches[0]
         self._show_subgraph(center, matches[:10])
 
-    def _show_subgraph(self, center_node: str, extra_nodes: Optional[List[str]] = None):
+    def _show_subgraph(self, center_node: str, extra_nodes: Optional[list[str]] = None):
         """显示以 center_node 为中心的1跳子图（使用新绘制引擎）"""
         g = self.graph
         if g is None:
@@ -600,21 +745,33 @@ class KnowledgeGraphView(ttk.Frame):
         visited = {center_node}
         for _, nbr, ed in g.edges(center_node, data=True):
             etype = ed.get("type", "")
-            if etype in {"has_nature", "has_flavor", "has_meridian", "belongs_to_category",
-                         "co_occurs_with"}:
+            if etype in {
+                "has_nature",
+                "has_flavor",
+                "has_meridian",
+                "belongs_to_category",
+                "co_occurs_with",
+            }:
                 continue
             visited.add(nbr)
         for nbr, _, ed in g.in_edges(center_node, data=True):
             etype = ed.get("type", "")
-            if etype in {"has_nature", "has_flavor", "has_meridian", "belongs_to_category",
-                         "co_occurs_with"}:
+            if etype in {
+                "has_nature",
+                "has_flavor",
+                "has_meridian",
+                "belongs_to_category",
+                "co_occurs_with",
+            }:
                 continue
             visited.add(nbr)
 
-        logger.info("_show_subgraph_all: 中心节点 %s (%s), 共收集 %d 个节点",
-                     g.nodes[center_node].get("name", center_node),
-                     g.nodes[center_node].get("type", "?"),
-                     len(visited))
+        logger.info(
+            "_show_subgraph_all: 中心节点 %s (%s), 共收集 %d 个节点",
+            g.nodes[center_node].get("name", center_node),
+            g.nodes[center_node].get("type", "?"),
+            len(visited),
+        )
         # 统计节点类型分布
         type_counts = {}
         for n in visited:
@@ -623,7 +780,7 @@ class KnowledgeGraphView(ttk.Frame):
         logger.info("_show_subgraph_all: 节点类型分布: %s", type_counts)
 
         # 临时切换为圆形布局
-        if hasattr(self, '_layout_var'):
+        if hasattr(self, "_layout_var"):
             self._layout_var.set("circular")
         self._show_subgraph_given_nodes(center_node, list(visited))
 
@@ -649,10 +806,14 @@ class KnowledgeGraphView(ttk.Frame):
             node_id = self._hit_test_node(event.xdata, event.ydata)
             if node_id:
                 self._selected_node = node_id
-                self._context_menu.tk_popup(event.guiEvent.x_root if hasattr(event, 'guiEvent') else 
-                                            self.winfo_pointerx(),
-                                            event.guiEvent.y_root if hasattr(event, 'guiEvent') else
-                                            self.winfo_pointery())
+                self._context_menu.tk_popup(
+                    event.guiEvent.x_root
+                    if hasattr(event, "guiEvent")
+                    else self.winfo_pointerx(),
+                    event.guiEvent.y_root
+                    if hasattr(event, "guiEvent")
+                    else self.winfo_pointery(),
+                )
             return
         # 双击展开
         if event.button == 1 and event.dblclick:
@@ -674,11 +835,11 @@ class KnowledgeGraphView(ttk.Frame):
         self.ax.set_ylim(cy + (y_lo - cy) * scale, cy + (y_hi - cy) * scale)
 
         # 增量更新 + 防抖：50ms 内多次滚轮只触发一次重绘
-        if hasattr(self, '_zoom_timer'):
+        if hasattr(self, "_zoom_timer"):
             try:
                 self.winfo_toplevel().after_cancel(self._zoom_timer)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("取消缩放定时器失败: %s", exc)
         self._zoom_timer = self.winfo_toplevel().after(50, self._zoom_update)
 
     def _on_motion(self, event):
@@ -707,6 +868,7 @@ class KnowledgeGraphView(ttk.Frame):
             return None
         # 找最近节点（阈值30像素）
         import math
+
         best_dist = 30.0 / self.fig.dpi  # 屏幕像素转数据坐标
         best_node = None
         for n, (nx, ny) in pos.items():
@@ -766,8 +928,11 @@ class KnowledgeGraphView(ttk.Frame):
             logger.info("_go_back: 历史为空，无法后退")
             return
         prev = self._expand_history.pop()
-        logger.info("_go_back: 取出历史状态，剩余 %d，节点数 %d",
-                     len(self._expand_history), len(prev))
+        logger.info(
+            "_go_back: 取出历史状态，剩余 %d，节点数 %d",
+            len(self._expand_history),
+            len(prev),
+        )
         if self._current_subgraph is not None:
             current_nodes = set(self._current_subgraph.nodes)
             # 找上一个状态中不在当前子图中的节点作为中心
@@ -800,7 +965,9 @@ class KnowledgeGraphView(ttk.Frame):
 
     def _ctx_copy_name(self):
         if self._selected_node:
-            name = self.graph.nodes[self._selected_node].get("name", self._selected_node)
+            name = self.graph.nodes[self._selected_node].get(
+                "name", self._selected_node
+            )
             self.clipboard_clear()
             self.clipboard_append(name)
 
@@ -811,8 +978,10 @@ class KnowledgeGraphView(ttk.Frame):
         if self._current_subgraph is None:
             logger.info("_redraw_current: 无当前子图，跳过")
             return
-        logger.info("_redraw_current: 清除布局缓存，重绘 %s 个节点",
-                     self._current_subgraph.number_of_nodes())
+        logger.info(
+            "_redraw_current: 清除布局缓存，重绘 %s 个节点",
+            self._current_subgraph.number_of_nodes(),
+        )
         # 确保至少选择 2 种节点类型
         active_types = {t for t, v in self.type_vars.items() if v.get()}
         if len(active_types) < 2:
@@ -829,9 +998,10 @@ class KnowledgeGraphView(ttk.Frame):
     def _get_layout(self, sub, pos=None):
         """根据当前布局选择计算布局"""
         import networkx as nx
-        layout_name = getattr(self, '_layout_var', None)
+
+        layout_name = getattr(self, "_layout_var", None)
         layout_type = layout_name.get() if layout_name else "spring"
-        
+
         if layout_type == "spring":
             return nx.spring_layout(sub, k=0.8, iterations=50, seed=42, pos=pos)
         elif layout_type == "circular":
@@ -847,7 +1017,9 @@ class KnowledgeGraphView(ttk.Frame):
                 nodes = [n for n in sub.nodes if self.graph.nodes[n].get("type") == t]
                 if nodes:
                     groups.append(nodes)
-            return nx.shell_layout(sub, nlist=groups) if groups else nx.shell_layout(sub)
+            return (
+                nx.shell_layout(sub, nlist=groups) if groups else nx.shell_layout(sub)
+            )
         return nx.spring_layout(sub, k=0.8, iterations=50, seed=42)
 
     # ── 导出PNG ──
@@ -855,10 +1027,11 @@ class KnowledgeGraphView(ttk.Frame):
     def _export_png(self):
         """导出当前图谱为PNG"""
         from tkinter import filedialog
+
         path = filedialog.asksaveasfilename(
             defaultextension=".png",
             filetypes=[("PNG 图片", "*.png")],
-            title="导出知识图谱"
+            title="导出知识图谱",
         )
         if path:
             self._tk_canvas.postscript(file=path.replace(".png", ".eps"))
@@ -873,24 +1046,35 @@ class KnowledgeGraphView(ttk.Frame):
             self._load_graph()
             g = self.graph
 
-        logger.info("_show_subgraph_given_nodes: 输入 %d 个节点, 中心=%s",
-                     len(node_list), center)
+        logger.info(
+            "_show_subgraph_given_nodes: 输入 %d 个节点, 中心=%s",
+            len(node_list),
+            center,
+        )
 
         # 按类型过滤
-        active_types = {t for t, v in getattr(self, 'type_vars', {}).items() if v.get()}
+        active_types = {t for t, v in getattr(self, "type_vars", {}).items() if v.get()}
         logger.info("_show_subgraph_given_nodes: 活跃节点类型: %s", active_types)
         if active_types:
-            filtered = [n for n in node_list if g.nodes[n].get("type", "") in active_types]
+            filtered = [
+                n for n in node_list if g.nodes[n].get("type", "") in active_types
+            ]
             filtered_out = len(node_list) - len(filtered)
             if filtered_out > 0:
-                logger.info("_show_subgraph_given_nodes: 过滤掉 %d 个节点（类型不匹配）", filtered_out)
+                logger.info(
+                    "_show_subgraph_given_nodes: 过滤掉 %d 个节点（类型不匹配）",
+                    filtered_out,
+                )
             if center not in filtered:
                 filtered.append(center)
             node_list = filtered
 
         sub = g.subgraph(node_list).copy()
-        logger.info("_show_subgraph_given_nodes: 子图节点=%d, 边=%d",
-                     sub.number_of_nodes(), sub.number_of_edges())
+        logger.info(
+            "_show_subgraph_given_nodes: 子图节点=%d, 边=%d",
+            sub.number_of_nodes(),
+            sub.number_of_edges(),
+        )
 
         sub_key = frozenset(sub.nodes)
         if sub_key in self._pos_cache:
@@ -904,7 +1088,9 @@ class KnowledgeGraphView(ttk.Frame):
 
         # 使用快速 Canvas 渲染（如果有 tk_canvas）
         if self._tk_canvas is not None:
-            logger.info("渲染子图: %s 节点, %s 边", sub.number_of_nodes(), sub.number_of_edges())
+            logger.info(
+                "渲染子图: %s 节点, %s 边", sub.number_of_nodes(), sub.number_of_edges()
+            )
             try:
                 self._draw_canvas(sub, pos, center)
             except Exception as exc:
@@ -974,14 +1160,26 @@ class KnowledgeGraphView(ttk.Frame):
             lid = c.create_line(x1, y1, x2, y2, fill=ecolor, width=1, tags=("edge",))
             self._edge_items.append(lid)
 
-        logger.info("_draw_canvas: 边绘制: 总%d条, 已画%d条(按类型: %s), 过滤%d条(模式外)",
-                     len(list(sub.edges())), drawn, edge_type_count, filtered_edges)
+        logger.info(
+            "_draw_canvas: 边绘制: 总%d条, 已画%d条(按类型: %s), 过滤%d条(模式外)",
+            len(list(sub.edges())),
+            drawn,
+            edge_type_count,
+            filtered_edges,
+        )
 
         # 画节点
         NODE_COLORS_HEX = {
-            "Symptom": "#e74c3c", "Syndrome": "#9b59b6", "Herb": "#27ae60",
-            "Formula": "#2980b9", "PatentMedicine": "#f39c12", "FolkRemedy": "#95a5a6",
-            "Category": "#1abc9c", "Meridian": "#e67e22", "Nature": "#e91e63", "Flavor": "#00bcd4",
+            "Symptom": "#e74c3c",
+            "Syndrome": "#9b59b6",
+            "Herb": "#27ae60",
+            "Formula": "#2980b9",
+            "PatentMedicine": "#f39c12",
+            "FolkRemedy": "#95a5a6",
+            "Category": "#1abc9c",
+            "Meridian": "#e67e22",
+            "Nature": "#e91e63",
+            "Flavor": "#00bcd4",
         }
         NODE_RADIUS = {"Syndrome": 20, "Formula": 17, "Symptom": 14, "Herb": 12}
         for n in sub.nodes:
@@ -992,21 +1190,40 @@ class KnowledgeGraphView(ttk.Frame):
             color = NODE_COLORS_HEX.get(ntype, "#bdc3c7")
 
             # 阴影（偏移 1px）
-            c.create_oval(x - r + 1, y - r + 1, x + r + 1, y + r + 1,
-                          fill="#a0a0a0", outline="", tags=("shadow",))
+            c.create_oval(
+                x - r + 1,
+                y - r + 1,
+                x + r + 1,
+                y + r + 1,
+                fill="#a0a0a0",
+                outline="",
+                tags=("shadow",),
+            )
 
             # 底色圆
-            oid = c.create_oval(x - r, y - r, x + r, y + r,
-                          fill=color, outline="#ffffff", width=2,
-                          tags=(f"node_{n}", "node"))
+            oid = c.create_oval(
+                x - r,
+                y - r,
+                x + r,
+                y + r,
+                fill=color,
+                outline="#ffffff",
+                width=2,
+                tags=(f"node_{n}", "node"),
+            )
 
             # 标签（放在图形中心）
             label = name if len(name) <= 4 else name[:3] + "…"
             fs = max(8, min(12, int(r * 0.75)))
-            tid = c.create_text(x, y, text=label,
-                          font=("Microsoft YaHei UI", fs, "bold"),
-                          fill="#ffffff", anchor="center",
-                          tags=(f"label_{n}", "label"))
+            tid = c.create_text(
+                x,
+                y,
+                text=label,
+                font=("Microsoft YaHei UI", fs, "bold"),
+                fill="#ffffff",
+                anchor="center",
+                tags=(f"label_{n}", "label"),
+            )
             self._canvas_items[n] = {"oval": oid, "text": tid, "r": r, "color": color}
 
         # 高亮中心
@@ -1018,8 +1235,10 @@ class KnowledgeGraphView(ttk.Frame):
         self._cv_node_tags = {f"node_{n}": n for n in sub.nodes}
 
         # 更新详情面板
-        self._set_detail(f"📊 共 {sub.number_of_nodes()} 节点 / {sub.number_of_edges()} 条边\n"
-                         f"💡 拖拽平移 · 滚轮缩放 · 点击节点查看详情")
+        self._set_detail(
+            f"📊 共 {sub.number_of_nodes()} 节点 / {sub.number_of_edges()} 条边\n"
+            f"💡 拖拽平移 · 滚轮缩放 · 点击节点查看详情"
+        )
 
     def _cv_get_node(self, x, y):
         """命中测试：Canvas 坐标 → 节点 ID"""
@@ -1064,18 +1283,19 @@ class KnowledgeGraphView(ttk.Frame):
                 old_fs = self._tk_canvas.itemcget(tid, "font")
                 sz = int(str(old_fs).split()[-1])
                 new_sz = max(6, min(18, int(sz * factor)))
-                self._tk_canvas.itemconfig(tid,
-                    font=("Microsoft YaHei UI", new_sz, "bold"))
-            except Exception:
-                pass
+                self._tk_canvas.itemconfig(
+                    tid, font=("Microsoft YaHei UI", new_sz, "bold")
+                )
+            except Exception as exc:
+                logger.warning("Canvas 文字缩放失败: %s", exc)
 
     def _cv_on_motion(self, e):
         """悬停高亮：放大节点"""
         node = self._cv_get_node(e.x, e.y)
-        if node and node != getattr(self, '_cv_hover', None):
+        if node and node != getattr(self, "_cv_hover", None):
             self._cv_hover = node
             self._tk_canvas.config(cursor="hand2")
-        elif not node and getattr(self, '_cv_hover', None):
+        elif not node and getattr(self, "_cv_hover", None):
             self._cv_hover = None
             self._tk_canvas.config(cursor="")
 
@@ -1100,7 +1320,7 @@ class KnowledgeGraphView(ttk.Frame):
         self.ax.set_facecolor("#fcfcfc")
 
         # 边过滤
-        edge_vars = getattr(self, '_edge_vars', {})
+        edge_vars = getattr(self, "_edge_vars", {})
         active_edges = {t for t, v in edge_vars.items() if v.get()}
 
         # 画边（边的宽度也随缩放微调）
@@ -1111,13 +1331,18 @@ class KnowledgeGraphView(ttk.Frame):
                 continue
             edge_groups.setdefault(etype, []).append((u, v))
 
-        edge_width = max(0.5, 1.0 * zoom_factor ** 0.5)
+        edge_width = max(0.5, 1.0 * zoom_factor**0.5)
         for etype, edges in edge_groups.items():
             ecolor = EDGE_COLORS.get(etype, "#ccc")
             nx.draw_networkx_edges(
-                sub, pos, ax=self.ax,
-                edgelist=edges, edge_color=ecolor,
-                alpha=0.3, width=edge_width, style="-",
+                sub,
+                pos,
+                ax=self.ax,
+                edgelist=edges,
+                edge_color=ecolor,
+                alpha=0.3,
+                width=edge_width,
+                style="-",
             )
 
         # 按类型分组画节点
@@ -1131,10 +1356,15 @@ class KnowledgeGraphView(ttk.Frame):
             base_size = NODE_SIZE_MAP.get(ntype, 80)
             size = max(20, base_size * zoom_factor)
             nx.draw_networkx_nodes(
-                sub, pos, ax=self.ax,
-                nodelist=nodes, node_color=color,
-                node_size=size, alpha=0.9, edgecolors="#fff",
-                linewidths=min(3.0, 1.2 * zoom_factor ** 0.5),
+                sub,
+                pos,
+                ax=self.ax,
+                nodelist=nodes,
+                node_color=color,
+                node_size=size,
+                alpha=0.9,
+                edgecolors="#fff",
+                linewidths=min(3.0, 1.2 * zoom_factor**0.5),
             )
 
         # 标签（截断长名，使用中文字体，大小随缩放同步）
@@ -1147,8 +1377,7 @@ class KnowledgeGraphView(ttk.Frame):
             label = labels.get(n, "")
             if not label:
                 continue
-            kwargs = dict(fontsize=fontsize, color="#333",
-                          ha="center", va="center")
+            kwargs = dict(fontsize=fontsize, color="#333", ha="center", va="center")
             if _CN_FONT:
                 kwargs["fontproperties"] = _CN_FONT
             self.ax.text(x, y, label, **kwargs)
@@ -1159,26 +1388,34 @@ class KnowledgeGraphView(ttk.Frame):
             c_base = NODE_SIZE_MAP.get(ctype, 80)
             c_size = max(30, (c_base + 40) * zoom_factor)
             nx.draw_networkx_nodes(
-                sub, pos, ax=self.ax,
+                sub,
+                pos,
+                ax=self.ax,
                 nodelist=[center_node],
                 node_color=NODE_COLORS.get(ctype, "#ccc"),
                 node_size=c_size,
-                alpha=1.0, edgecolors="#2c3e50", linewidths=min(4, 3 * zoom_factor ** 0.5),
+                alpha=1.0,
+                edgecolors="#2c3e50",
+                linewidths=min(4, 3 * zoom_factor**0.5),
             )
 
         self.ax.axis("off")
         name = g.nodes[center_node].get("name", "") if center_node else ""
         n_nodes = sub.number_of_nodes()
         n_edges = sub.number_of_edges()
-        title_font = max(8, min(18, 11 * zoom_factor ** 0.6))
-        self.ax.set_title(f"「{name}」的关联网络 ({n_nodes}节点, {n_edges}边)",
-                          fontsize=title_font, color="#333", pad=12)
+        title_font = max(8, min(18, 11 * zoom_factor**0.6))
+        self.ax.set_title(
+            f"「{name}」的关联网络 ({n_nodes}节点, {n_edges}边)",
+            fontsize=title_font,
+            color="#333",
+            pad=12,
+        )
         self.canvas.draw_idle()
         # 保存 blit 背景（供后续增量缩放使用）
         try:
             self.canvas.blit(self.ax.bbox)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Canvas blit 保存背景失败: %s", exc)
 
     # ── 缩放增量更新（防抖 + blit） ──
     def _zoom_update(self):
@@ -1198,7 +1435,7 @@ class KnowledgeGraphView(ttk.Frame):
 
         # 更新已有 scatter 节点大小
         for coll in self.ax.collections:
-            if hasattr(coll, 'get_sizes') and hasattr(coll, 'set_sizes'):
+            if hasattr(coll, "get_sizes") and hasattr(coll, "set_sizes"):
                 old_sizes = coll.get_sizes()
                 if len(old_sizes) > 0:
                     # 从基准大小按比例缩放，保持相对尺寸
@@ -1210,10 +1447,12 @@ class KnowledgeGraphView(ttk.Frame):
         for txt in self.ax.texts:
             try:
                 old_size = txt.get_fontsize()
-                new_size = max(5, min(20, old_size / (self._current_zoom / max(zoom_factor, 0.1))))
+                new_size = max(
+                    5, min(20, old_size / (self._current_zoom / max(zoom_factor, 0.1)))
+                )
                 txt.set_fontsize(new_size)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("缩放更新 - 调整字体大小失败: %s", exc)
 
         # 更新边宽
         for line in self.ax.lines:
@@ -1221,8 +1460,8 @@ class KnowledgeGraphView(ttk.Frame):
                 old_w = line.get_linewidth()
                 new_w = max(0.5, old_w * (zoom_factor / max(self._current_zoom, 0.1)))
                 line.set_linewidth(new_w)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("缩放更新 - 调整线宽失败: %s", exc)
 
         # blit 渲染：只更新 axes 区域，比 draw_idle() 全画布重绘快得多
         try:
@@ -1272,8 +1511,8 @@ class KnowledgeGraphView(ttk.Frame):
         for artist in self.ax.collections[:]:
             try:
                 artist.remove()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("清除旧节点绘制失败: %s", exc)
 
         type_groups = {}
         for n in sub.nodes:
@@ -1284,22 +1523,34 @@ class KnowledgeGraphView(ttk.Frame):
             color = NODE_COLORS.get(ntype, "#bdc3c7")
             base = NODE_SIZE_MAP.get(ntype, 80)
             size = max(20, base * z)
-            ec, lw = ("#fff", min(3.0, 1.2 * z ** 0.5))
+            ec, lw = ("#fff", min(3.0, 1.2 * z**0.5))
             if node_id in nodes:
                 size = max(30, (base + 40) * z)
-                ec, lw = "#2c3e50", min(4, 3 * z ** 0.5)
+                ec, lw = "#2c3e50", min(4, 3 * z**0.5)
             nx.draw_networkx_nodes(
-                sub, pos, ax=self.ax,
-                nodelist=[n for n in nodes if n != node_id] if node_id in nodes else nodes,
-                node_color=color, node_size=max(20, base * z),
-                alpha=0.9, edgecolors="#fff", linewidths=min(3.0, 1.2 * z ** 0.5),
+                sub,
+                pos,
+                ax=self.ax,
+                nodelist=[n for n in nodes if n != node_id]
+                if node_id in nodes
+                else nodes,
+                node_color=color,
+                node_size=max(20, base * z),
+                alpha=0.9,
+                edgecolors="#fff",
+                linewidths=min(3.0, 1.2 * z**0.5),
             )
             if node_id in nodes:
                 nx.draw_networkx_nodes(
-                    sub, pos, ax=self.ax,
+                    sub,
+                    pos,
+                    ax=self.ax,
                     nodelist=[node_id],
-                    node_color=color, node_size=size,
-                    alpha=1.0, edgecolors=ec, linewidths=lw,
+                    node_color=color,
+                    node_size=size,
+                    alpha=1.0,
+                    edgecolors=ec,
+                    linewidths=lw,
                 )
 
         self.canvas.draw_idle()
@@ -1313,8 +1564,14 @@ class KnowledgeGraphView(ttk.Frame):
 
         lines = []
         # 标题行
-        type_icon = {"Symptom": "🟡", "Syndrome": "🟣", "Herb": "🟢", 
-                     "Formula": "🔵", "PatentMedicine": "🟠", "FolkRemedy": "⚪"}
+        type_icon = {
+            "Symptom": "🟡",
+            "Syndrome": "🟣",
+            "Herb": "🟢",
+            "Formula": "🔵",
+            "PatentMedicine": "🟠",
+            "FolkRemedy": "⚪",
+        }
         icon = type_icon.get(ntype, "⚪")
         lines.append(f"{icon} 【{ntype}】{name}")
         lines.append("─" * 40)
@@ -1322,17 +1579,23 @@ class KnowledgeGraphView(ttk.Frame):
         # 根据类型显示信息
         if ntype == "Herb":
             cat = data.get("category", "")
-            if cat: lines.append(f"  分类: {cat}")
+            if cat:
+                lines.append(f"  分类: {cat}")
             eff = data.get("efficacy", "")
-            if eff: lines.append(f"  功效: {eff}")
+            if eff:
+                lines.append(f"  功效: {eff}")
             ind = data.get("indications", "")
-            if ind: lines.append(f"  主治: {ind}")
+            if ind:
+                lines.append(f"  主治: {ind}")
             usage = data.get("usage", "")
-            if usage: lines.append(f"  用法: {usage}")
+            if usage:
+                lines.append(f"  用法: {usage}")
             cont = data.get("contraindications", "")
-            if cont: lines.append(f"  禁忌: {cont}")
+            if cont:
+                lines.append(f"  禁忌: {cont}")
             source = data.get("source", "")
-            if source: lines.append(f"  来源: {source}")
+            if source:
+                lines.append(f"  来源: {source}")
             # 获取性味归经详情
             for _, nbr, ed in g.edges(node_id, data=True):
                 et = ed.get("type", "")
@@ -1343,8 +1606,10 @@ class KnowledgeGraphView(ttk.Frame):
                     lines.append(f"  味: {nb_name}")
                 elif et == "has_meridian":
                     lines.append(f"  归经: {nb_name}")
-            if data.get("toxic"): lines.append("  ⚠️ 有毒药材")
-            if data.get("pregnancy_forbidden"): lines.append("  ⚠️ 孕妇禁用")
+            if data.get("toxic"):
+                lines.append("  ⚠️ 有毒药材")
+            if data.get("pregnancy_forbidden"):
+                lines.append("  ⚠️ 孕妇禁用")
             # 相反相畏
             incomp_set = set()
             for _, nbr, ed in g.edges(node_id, data=True):
@@ -1354,22 +1619,30 @@ class KnowledgeGraphView(ttk.Frame):
                 lines.append(f"  相反相畏: {'、'.join(sorted(incomp_set)[:6])}")
         elif ntype == "Formula":
             sb = data.get("source_book", "")
-            if sb: lines.append(f"  来源: {sb}")
+            if sb:
+                lines.append(f"  来源: {sb}")
             comp = data.get("composition", "")
-            if comp: lines.append(f"  组成: {comp[:80]}{'…' if len(comp)>80 else ''}")
+            if comp:
+                lines.append(f"  组成: {comp[:80]}{'…' if len(comp) > 80 else ''}")
             func = data.get("functions", "")
-            if func: lines.append(f"  功能: {func}")
+            if func:
+                lines.append(f"  功能: {func}")
             ind = data.get("indications", "")
-            if ind: lines.append(f"  主治: {ind}")
+            if ind:
+                lines.append(f"  主治: {ind}")
             usage = data.get("usage", "")
-            if usage: lines.append(f"  用法: {usage}")
+            if usage:
+                lines.append(f"  用法: {usage}")
             dos = data.get("dosage", "")
-            if dos: lines.append(f"  用量: {dos}")
+            if dos:
+                lines.append(f"  用量: {dos}")
         elif ntype == "Syndrome":
             desc = data.get("description", "")
-            if desc: lines.append(f"  证候: {desc}")
+            if desc:
+                lines.append(f"  证候: {desc}")
             treat = data.get("treatment", "")
-            if treat: lines.append(f"  治则: {treat}")
+            if treat:
+                lines.append(f"  治则: {treat}")
             # 推荐药材
             herbs = []
             for _, nbr, ed in g.edges(node_id, data=True):
@@ -1454,10 +1727,13 @@ class KnowledgeGraphView(ttk.Frame):
     # 外部接口：展示查询结果
     # ═══════════════════════════════════════════
 
-    def show_query_result(self, symptoms: List[str],
-                          syndrome_name: Optional[str] = None,
-                          herbs: Optional[List[str]] = None,
-                          formulas: Optional[List[str]] = None):
+    def show_query_result(
+        self,
+        symptoms: list[str],
+        syndrome_name: Optional[str] = None,
+        herbs: Optional[list[str]] = None,
+        formulas: Optional[list[str]] = None,
+    ):
         """
         根据查询结果展示相关子图（搜索后首页调用）
 

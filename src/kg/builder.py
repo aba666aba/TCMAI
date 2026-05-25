@@ -8,7 +8,7 @@ import logging
 import sqlite3
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Optional, Tuple
 
 import networkx as nx
 
@@ -52,6 +52,7 @@ class TCMKnowledgeGraph:
     def __init__(self, db_path: Optional[str] = None):
         self.graph = nx.MultiDiGraph()
         self.db_path = db_path or str(_PROJECT / "data" / "tcm_knowledge.db")
+        self._db = sqlite3.connect(self.db_path)
 
         # 计数
         self.stats = {
@@ -175,7 +176,7 @@ class TCMKnowledgeGraph:
 
     def _add_herbs(self):
         """从数据库添加药材节点"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._db
         cur = conn.cursor()
         cur.execute("SELECT id, name, category, efficacy, indications, "
                      "nature, flavor, meridian, usage, contraindications, source "
@@ -212,7 +213,6 @@ class TCMKnowledgeGraph:
                     type=self.BELONGS_CAT,
                     label="属于分类",
                 )
-        conn.close()
         self.stats["nodes"]["Herb"] = len(rows)
 
     # ═══════════════════════════════════════════
@@ -221,7 +221,7 @@ class TCMKnowledgeGraph:
 
     def _add_formulas(self):
         """从数据库添加方剂节点"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._db
         cur = conn.cursor()
         cur.execute("SELECT id, name, category, source_book, composition, "
                      "dosage, functions, indications, usage, modification "
@@ -243,7 +243,6 @@ class TCMKnowledgeGraph:
                 usage=usage or "",
                 modification=mod or "",
             )
-        conn.close()
         self.stats["nodes"]["Formula"] = len(rows)
 
     # ═══════════════════════════════════════════
@@ -251,7 +250,7 @@ class TCMKnowledgeGraph:
     # ═══════════════════════════════════════════
 
     def _add_patent_medicines(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = self._db
         cur = conn.cursor()
         cur.execute("SELECT id, name, category, composition, functions, "
                      "indications, usage_dosage, contraindications, source "
@@ -271,7 +270,6 @@ class TCMKnowledgeGraph:
                 usage=usage or "",
                 contraindications=contra or "",
             )
-        conn.close()
         self.stats["nodes"]["PatentMedicine"] = len(rows)
 
     # ═══════════════════════════════════════════
@@ -279,7 +277,7 @@ class TCMKnowledgeGraph:
     # ═══════════════════════════════════════════
 
     def _add_folk_remedies(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = self._db
         cur = conn.cursor()
         cur.execute("SELECT id, disease, remedy, ingredients, method, source "
                      "FROM folk_remedies ORDER BY id")
@@ -297,7 +295,6 @@ class TCMKnowledgeGraph:
                 method=method or "",
                 source=src or "",
             )
-        conn.close()
         self.stats["nodes"]["FolkRemedy"] = len(rows)
 
     # ═══════════════════════════════════════════
@@ -455,7 +452,7 @@ class TCMKnowledgeGraph:
         """添加十八反十九畏 和 毒性"""
         import sys
         sys.path.insert(0, str(_PROJECT / "src"))
-        from src.core.tcm_config import INCOMPATIBLE_HERBS, TOXIC_HERBS
+        from core.tcm_config import INCOMPATIBLE_HERBS, TOXIC_HERBS
 
         # 相反相畏（十八反 + 十九畏）
         for category_name in ["十八反", "十九畏"]:
@@ -521,7 +518,12 @@ class TCMKnowledgeGraph:
     # 工具方法
     # ═══════════════════════════════════════════
 
-    def node_count_by_type(self) -> Dict[str, int]:
+    def close(self):
+        """关闭数据库连接"""
+        if self._db:
+            self._db.close()
+
+    def node_count_by_type(self) -> dict[str, int]:
         """按类型统计节点数"""
         counts = {}
         for nid in self.graph.nodes:
@@ -529,7 +531,7 @@ class TCMKnowledgeGraph:
             counts[ntype] = counts.get(ntype, 0) + 1
         return counts
 
-    def edge_count_by_type(self) -> Dict[str, int]:
+    def edge_count_by_type(self) -> dict[str, int]:
         """按类型统计边数"""
         counts = {}
         for _, _, data in self.graph.edges(data=True):

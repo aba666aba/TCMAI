@@ -11,7 +11,7 @@
 
 import logging
 import re
-from typing import Optional, List, Dict, Any
+from typing import Optional, Any
 
 from core.tcm_config import (
     FALLBACK_HERBS,
@@ -34,7 +34,7 @@ SYNDROMES = SYNDROME_DEFINITIONS
 logger = logging.getLogger(__name__)
 
 
-def detect_symptoms(query: str) -> List[str]:
+def detect_symptoms(query: str) -> list[str]:
     """从用户问题中检测症状（使用正则避免子串误匹配）"""
     detected = []
 
@@ -48,7 +48,7 @@ def detect_symptoms(query: str) -> List[str]:
     return detected
 
 
-def search_herbs(keyword: str) -> List[Dict]:
+def search_herbs(keyword: str) -> list[dict]:
     """搜索药材"""
     results = []
     for herb in FALLBACK_HERBS:
@@ -61,7 +61,7 @@ def search_herbs(keyword: str) -> List[Dict]:
     return results[:5]
 
 
-def search_formulas(keyword: str) -> List[Dict]:
+def search_formulas(keyword: str) -> list[dict]:
     """搜索方剂"""
     results = []
     for formula in FALLBACK_FORMULAS:
@@ -74,7 +74,7 @@ def search_formulas(keyword: str) -> List[Dict]:
     return results[:5]
 
 
-def generate_fallback_answer(query: str, kb_result: Optional[Dict] = None) -> Dict[str, Any]:
+def generate_fallback_answer(query: str, kb_result: Optional[dict] = None) -> dict[str, Any]:
     """生成降级回答（基于规则的中医药知识回答）"""
     logger.info("使用降级方案生成回答：%s", query[:50])
 
@@ -155,7 +155,7 @@ def generate_fallback_answer(query: str, kb_result: Optional[Dict] = None) -> Di
     }
 
 
-def extract_keywords(query: str) -> List[str]:
+def extract_keywords(query: str) -> list[str]:
     """从查询中提取中医药领域关键词（使用正则匹配）"""
     keywords = []
     for keyword in TCM_KEYWORDS:
@@ -164,9 +164,9 @@ def extract_keywords(query: str) -> List[str]:
     return keywords
 
 
-def get_fallback_info(topic: str) -> Dict[str, Any]:
+def get_fallback_info(topic: str) -> dict[str, Any]:
     """获取特定主题的降级信息"""
-    result: Dict[str, Any] = {"found": False, "type": None, "data": None}
+    result: dict[str, Any] = {"found": False, "type": None, "data": None}
 
     for herb in FALLBACK_HERBS:
         if topic in herb["name"] or topic in herb.get("alias", ""):

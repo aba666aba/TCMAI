@@ -10,7 +10,7 @@
 """
 
 import logging
-from typing import List, Dict, Optional, Set
+from typing import Optional
 from dataclasses import dataclass
 
 from core.tcm_config import (
@@ -38,7 +38,7 @@ class SyndromeResult:
     """证型判断结果"""
     syndrome_name: str
     confidence: float
-    symptoms: List[str]
+    symptoms: list[str]
     explanation: str
     treatment: str = ""
     formula: str = ""
@@ -54,7 +54,7 @@ class SymptomAnalyzer:
         self.syndrome_definitions = dict(SYNDROME_DEFINITIONS)
         self.contraindications = dict(CONTRAINDICATION_RULES)
 
-    def analyze(self, symptoms: List[str]) -> Dict:
+    def analyze(self, symptoms: list[str]) -> dict:
         """分析症状"""
         if not symptoms:
             return {
@@ -76,7 +76,7 @@ class SymptomAnalyzer:
             "suggestions": suggestions,
         }
 
-    def _standardize_symptoms(self, symptoms: List[str]) -> List[SymptomInfo]:
+    def _standardize_symptoms(self, symptoms: list[str]) -> list[SymptomInfo]:
         """将日常用语映射到中医专业术语"""
         standardized = []
         for symptom in symptoms:
@@ -98,9 +98,9 @@ class SymptomAnalyzer:
         logger.info("症状标准化完成：%s", [s.standardized_name for s in standardized])
         return standardized
 
-    def _identify_syndromes(self, symptoms: List[SymptomInfo]) -> List[SyndromeResult]:
+    def _identify_syndromes(self, symptoms: list[SymptomInfo]) -> list[SyndromeResult]:
         """证型判断（基于 SYNDROME_DEFINITIONS 9 证型）"""
-        symptom_names: Set[str] = {s.standardized_name for s in symptoms}
+        symptom_names: set[str] = {s.standardized_name for s in symptoms}
         results = []
 
         for syndrome_name, definition in self.syndrome_definitions.items():
@@ -127,7 +127,7 @@ class SymptomAnalyzer:
         logger.info("证型判断完成：%s", [r.syndrome_name for r in results])
         return results
 
-    def _check_contraindications(self, syndromes: List[SyndromeResult]) -> List[str]:
+    def _check_contraindications(self, syndromes: list[SyndromeResult]) -> list[str]:
         """禁忌检查（基于 CONTRAINDICATION_RULES）"""
         warnings = []
         for syndrome in syndromes:
@@ -143,7 +143,7 @@ class SymptomAnalyzer:
         logger.info("禁忌检查完成：%s", warnings)
         return warnings
 
-    def _generate_suggestions(self, syndromes: List[SyndromeResult]) -> List[str]:
+    def _generate_suggestions(self, syndromes: list[SyndromeResult]) -> list[str]:
         """生成调理建议（基于9种证型）"""
         suggestions = []
 

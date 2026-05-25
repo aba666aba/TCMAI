@@ -17,7 +17,7 @@
 
 import sqlite3
 from pathlib import Path
-from typing import List, Tuple
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "tcm_knowledge.db"

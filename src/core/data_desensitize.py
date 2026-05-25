@@ -14,7 +14,7 @@
 import logging
 import re
 import hashlib
-from typing import Dict, Any, List, Optional, Set
+from typing import Any, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ── 中医药专用白名单 ──────────────────────────────
 # 这些词虽符合"姓氏+1~2汉字"的姓名格式，但实际是中药/方剂名称，
 # 脱敏姓名正则不应匹配它们。从 tcm_config 提取。
-TCM_WHITELIST: Set[str] = {
+TCM_WHITELIST: set[str] = {
     # 药材（常见易误伤）
     "黄芪", "黄连", "黄柏", "黄芩", "黄精", "黄药子", "黄藤", "黄荆子",
     "白术", "白芍", "白芷", "白前", "白蔹", "白及", "白茅根", "白附子",
@@ -101,7 +101,7 @@ class DataDesensitizer:
             'name': '张*',
         }
     
-    def desensitize(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def desensitize(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         对数据进行脱敏
         
@@ -225,7 +225,7 @@ class DataDesensitizer:
         hash_obj = hashlib.sha256(user_id.encode('utf-8'))
         return f"user_{hash_obj.hexdigest()[:8]}"
     
-    def sanitize_log(self, log_data: Dict[str, Any]) -> Dict[str, Any]:
+    def sanitize_log(self, log_data: dict[str, Any]) -> dict[str, Any]:
         """
         日志数据脱敏
         
@@ -268,7 +268,7 @@ class DataDesensitizer:
         
         return cleaned
     
-    def get_desensitize_stats(self, original: str, desensitized: str) -> Dict[str, int]:
+    def get_desensitize_stats(self, original: str, desensitized: str) -> dict[str, int]:
         """
         获取脱敏统计信息
         

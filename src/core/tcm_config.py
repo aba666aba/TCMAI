@@ -1114,9 +1114,7 @@ UI_QUICK_SYMPTOMS: list[str] = [
 # 共享养生建议（DRY：规则引擎/AI模式共用同一份逻辑）
 # ============================================================
 
-from typing import List, Set
-
-_HEALTH_TIPS: List[tuple] = [
+_HEALTH_TIPS: list[tuple] = [
     ({"失眠", "健忘", "心悸"}, "安神助眠：睡前可温水泡脚，避免咖啡浓茶，卧室保持安静昏暗"),
     ({"食欲不振", "腹泻", "腹胀", "胃痛"}, "健脾养胃：少食多餐，以小米粥、山药、南瓜等易消化食物为主"),
     ({"乏力", "疲倦", "气短", "面色萎黄"}, "补气养血：适当食用红枣、桂圆、瘦肉，避免过度劳累"),
@@ -1126,7 +1124,7 @@ _HEALTH_TIPS: List[tuple] = [
 ]
 
 
-def generate_health_tips(symptom_set: Set[str]) -> List[str]:
+def generate_health_tips(symptom_set: set[str]) -> list[str]:
     """根据症状集合生成养生建议
 
     Args:
@@ -1135,7 +1133,7 @@ def generate_health_tips(symptom_set: Set[str]) -> List[str]:
     Returns:
         匹配的养生建议列表（含通用建议）
     """
-    tips: List[str] = []
+    tips: list[str] = []
     for keywords, tip in _HEALTH_TIPS:
         if symptom_set & keywords:
             tips.append(f"• {tip}")

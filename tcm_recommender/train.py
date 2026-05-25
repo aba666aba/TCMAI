@@ -14,7 +14,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -45,7 +45,7 @@ FLAVOR_LIST = ["酸", "苦", "甘", "辛", "咸"]
 class TCMDataset(Dataset):
     """训练数据集"""
 
-    def __init__(self, data: Dict[str, np.ndarray], indices: Optional[np.ndarray] = None):
+    def __init__(self, data: dict[str, np.ndarray], indices: Optional[np.ndarray] = None):
         if indices is not None:
             self.symptom_ids = data["symptom_ids"][indices]
             self.symptom_mask = data["symptom_mask"][indices]
@@ -79,7 +79,7 @@ class TCMDataset(Dataset):
 # 药材特征构建
 # ═══════════════════════════════════════════════════════════
 
-def build_herb_features(pipeline: TCMDataPipeline) -> Dict[str, torch.Tensor]:
+def build_herb_features(pipeline: TCMDataPipeline) -> dict[str, torch.Tensor]:
     """构建药材的字符多热矩阵 + 类别/性味/归经索引"""
     nh = pipeline.num_herbs
 
@@ -161,7 +161,7 @@ def build_herb_features(pipeline: TCMDataPipeline) -> Dict[str, torch.Tensor]:
 # ═══════════════════════════════════════════════════════════
 
 class Trainer:
-    def __init__(self, model: TCMNet, herb_features: Dict[str, torch.Tensor],
+    def __init__(self, model: TCMNet, herb_features: dict[str, torch.Tensor],
                  device: torch.device, lr: float = 1e-4, weight_decay: float = 1e-5,
                  warmup_steps: int = 500, grad_accum: int = 1,
                  contrastive_weight: float = 0.2, label_smoothing: float = 0.05):
@@ -239,7 +239,7 @@ class Trainer:
         )
         return loss
 
-    def train_step(self, batch: dict) -> Dict[str, float]:
+    def train_step(self, batch: dict) -> dict[str, float]:
         self.model.train()
 
         sym_ids = batch["symptom_ids"].to(self.device)
@@ -317,7 +317,7 @@ class Trainer:
         self.global_step += 1
 
     @torch.no_grad()
-    def evaluate(self, dataloader: DataLoader) -> Dict[str, float]:
+    def evaluate(self, dataloader: DataLoader) -> dict[str, float]:
         self.model.eval()
         total_syn_loss = total_herb_loss = total_form_loss = 0.0
         syn_correct = syn_total = 0

@@ -23,7 +23,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -236,18 +236,18 @@ class TCMDataPipeline:
         self.rng = np.random.RandomState(RANDOM_SEED)
 
         # 核心数据
-        self.herbs: Dict[int, dict] = {}
-        self.formulas: Dict[int, dict] = {}
-        self.symptoms: List[str] = []
-        self.syndromes: Dict[str, dict] = {}
+        self.herbs: dict[int, dict] = {}
+        self.formulas: dict[int, dict] = {}
+        self.symptoms: list[str] = []
+        self.syndromes: dict[str, dict] = {}
 
         # 索引
-        self.symptom_to_idx: Dict[str, int] = {}
-        self.herb_name_to_db_id: Dict[str, int] = {}
-        self.herb_db_id_to_model_idx: Dict[int, int] = {}
-        self.formula_db_id_to_model_idx: Dict[int, int] = {}
-        self.model_idx_to_herb_db_id: Dict[int, int] = {}
-        self.model_idx_to_formula_db_id: Dict[int, int] = {}
+        self.symptom_to_idx: dict[str, int] = {}
+        self.herb_name_to_db_id: dict[str, int] = {}
+        self.herb_db_id_to_model_idx: dict[int, int] = {}
+        self.formula_db_id_to_model_idx: dict[int, int] = {}
+        self.model_idx_to_herb_db_id: dict[int, int] = {}
+        self.model_idx_to_formula_db_id: dict[int, int] = {}
 
         # 关联矩阵
         self.symptom_herb_matrix: Optional[np.ndarray] = None  # [num_s, num_h]
@@ -255,8 +255,8 @@ class TCMDataPipeline:
         self.herb_cooccurrence: Optional[np.ndarray] = None  # [num_h, num_h]
 
         # 药材元数据
-        self.herb_names: List[str] = []
-        self.herb_categories: List[str] = []
+        self.herb_names: list[str] = []
+        self.herb_categories: list[str] = []
         self.herb_toxic_mask: np.ndarray = np.array([])
 
         self.num_herbs = 0
@@ -638,7 +638,7 @@ class TCMDataPipeline:
         logger.info("  药材共现矩阵: %s×%s, %s 非零边",
                      self.num_herbs, self.num_herbs, int((cooc > 0).sum()))
 
-    def _parse_composition_indices(self, composition: str) -> List[int]:
+    def _parse_composition_indices(self, composition: str) -> list[int]:
         """增强版组成解析：处理更多真实格式（带炮制/剂量/子串回退）"""
         if not composition or not composition.strip():
             return []
@@ -700,16 +700,16 @@ class TCMDataPipeline:
     # 2. 样本生成
     # ═══════════════════════════════════════════════
 
-    def generate_samples(self, target_count: int = 500000) -> Dict[str, np.ndarray]:
+    def generate_samples(self, target_count: int = 500000) -> dict[str, np.ndarray]:
         """主生成函数：生成 target_count 个训练样本"""
         logger.info("=" * 50)
         logger.info("开始生成 %s 个训练样本...", target_count)
 
-        all_symptoms = []       # List[List[int]]
-        all_herb_labels = []    # List[np.ndarray]
-        all_formula_labels = [] # List[int]
-        all_syndrome_labels = []# List[int]
-        all_weights = []        # List[float]
+        all_symptoms = []       # list[list[int]]
+        all_herb_labels = []    # list[np.ndarray]
+        all_formula_labels = [] # list[int]
+        all_syndrome_labels = []# list[int]
+        all_weights = []        # list[float]
 
         # ── 阶段 1: 证型驱动 ──
         syn_samples = self._generate_syndrome_samples(target_count // 2)
@@ -1031,7 +1031,7 @@ class TCMDataPipeline:
 
         return syms, herbs, forms, syns, weights
 
-    def _infer_syndrome_from_symptoms(self, symptom_set: Set[int]) -> int:
+    def _infer_syndrome_from_symptoms(self, symptom_set: set[int]) -> int:
         """从症状集合推断最匹配证型（软分配：始终选匹配率最高的证型）"""
         best_id, best_score = 0, 0.0
         for syn_idx, (syn_name, syn_info) in enumerate(self.syndromes.items(), 1):
@@ -1118,7 +1118,7 @@ class TCMDataPipeline:
     # 4. 药材特征构建（持久化到 npz，避免 train.py 重复计算）
     # ═══════════════════════════════════════════════
 
-    def build_herb_features(self) -> Dict[str, np.ndarray]:
+    def build_herb_features(self) -> dict[str, np.ndarray]:
         """构建药材特征（与 train.py build_herb_features 输出格式一致）
 
         Returns:
@@ -1132,7 +1132,7 @@ class TCMDataPipeline:
         NATURE_LIST = ["寒", "热", "温", "凉", "平"]
         FLAVOR_LIST = ["酸", "苦", "甘", "辛", "咸"]
 
-        herb_texts: Dict[int, str] = {}
+        herb_texts: dict[int, str] = {}
         for model_idx in range(1, nh + 1):
             db_id = self.model_idx_to_herb_db_id[model_idx]
             herb = self.herbs[db_id]

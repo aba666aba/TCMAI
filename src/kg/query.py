@@ -8,7 +8,7 @@ TCM 知识图谱查询接口
 - 最短路径分析
 """
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Optional, Tuple
 
 import networkx as nx
 
@@ -26,7 +26,7 @@ class KnowledgeGraphQuery:
     # ═══════════════════════════════════════════
 
     def find_nodes(self, name: Optional[str] = None,
-                   node_type: Optional[str] = None) -> List[str]:
+                   node_type: Optional[str] = None) -> list[str]:
         """按名称和类型查找节点"""
         results = []
         for nid in self.graph.nodes:
@@ -53,7 +53,7 @@ class KnowledgeGraphQuery:
     # ═══════════════════════════════════════════
 
     def get_neighbors(self, node_id: str,
-                      edge_type: Optional[str] = None) -> List[Tuple[str, str, Dict]]:
+                      edge_type: Optional[str] = None) -> list[tuple[str, str, dict]]:
         """获取邻接节点（含边信息）"""
         results = []
         for _, neighbor, data in self.graph.edges(node_id, data=True):
@@ -115,7 +115,7 @@ class KnowledgeGraphQuery:
 
         return result
 
-    def syndrome_analysis(self, symptom_names: List[str]) -> Dict:
+    def syndrome_analysis(self, symptom_names: list[str]) -> dict:
         """
         多症状综合分析 → 推断证型
 
@@ -227,7 +227,7 @@ class KnowledgeGraphQuery:
 
         return profile
 
-    def shortest_path(self, node_a: str, node_b: str) -> Optional[List[str]]:
+    def shortest_path(self, node_a: str, node_b: str) -> Optional[list[str]]:
         """最短路径（基于无权图）"""
         if not self.graph.has_node(node_a) or not self.graph.has_node(node_b):
             return None
@@ -237,8 +237,8 @@ class KnowledgeGraphQuery:
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return None
 
-    def recommend_by_symptoms(self, symptoms: List[str],
-                              top_k: int = 10) -> Dict:
+    def recommend_by_symptoms(self, symptoms: list[str],
+                              top_k: int = 10) -> dict:
         """
         综合推荐：多症状 → 多证型 → 综合药材+方剂
         """

@@ -9,7 +9,7 @@
 """
 
 import logging
-from typing import List, Dict, Optional
+from typing import Optional
 
 from core.symptom_analysis import SymptomAnalyzer
 from core.tcm_config import (
@@ -27,7 +27,7 @@ class SymptomPipeline:
     def __init__(self):
         self.analyzer = SymptomAnalyzer()
 
-    def detect(self, query: str) -> List[str]:
+    def detect(self, query: str) -> list[str]:
         """从自然语言查询中检测症状（关键词匹配）"""
         detected = []
         query_lower = query.lower()
@@ -39,11 +39,11 @@ class SymptomPipeline:
                     break
         return detected
 
-    def analyze(self, symptoms: List[str]) -> Dict:
+    def analyze(self, symptoms: list[str]) -> dict:
         """分析症状列表：标准化 → 证型推断 → 禁忌检查"""
         return self.analyzer.analyze(symptoms)
 
-    def process(self, query: str, symptoms: Optional[List[str]] = None) -> Dict:
+    def process(self, query: str, symptoms: Optional[list[str]] = None) -> dict:
         """完整处理管线：检测 + 分析
 
         Returns:
@@ -56,7 +56,7 @@ class SymptomPipeline:
                 "info": {...},            # 症状详细信息
             }
         """
-        result: Dict = {
+        result: dict = {
             "detected": [],
             "standardized": [],
             "syndromes": [],

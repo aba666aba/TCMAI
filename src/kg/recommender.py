@@ -9,7 +9,7 @@ KG 增强推荐器
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -100,7 +100,7 @@ class KGEnhancedRecommender:
     # KG 推理
     # ═══════════════════════════════════════════
 
-    def _kg_reasoning(self, symptoms: List[str]) -> Dict:
+    def _kg_reasoning(self, symptoms: list[str]) -> dict:
         """
         KG 三条推理路径：
           A. 症状 → 证型 → 推荐药材/方剂（辨证论治路径）
@@ -290,8 +290,8 @@ class KGEnhancedRecommender:
     # 可解释性：推理路径
     # ═══════════════════════════════════════════
 
-    def _build_paths(self, symptoms: List[str],
-                     kg_result: Dict) -> List[Dict]:
+    def _build_paths(self, symptoms: list[str],
+                     kg_result: dict) -> list[dict]:
         """构建可读的推理路径"""
         paths = []
 
@@ -336,8 +336,8 @@ class KGEnhancedRecommender:
     # KG 洞察
     # ═══════════════════════════════════════════
 
-    def _kg_insights(self, herbs: List[Dict],
-                     formulas: List[Dict]) -> Dict:
+    def _kg_insights(self, herbs: list[dict],
+                     formulas: list[dict]) -> dict:
         """从 KG 提取额外洞察"""
         insights = {}
 
@@ -367,7 +367,7 @@ class KGEnhancedRecommender:
 
         return insights
 
-    def _kg_safety_check(self, herb_names: List[str]) -> List[str]:
+    def _kg_safety_check(self, herb_names: list[str]) -> list[str]:
         """KG 安全检查"""
         warnings = []
         for h in herb_names:

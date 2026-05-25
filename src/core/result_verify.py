@@ -10,7 +10,7 @@
 
 import logging
 import re
-from typing import Dict, Any, List, Optional
+from typing import Any, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class ResultVerifier:
             '金匮要略',
         ]
     
-    def verify(self, answer: str, knowledge: Dict = None) -> Dict[str, Any]:
+    def verify(self, answer: str, knowledge: dict = None) -> dict[str, Any]:
         """
         校验回答
         
@@ -205,7 +205,7 @@ class ResultVerifier:
         note = "\n\n---\n**合规提示**：以上内容基于中医药知识库生成，仅供参考学习。"
         return content + note
     
-    def validate_answer_completeness(self, answer: str) -> Dict[str, Any]:
+    def validate_answer_completeness(self, answer: str) -> dict[str, Any]:
         """
         验证回答完整性
         

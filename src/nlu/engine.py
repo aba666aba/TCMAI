@@ -2,7 +2,7 @@
 import json
 import logging
 import os
-from typing import List, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ class NLUEngine:
             self._pipe = None
             raise
 
-    def extract_symptoms(self, text: str) -> List[str]:
+    def extract_symptoms(self, text: str) -> list[str]:
         if self._pipe is None:
             logger.warning("NLU 模型未加载，尝试加载...")
             try:
@@ -151,7 +151,7 @@ class NLUEngine:
             logger.error("NLU 推理失败: %s", exc)
             return []
 
-    def _parse_json_output(self, raw: str) -> List[str]:
+    def _parse_json_output(self, raw: str) -> list[str]:
         raw = raw.strip()
         # 找 JSON 数组
         start = raw.find("[")
@@ -199,6 +199,6 @@ def get_engine() -> NLUEngine:
     return _engine
 
 
-def extract_symptoms(text: str) -> List[str]:
+def extract_symptoms(text: str) -> list[str]:
     engine = get_engine()
     return engine.extract_symptoms(text)

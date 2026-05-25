@@ -16,7 +16,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Optional, Tuple
 
 from core.tcm_config import (
     SYMPTOM_ALIAS_MAP,
@@ -68,7 +68,7 @@ class IntelligentSearch:
     # 第一步：查询扩展 (Query Expansion)
     # ================================================================
 
-    def expand_query(self, query: str) -> Dict[str, Any]:
+    def expand_query(self, query: str) -> dict[str, Any]:
         """对用户查询进行全面扩展
 
         返回:
@@ -80,7 +80,7 @@ class IntelligentSearch:
                 "direct_matches": [...],         # 直接命中的关键词
             }
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "original": query,
             "standardized_symptoms": [],
             "inferred_syndromes": [],
@@ -104,7 +104,7 @@ class IntelligentSearch:
         result["inferred_syndromes"] = syndrome_terms
 
         # --- 1.4 构建扩展搜索词列表 ---
-        expansion_terms: List[str] = [query]  # 保留原文
+        expansion_terms: list[str] = [query]  # 保留原文
 
         # 添加标准化的症状词
         expansion_terms.extend(all_symptoms)
@@ -139,8 +139,8 @@ class IntelligentSearch:
                     expansion_terms.append(herb_name)
 
         # 去重、去空、限制长度
-        seen: Set[str] = set()
-        unique_terms: List[str] = []
+        seen: set[str] = set()
+        unique_terms: list[str] = []
         for term in expansion_terms:
             term = term.strip()
             if term and term not in seen and len(term) <= 50:
@@ -151,9 +151,9 @@ class IntelligentSearch:
 
         return result
 
-    def _standardize_symptoms(self, query: str) -> List[str]:
+    def _standardize_symptoms(self, query: str) -> list[str]:
         """将口语化症状映射为标准症状术语"""
-        found: Set[str] = set()
+        found: set[str] = set()
         for alias, standard in SYMPTOM_ALIAS_MAP.items():
             if alias in query:
                 found.add(standard)
@@ -165,17 +165,17 @@ class IntelligentSearch:
 
         return sorted(found)
 
-    def _detect_standard_symptoms(self, query: str) -> List[str]:
+    def _detect_standard_symptoms(self, query: str) -> list[str]:
         """检测查询中是否包含标准症状名"""
-        found: List[str] = []
+        found: list[str] = []
         for symptom in SYMPTOM_LIST:
             if symptom in query and symptom not in found:
                 found.append(symptom)
         return found
 
-    def _expand_syndrome_synonyms(self, query: str) -> List[str]:
+    def _expand_syndrome_synonyms(self, query: str) -> list[str]:
         """检测查询中的证型同义表达"""
-        found: List[str] = []
+        found: list[str] = []
         for key, synonyms in TCM_SYNONYM_MAP.items():
             if key in query:
                 found.append(key)
@@ -193,8 +193,8 @@ class IntelligentSearch:
     # ================================================================
 
     def infer_formulas_from_symptoms(
-        self, symptoms: List[str]
-    ) -> List[Dict[str, Any]]:
+        self, symptoms: list[str]
+    ) -> list[dict[str, Any]]:
         """根据症状推断证型并推荐方剂
 
         Args:
@@ -203,8 +203,8 @@ class IntelligentSearch:
         Returns:
             [{"symptom": "失眠", "syndrome": "心脾两虚", "formula": "归脾汤", "description": "..."}, ...]
         """
-        results: List[Dict[str, Any]] = []
-        seen_formula_syndrome: Set[Tuple[str, str]] = set()
+        results: list[dict[str, Any]] = []
+        seen_formula_syndrome: set[tuple[str, str]] = set()
 
         for symptom in symptoms:
             formula_refs = SYMPTOM_TO_FORMULA_MAP.get(symptom, [])
@@ -223,10 +223,10 @@ class IntelligentSearch:
 
         return results
 
-    def infer_syndromes(self, symptoms: List[str]) -> List[Dict[str, Any]]:
+    def infer_syndromes(self, symptoms: list[str]) -> list[dict[str, Any]]:
         """根据症状推断可能证型（综合多症状推理）"""
         # 统计每个证型匹配了多少个症状
-        syndrome_scores: Dict[str, Dict[str, Any]] = {}
+        syndrome_scores: dict[str, dict[str, Any]] = {}
 
         for symptom in symptoms:
             formula_refs = SYMPTOM_TO_FORMULA_MAP.get(symptom, [])
@@ -265,7 +265,7 @@ class IntelligentSearch:
     # 第三步：多策略融合搜索
     # ================================================================
 
-    def search(self, query: str) -> Dict[str, Any]:
+    def search(self, query: str) -> dict[str, Any]:
         """智能搜索主入口
 
         整合多策略搜索结果：
@@ -308,8 +308,8 @@ class IntelligentSearch:
         return fused
 
     def _multi_strategy_search(
-        self, expanded: Dict[str, Any], original_query: str
-    ) -> Dict[str, Any]:
+        self, expanded: dict[str, Any], original_query: str
+    ) -> dict[str, Any]:
         """多策略并行搜索，合并所有来源的结果"""
 
         # 策略 1: 原文搜索
@@ -335,7 +335,7 @@ class IntelligentSearch:
             ("证型搜索", results_syndrome, 0.8),
         ])
 
-    def _kb_search(self, query: str) -> Dict[str, Any]:
+    def _kb_search(self, query: str) -> dict[str, Any]:
         """调用底层知识库搜索"""
         if self.kb is None:
             return {
@@ -352,10 +352,10 @@ class IntelligentSearch:
             }
 
     def _search_with_expansion(
-        self, terms: List[str]
-    ) -> Dict[str, List[Dict]]:
+        self, terms: list[str]
+    ) -> dict[str, list[dict]]:
         """用多个扩展词分别搜索，合并结果"""
-        merged: Dict[str, Dict[int, Dict]] = {
+        merged: dict[str, dict[int, dict]] = {
             "herbs": {},
             "formulas": {},
             "patent_medicines": {},
@@ -377,8 +377,8 @@ class IntelligentSearch:
         }
 
     def _search_with_symptoms(
-        self, symptoms: List[str]
-    ) -> Dict[str, List[Dict]]:
+        self, symptoms: list[str]
+    ) -> dict[str, list[dict]]:
         """用标准症状搜索功效和主治"""
         if not symptoms or self.kb is None:
             return {
@@ -386,7 +386,7 @@ class IntelligentSearch:
                 "patent_medicines": [], "folk_remedies": [],
             }
 
-        merged: Dict[str, Dict[int, Dict]] = {
+        merged: dict[str, dict[int, dict]] = {
             "herbs": {},
             "formulas": {},
             "patent_medicines": {},
@@ -407,8 +407,8 @@ class IntelligentSearch:
         }
 
     def _search_with_syndrome_terms(
-        self, syndrome_terms: List[str]
-    ) -> Dict[str, List[Dict]]:
+        self, syndrome_terms: list[str]
+    ) -> dict[str, list[dict]]:
         """用证型相关词搜索"""
         if not syndrome_terms or self.kb is None:
             return {
@@ -416,7 +416,7 @@ class IntelligentSearch:
                 "patent_medicines": [], "folk_remedies": [],
             }
 
-        merged: Dict[str, Dict[int, Dict]] = {
+        merged: dict[str, dict[int, dict]] = {
             "herbs": {},
             "formulas": {},
             "patent_medicines": {},
@@ -441,10 +441,10 @@ class IntelligentSearch:
     # ================================================================
 
     def _merge_raw_results(
-        self, strategy_results: List[Tuple[str, Dict, float]]
-    ) -> Dict[str, List[Dict]]:
+        self, strategy_results: list[tuple[str, dict, float]]
+    ) -> dict[str, list[dict]]:
         """合并多个策略的搜索结果"""
-        merged: Dict[str, Dict[int, Dict]] = {
+        merged: dict[str, dict[int, dict]] = {
             "herbs": {},
             "formulas": {},
             "patent_medicines": {},
@@ -466,11 +466,11 @@ class IntelligentSearch:
     def _fuse_and_rank(
         self,
         query: str,
-        symptoms: List[str],
-        inferred_formulas: List[Dict[str, Any]],
-        inferred_syndromes: List[Dict[str, Any]],
-        multi_results: Dict[str, List[Dict]],
-    ) -> Dict[str, Any]:
+        symptoms: list[str],
+        inferred_formulas: list[dict[str, Any]],
+        inferred_syndromes: list[dict[str, Any]],
+        multi_results: dict[str, list[dict]],
+    ) -> dict[str, Any]:
         """融合搜索结果并加入推荐方剂和推理路径"""
 
         # --- 标注方剂匹配来源 ---
@@ -479,8 +479,8 @@ class IntelligentSearch:
         db_herb_names = {h["name"] for h in multi_results.get("herbs", [])}
 
         # 来自证型推理的方剂（补充到结果中）
-        recommended_formulas: List[Dict[str, Any]] = []
-        seen_names: Set[str] = set()
+        recommended_formulas: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
 
         for ref in inferred_formulas:
             fname = ref["formula"]
@@ -496,7 +496,7 @@ class IntelligentSearch:
                     "in_db": fname in db_formula_names,
                 })
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "query": query,
             "symptoms": symptoms,
             "inferred_syndromes": inferred_syndromes,
@@ -513,9 +513,9 @@ class IntelligentSearch:
 
         return result
 
-    def _generate_summary(self, fused: Dict[str, Any]) -> str:
+    def _generate_summary(self, fused: dict[str, Any]) -> str:
         """生成搜索摘要"""
-        parts: List[str] = []
+        parts: list[str] = []
 
         symptoms = fused.get("symptoms", [])
         if symptoms:
@@ -549,7 +549,7 @@ class IntelligentSearch:
 
         return "；".join(parts) if parts else "未找到相关信息"
 
-    def _empty_result(self, query: str) -> Dict[str, Any]:
+    def _empty_result(self, query: str) -> dict[str, Any]:
         return {
             "query": query,
             "symptoms": [],
@@ -566,7 +566,7 @@ class IntelligentSearch:
     # 工具方法
     # ================================================================
 
-    def get_symptom_suggestions(self, partial: str, max_results: int = 8) -> List[str]:
+    def get_symptom_suggestions(self, partial: str, max_results: int = 8) -> list[str]:
         """根据输入前缀/部分文本提供症状建议（支持模糊匹配）
 
         Args:
@@ -580,7 +580,7 @@ class IntelligentSearch:
             return []
 
         partial = partial.strip()
-        suggestions: List[Tuple[str, int]] = []  # (symptom, score)
+        suggestions: list[tuple[str, int]] = []  # (symptom, score)
 
         for standard in SYMPTOM_LIST:
             # 精确子串匹配
@@ -595,8 +595,8 @@ class IntelligentSearch:
 
         # 排序去重
         suggestions.sort(key=lambda x: (-x[1], x[0]))
-        seen: Set[str] = set()
-        result: List[str] = []
+        seen: set[str] = set()
+        result: list[str] = []
         for s, _ in suggestions:
             if s not in seen:
                 seen.add(s)
@@ -606,13 +606,13 @@ class IntelligentSearch:
 
         return result
 
-    def get_formula_suggestions(self, partial: str, max_results: int = 8) -> List[str]:
+    def get_formula_suggestions(self, partial: str, max_results: int = 8) -> list[str]:
         """根据输入提供方剂建议"""
         if not partial or len(partial) < 1:
             return []
 
         partial = partial.strip()
-        suggestions: Set[str] = set()
+        suggestions: set[str] = set()
 
         for formula in FALLBACK_FORMULAS:
             if partial in formula["name"]:

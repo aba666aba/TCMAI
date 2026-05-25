@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
@@ -24,7 +24,7 @@ def _get_nlu_engine():
     global _nlu_engine
     if _nlu_engine is None:
         try:
-            from src.nlu import NLUEngine
+            from nlu import NLUEngine
             _nlu_engine = NLUEngine(device="cuda", use_4bit=True)
             _nlu_engine.load()
             logger.info("NLU 引擎已就绪")
@@ -33,7 +33,7 @@ def _get_nlu_engine():
             _nlu_engine = False
     return _nlu_engine if _nlu_engine is not False else None
 
-def detect_symptoms_nlu(text: str) -> List[str]:
+def detect_symptoms_nlu(text: str) -> list[str]:
     """NLU 优先检测症状，失败降级到关键词匹配
     （如果输入是证型名如"肾虚"，自动展开为对应症状集）
     """
@@ -74,12 +74,12 @@ def detect_symptoms_nlu(text: str) -> List[str]:
 logger = logging.getLogger(__name__)
 
 
-def format_intelligent_knowledge_for_display(intel_result: Dict[str, Any]) -> str:
+def format_intelligent_knowledge_for_display(intel_result: dict[str, Any]) -> str:
     """格式化智能搜索结果为展示文本"""
     if not intel_result:
         return "暂无相关知识"
 
-    parts: List[str] = []
+    parts: list[str] = []
 
     # 症状识别摘要
     symptoms = intel_result.get("symptoms", [])
@@ -177,7 +177,7 @@ class TCMDesktopService:
                     import fcntl
                     fcntl.lockf(handle, fcntl.LOCK_UN)
 
-    def _sanitize_history_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_history_item(self, item: dict[str, Any]) -> dict[str, Any]:
         symptoms = item.get("symptoms", [])
         if not isinstance(symptoms, list):
             symptoms = []
@@ -190,10 +190,10 @@ class TCMDesktopService:
             "mode": "ai" if item.get("mode") == "ai" else "fast",
         }
 
-    def _normalize_history(self, data: Any) -> List[Dict[str, Any]]:
+    def _normalize_history(self, data: Any) -> list[dict[str, Any]]:
         if not isinstance(data, list):
             return []
-        normalized: List[Dict[str, Any]] = []
+        normalized: list[dict[str, Any]] = []
         used_ids = set()
         next_id = 1
         for raw_item in data[: self.MAX_HISTORY_ITEMS]:
@@ -207,7 +207,7 @@ class TCMDesktopService:
             normalized.append(item)
         return normalized
 
-    def load_history(self) -> List[Dict[str, Any]]:
+    def load_history(self) -> list[dict[str, Any]]:
         if not self.history_file.exists():
             return []
         try:
@@ -288,9 +288,9 @@ class TCMDesktopService:
     def _format_recommendation_as_answer(
         self,
         query_text: str,
-        symptoms: List[str],
-        result: Dict[str, Any],
-        safety: Optional[Dict[str, Any]] = None,
+        symptoms: list[str],
+        result: dict[str, Any],
+        safety: Optional[dict[str, Any]] = None,
     ) -> str:
         """将推荐模型的结构化结果格式化为自然语言回答"""
         parts = []
@@ -340,7 +340,7 @@ class TCMDesktopService:
 
         return "\n".join(parts)
 
-    def query(self, query_text: str, symptoms: List[str]) -> Dict[str, Any]:
+    def query(self, query_text: str, symptoms: list[str]) -> dict[str, Any]:
         """纯 AI 模式查询（已移除快速模式降级）
 
         Args:
@@ -445,7 +445,7 @@ class TCMDesktopService:
         }
 
     def _run_recommender_inference(
-        self, recommender, query_text: str, symptoms: List[str]
+        self, recommender, query_text: str, symptoms: list[str]
     ):
         """在独立线程中运行推荐模型推理"""
         symptom_ids, valid, unknown = recommender.parse_symptoms(
@@ -457,7 +457,7 @@ class TCMDesktopService:
         result = recommender.recommend(symptom_ids, top_k_herb=10, top_k_formula=5)
 
         # 安全校验
-        safety_result: Optional[Dict[str, Any]] = None
+        safety_result: Optional[dict[str, Any]] = None
         try:
             herb_names = [h["name"] for h in result.get("herbs", [])[:10]]
             safety_result = recommender.check_safety(herb_names)
@@ -482,7 +482,7 @@ class TCMDesktopService:
         }
         return answer, knowledge
 
-    def _append_history(self, query_text: str, symptoms: List[str], answer: str, mode: str) -> Dict[str, Any]:
+    def _append_history(self, query_text: str, symptoms: list[str], answer: str, mode: str) -> dict[str, Any]:
         with self.history_lock:
             next_id = max((item.get("id", 0) for item in self.history_data), default=0) + 1
             record = self._sanitize_history_item(
@@ -500,14 +500,14 @@ class TCMDesktopService:
             self.save_history()
             return record
 
-    def list_history(self) -> List[Dict[str, Any]]:
+    def list_history(self) -> list[dict[str, Any]]:
         return sorted(
             self.history_data[-self.MAX_HISTORY_ITEMS :],
             key=lambda item: item.get("timestamp", ""),
             reverse=True,
         )
 
-    def export_history(self) -> List[Dict[str, Any]]:
+    def export_history(self) -> list[dict[str, Any]]:
         return self.list_history()
 
     def delete_history_item(self, item_id: int) -> bool:

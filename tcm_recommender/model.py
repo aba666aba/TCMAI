@@ -18,7 +18,7 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -400,7 +400,7 @@ class TCMNet(nn.Module):
     def predict(self, symptom_ids: torch.Tensor, symptom_mask: torch.Tensor,
                 herb_char: torch.Tensor, herb_cat: torch.Tensor,
                 herb_nat: torch.Tensor, herb_flv: torch.Tensor,
-                top_k: int = 10) -> Dict[str, list]:
+                top_k: int = 10) -> dict[str, list]:
         self.eval()
         syn_logits, herb_scores, formula_scores, _, _ = self.forward(
             symptom_ids, symptom_mask, herb_char, herb_cat, herb_nat, herb_flv)
