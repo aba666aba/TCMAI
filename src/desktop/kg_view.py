@@ -436,14 +436,20 @@ class KnowledgeGraphView(ttk.Frame):
 
     def _show_loading(self, text="正在加载..."):
         """显示加载提示"""
-        self.ax.clear()
-        self.ax.text(0.5, 0.5, text,
-                     transform=self.ax.transAxes, ha="center", va="center",
-                     fontsize=14, color="#999")
-        self.ax.set_xlim(0, 1)
-        self.ax.set_ylim(0, 1)
-        self.ax.axis("off")
-        self.canvas.draw_idle()
+        if self._tk_canvas:
+            self._tk_canvas.delete("all")
+            cw = max(self._tk_canvas.winfo_width(), 100)
+            ch = max(self._tk_canvas.winfo_height(), 100)
+            self._tk_canvas.create_text(cw/2, ch/2, text=text,
+                font=("Microsoft YaHei UI", 14), fill="#999", justify="center")
+        else:
+            self.ax.clear()
+            self.ax.text(0.5, 0.5, text,
+                         transform=self.ax.transAxes, ha="center", va="center",
+                         fontsize=14, color="#999")
+            self.ax.set_xlim(0, 1)
+            self.ax.set_ylim(0, 1)
+            self.ax.axis("off")
 
     def _show_overview_graph(self):
         """启动时展示图谱概览（仅显示证型+部分症状，轻量快速）"""
