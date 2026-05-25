@@ -168,6 +168,8 @@ class KnowledgeGraphView(ttk.Frame):
             "Herb": tk.BooleanVar(value=True),
             "Formula": tk.BooleanVar(value=True),
         }
+        # 边过滤模式（默认全部，嵌入模式也生效）
+        self._edge_mode = tk.StringVar(value="all")
 
     # ═══════════════════════════════════════════
     # UI 构建
@@ -1131,7 +1133,17 @@ class KnowledgeGraphView(ttk.Frame):
                 continue
             try:
                 old_fs = self._tk_canvas.itemcget(tid, "font")
-                sz = int(str(old_fs).split()[-1])
+                # Tkinter 返回类似 '{Microsoft YaHei UI} 10 bold'，取第二个字段
+                parts = str(old_fs).split()
+                sz = None
+                for p in parts:
+                    try:
+                        sz = int(p)
+                        break
+                    except ValueError:
+                        continue
+                if sz is None:
+                    continue
                 new_sz = max(6, min(18, int(sz * factor)))
                 self._tk_canvas.itemconfig(
                     tid, font=("Microsoft YaHei UI", new_sz, "bold")
