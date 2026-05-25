@@ -881,27 +881,51 @@ class KnowledgeGraphView(ttk.Frame):
             "Formula": "#2980b9", "PatentMedicine": "#f39c12", "FolkRemedy": "#95a5a6",
             "Category": "#1abc9c", "Meridian": "#e67e22", "Nature": "#e91e63", "Flavor": "#00bcd4",
         }
-        NODE_RADIUS = {"Syndrome": 18, "Formula": 15, "Symptom": 13, "Herb": 11}
+        NODE_LIGHT = {
+            "Symptom": "#f1948a", "Syndrome": "#c39bd3", "Herb": "#82e0aa",
+            "Formula": "#85c1e9", "PatentMedicine": "#f8c471",
+        }
+        NODE_RADIUS = {"Syndrome": 20, "Formula": 17, "Symptom": 14, "Herb": 12}
         for n in sub.nodes:
             ntype = g.nodes[n].get("type", "Unknown")
             name = g.nodes[n].get("name", "")
             x, y = to_canvas(pos[n][0], pos[n][1])
             r = NODE_RADIUS.get(ntype, 10)
             color = NODE_COLORS_HEX.get(ntype, "#bdc3c7")
-            # 节点圆
-            oid = c.create_oval(
-                x - r, y - r, x + r, y + r,
-                fill=color, outline="#fff", width=2,
-                tags=(f"node_{n}", "node")
-            )
-            # 标签
+            light = NODE_LIGHT.get(ntype, "#ddd")
+
+            # 阴影（偏移 2px）
+            c.create_oval(x - r + 2, y - r + 2, x + r + 2, y + r + 2,
+                          fill="#00000015", outline="", tags=("shadow",))
+
+            # 底色圆（深色边缘）
+            c.create_oval(x - r, y - r, x + r, y + r,
+                          fill=color, outline="#ffffffcc", width=2,
+                          tags=(f"node_{n}", "node"))
+
+            # 高光（左上 1/4 小圆，模拟立体感）
+            hl_r = r * 0.5
+            c.create_oval(x - r + 2, y - r + 2,
+                          x - r + 2 + hl_r * 2, y - r + 2 + hl_r * 2,
+                          fill="#ffffff60", outline="",
+                          tags=(f"node_{n}", "node"))
+
+            # 标签背景（半透明白色圆角矩形）
             label = name if len(name) <= 6 else name[:5] + "…"
             fs = max(7, min(13, int(11 * r / 12)))
-            tid = c.create_text(x, y + r + fs + 2, text=label,
-                                font=("Microsoft YaHei UI", fs),
-                                fill="#333", anchor="n",
-                                tags=(f"label_{n}", "label"))
-            self._canvas_items[n] = {"oval": oid, "text": tid, "r": r, "color": color}
+            tw = len(label) * fs * 0.55
+            th = fs + 4
+            lx, ly = x, y + r + th / 2 + 1
+            c.create_rectangle(lx - tw / 2 - 3, ly - th / 2,
+                               lx + tw / 2 + 3, ly + th / 2,
+                               fill="#ffffffdd", outline="#dddddddd", width=1,
+                               tags=(f"label_{n}", "label_bg"))
+            # 标签文字
+            c.create_text(lx, ly, text=label,
+                          font=("Microsoft YaHei UI", fs),
+                          fill="#333", anchor="center",
+                          tags=(f"label_{n}", "label"))
+            self._canvas_items[n] = {"oval": n, "text": n, "r": r, "color": color}
 
         # 高亮中心
         if center_node and center_node in self._canvas_items:
@@ -959,7 +983,7 @@ class KnowledgeGraphView(ttk.Frame):
                 pass
 
     def _cv_on_motion(self, e):
-        """悬停高亮"""
+        """悬停高亮：放大节点"""
         node = self._cv_get_node(e.x, e.y)
         if node and node != getattr(self, '_cv_hover', None):
             self._cv_hover = node
