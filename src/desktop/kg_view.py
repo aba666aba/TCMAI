@@ -776,8 +776,8 @@ class KnowledgeGraphView(ttk.Frame):
             title="导出知识图谱"
         )
         if path:
-            self.fig.savefig(path, dpi=150, bbox_inches="tight")
-            tk.messagebox.showinfo("导出成功", f"已保存到:\n{path}")
+            self._tk_canvas.postscript(file=path.replace(".png", ".eps"))
+            tk.messagebox.showinfo("导出", f"已保存到:\n{path.replace('.png', '.eps')}")
 
     # ── 子图绘制（改进版） ──
 
@@ -810,7 +810,12 @@ class KnowledgeGraphView(ttk.Frame):
 
         # 使用快速 Canvas 渲染（如果有 tk_canvas）
         if self._tk_canvas is not None:
-            self._draw_canvas(sub, pos, center)
+            logger.info("渲染子图: %s 节点, %s 边", sub.number_of_nodes(), sub.number_of_edges())
+            try:
+                self._draw_canvas(sub, pos, center)
+            except Exception as exc:
+                logger.exception("Canvas 渲染失败: %s", exc)
+                self._set_detail(f"❌ 渲染失败: {exc}")
         else:
             self._draw_subgraph(sub, pos, center)
         self._current_zoom = 1.0
@@ -820,6 +825,7 @@ class KnowledgeGraphView(ttk.Frame):
 
     def _draw_canvas(self, sub, pos, center_node=None):
         """用 Tkinter Canvas 绘制图谱（替代 matplotlib）"""
+        logger.info("_draw_canvas: 开始渲染 %s 个节点", sub.number_of_nodes())
         c = self._tk_canvas
         c.delete("all")
         self._canvas_items = {}
@@ -830,13 +836,14 @@ class KnowledgeGraphView(ttk.Frame):
         xs = [pos[n][0] for n in sub.nodes]
         ys = [pos[n][1] for n in sub.nodes]
         if not xs:
+            logger.warning("_draw_canvas: 无节点可渲染")
             return
         pad_x = max((max(xs) - min(xs)) * 0.3, 1)
         pad_y = max((max(ys) - min(ys)) * 0.3, 1)
         x_min, x_max = min(xs) - pad_x, max(xs) + pad_x
         y_min, y_max = min(ys) - pad_y, max(ys) + pad_y
-        cw = c.winfo_width() or 600
-        ch = c.winfo_height() or 400
+        cw = max(c.winfo_width(), 100)  # 至少 100 避免除零
+        ch = max(c.winfo_height(), 100)
         scale_x = cw / (x_max - x_min) if x_max > x_min else 1
         scale_y = ch / (y_max - y_min) if y_max > y_min else 1
         s = min(scale_x, scale_y) * 0.85
