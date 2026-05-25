@@ -599,18 +599,36 @@ class KnowledgeGraphView(ttk.Frame):
         # BFS 收集 2 跳内的关联节点（避免全图展开）
         visited = {center_node}
         queue = [(center_node, 0)]  # (node, depth)
+        center_type = g.nodes[center_node].get("type", "?")
+        center_name = g.nodes[center_node].get("name", center_node)
+        logger.info("_show_subgraph_all: 中心节点 %s (%s)", center_name, center_type)
+
         while queue:
             n, depth = queue.pop(0)
             if depth >= 2:
                 continue
             for _, nbr in g.edges(n):
                 if nbr not in visited:
+                    nt = g.nodes[nbr].get("type", "?")
+                    nn = g.nodes[nbr].get("name", nbr)
+                    logger.info("  depth=%d 出边: %s (%s)", depth + 1, nn, nt)
                     visited.add(nbr)
                     queue.append((nbr, depth + 1))
             for nbr, _ in g.in_edges(n):
                 if nbr not in visited:
+                    nt = g.nodes[nbr].get("type", "?")
+                    nn = g.nodes[nbr].get("name", nbr)
+                    logger.info("  depth=%d 入边: %s (%s)", depth + 1, nn, nt)
                     visited.add(nbr)
                     queue.append((nbr, depth + 1))
+
+        logger.info("_show_subgraph_all: 共收集 %d 个节点", len(visited))
+        # 统计节点类型分布
+        type_counts = {}
+        for n in visited:
+            t = g.nodes[n].get("type", "?")
+            type_counts[t] = type_counts.get(t, 0) + 1
+        logger.info("_show_subgraph_all: 节点类型分布: %s", type_counts)
 
         # 临时切换为圆形布局
         if hasattr(self, '_layout_var'):
@@ -863,16 +881,24 @@ class KnowledgeGraphView(ttk.Frame):
             self._load_graph()
             g = self.graph
 
+        logger.info("_show_subgraph_given_nodes: 输入 %d 个节点, 中心=%s",
+                     len(node_list), center)
+
         # 按类型过滤
         active_types = {t for t, v in getattr(self, 'type_vars', {}).items() if v.get()}
+        logger.info("_show_subgraph_given_nodes: 活跃节点类型: %s", active_types)
         if active_types:
             filtered = [n for n in node_list if g.nodes[n].get("type", "") in active_types]
+            filtered_out = len(node_list) - len(filtered)
+            if filtered_out > 0:
+                logger.info("_show_subgraph_given_nodes: 过滤掉 %d 个节点（类型不匹配）", filtered_out)
             if center not in filtered:
                 filtered.append(center)
             node_list = filtered
 
         sub = g.subgraph(node_list).copy()
-        sub_key = frozenset(sub.nodes)
+        logger.info("_show_subgraph_given_nodes: 子图节点=%d, 边=%d",
+                     sub.number_of_nodes(), sub.number_of_edges())
 
         if sub_key in self._pos_cache:
             pos = self._pos_cache[sub_key]
@@ -939,15 +965,24 @@ class KnowledgeGraphView(ttk.Frame):
 
         # 画边（按当前模式过滤）
         active_edges = self._get_active_edges()
+        drawn = 0
+        filtered_edges = 0
+        edge_type_count = {}
         for u, v, data in sub.edges(data=True):
             etype = data.get("type", "")
             if etype not in active_edges:
+                filtered_edges += 1
                 continue
+            edge_type_count[etype] = edge_type_count.get(etype, 0) + 1
+            drawn += 1
             ecolor = EDGE_COLORS.get(etype, "#ccc")
             x1, y1 = to_canvas(pos[u][0], pos[u][1])
             x2, y2 = to_canvas(pos[v][0], pos[v][1])
             lid = c.create_line(x1, y1, x2, y2, fill=ecolor, width=1, tags=("edge",))
             self._edge_items.append(lid)
+
+        logger.info("_draw_canvas: 边绘制: 总%d条, 已画%d条(按类型: %s), 过滤%d条(模式外)",
+                     len(list(sub.edges())), drawn, edge_type_count, filtered_edges)
 
         # 画节点
         NODE_COLORS_HEX = {
