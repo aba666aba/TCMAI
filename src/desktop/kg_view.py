@@ -971,20 +971,12 @@ class KnowledgeGraphView(ttk.Frame):
                           fill=color, outline="#ffffff", width=2,
                           tags=(f"node_{n}", "node"))
 
-            # 标签背景
-            label = name if len(name) <= 6 else name[:5] + "…"
-            fs = max(7, min(13, int(11 * r / 12)))
-            tw = len(label) * fs * 0.55
-            th = fs + 4
-            lx, ly = x, y + r + th / 2 + 1
-            c.create_rectangle(lx - tw / 2 - 3, ly - th / 2,
-                               lx + tw / 2 + 3, ly + th / 2,
-                               fill="#f5f5f5", outline="#e0e0e0", width=1,
-                               tags=(f"label_{n}", "label_bg"))
-            # 标签文字
-            c.create_text(lx, ly, text=label,
-                          font=("Microsoft YaHei UI", fs),
-                          fill="#333", anchor="center",
+            # 标签（放在图形中心，白色文字）
+            label = name if len(name) <= 4 else name[:3] + "…"
+            fs = max(8, min(12, int(r * 0.75)))
+            c.create_text(x, y, text=label,
+                          font=("Microsoft YaHei UI", fs, "bold"),
+                          fill="#ffffff", anchor="center",
                           tags=(f"label_{n}", "label"))
             self._canvas_items[n] = {"oval": n, "text": n, "r": r, "color": color}
 
