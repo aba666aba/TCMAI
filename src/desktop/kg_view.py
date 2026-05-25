@@ -895,25 +895,24 @@ class KnowledgeGraphView(ttk.Frame):
             x, y = to_canvas(pos[n][0], pos[n][1])
             r = NODE_RADIUS.get(ntype, 10)
             color = NODE_COLORS_HEX.get(ntype, "#bdc3c7")
-            light = NODE_LIGHT.get(ntype, "#ddd")
 
-            # 阴影（偏移 2px）
+            # 阴影（偏移 2px，Tkinter 不支持 alpha，用浅灰模拟）
             c.create_oval(x - r + 2, y - r + 2, x + r + 2, y + r + 2,
-                          fill="#00000015", outline="", tags=("shadow",))
+                          fill="#d0d0d0", outline="", tags=("shadow",))
 
-            # 底色圆（深色边缘）
+            # 底色圆
             c.create_oval(x - r, y - r, x + r, y + r,
-                          fill=color, outline="#ffffffcc", width=2,
+                          fill=color, outline="#ffffff", width=2,
                           tags=(f"node_{n}", "node"))
 
-            # 高光（左上 1/4 小圆，模拟立体感）
+            # 高光
             hl_r = r * 0.5
             c.create_oval(x - r + 2, y - r + 2,
                           x - r + 2 + hl_r * 2, y - r + 2 + hl_r * 2,
-                          fill="#ffffff60", outline="",
+                          fill="#e8e8e8", outline="",
                           tags=(f"node_{n}", "node"))
 
-            # 标签背景（半透明白色圆角矩形）
+            # 标签背景
             label = name if len(name) <= 6 else name[:5] + "…"
             fs = max(7, min(13, int(11 * r / 12)))
             tw = len(label) * fs * 0.55
@@ -921,7 +920,7 @@ class KnowledgeGraphView(ttk.Frame):
             lx, ly = x, y + r + th / 2 + 1
             c.create_rectangle(lx - tw / 2 - 3, ly - th / 2,
                                lx + tw / 2 + 3, ly + th / 2,
-                               fill="#ffffffdd", outline="#dddddddd", width=1,
+                               fill="#f5f5f5", outline="#e0e0e0", width=1,
                                tags=(f"label_{n}", "label_bg"))
             # 标签文字
             c.create_text(lx, ly, text=label,
