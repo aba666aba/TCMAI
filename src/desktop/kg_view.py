@@ -157,6 +157,10 @@ class KnowledgeGraphView(ttk.Frame):
         # 缩放相关
         self._base_x_range = None      # 基准 x 范围（用于计算缩放因子）
         self._current_zoom = 1.0       # 当前缩放因子
+        # 缓存绘制对象（用于缩放增量更新，避免全量重绘）
+        self._cached_scatters = []     # [(scatter, ntype, base_size), ...]
+        self._cached_texts = []        # [text_artist, ...]
+        self._cached_edges = []        # [linecollection, ...]
         # 右侧知识面板
         self.knowledge_text = None
         # 异步加载相关
@@ -241,6 +245,8 @@ class KnowledgeGraphView(ttk.Frame):
         self.canvas.mpl_connect("pick_event", self._on_pick)
         self.canvas.mpl_connect("button_press_event", self._on_click)
         self.canvas.mpl_connect("scroll_event", self._on_mouse_wheel)
+        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self._motion_node_id = None  # 当前悬停节点
 
         # 右键菜单
         self._context_menu = tk.Menu(self, tearoff=0)
@@ -251,16 +257,24 @@ class KnowledgeGraphView(ttk.Frame):
         self._context_menu.add_command(label="📋 复制名称", command=self._ctx_copy_name)
 
         if not self.standalone:
-            # 嵌入模式：底部节点详情
+            # 嵌入模式：底部节点详情（用 ScrolledText 支持滚动）
             detail_frame = tk.Frame(self, bg="#fcfcfc", padx=10, pady=6,
                                     highlightthickness=1, highlightbackground="#ddd")
             detail_frame.pack(fill="x")
-            self.detail_text = tk.Text(detail_frame, height=5, wrap="word",
+            
+            # 标题行
+            detail_header = tk.Frame(detail_frame, bg="#fcfcfc")
+            detail_header.pack(fill="x")
+            tk.Label(detail_header, text="📖 节点详情",
+                     bg="#fcfcfc", fg="#256a4b",
+                     font=("Microsoft YaHei UI", 10, "bold")).pack(side="left")
+            
+            self.detail_text = ScrolledText(detail_frame, height=8, wrap="word",
                                         font=("Microsoft YaHei UI", 9),
                                         relief="flat", bd=0,
                                         bg="#fcfcfc", fg="#555",
                                         highlightthickness=0)
-            self.detail_text.pack(fill="x")
+            self.detail_text.pack(fill="x", pady=(4, 0))
             self.detail_text.insert("1.0", "💡 点击节点查看详情 | 双击展开邻域 | 右键更多操作")
             self.detail_text.config(state="disabled")
 
@@ -586,8 +600,23 @@ class KnowledgeGraphView(ttk.Frame):
         self.ax.set_xlim(cx + (x_lo - cx) * scale, cx + (x_hi - cx) * scale)
         self.ax.set_ylim(cy + (y_lo - cy) * scale, cy + (y_hi - cy) * scale)
 
-        # 同步缩放节点大小和字体
-        self._zoom_redraw()
+        # 增量更新：调整已有节点大小和文本，不全量重绘
+        self._zoom_update()
+
+    def _on_motion(self, event):
+        """鼠标移动：悬停节点时改变光标形状"""
+        if event.inaxes != self.ax:
+            if self._motion_node_id is not None:
+                self._motion_node_id = None
+                self.config(cursor="")
+            return
+        node = self._hit_test_node(event.xdata, event.ydata)
+        if node is not None and node != self._motion_node_id:
+            self._motion_node_id = node
+            self.config(cursor="hand2")
+        elif node is None and self._motion_node_id is not None:
+            self._motion_node_id = None
+            self.config(cursor="")
 
     def _hit_test_node(self, x, y):
         """命中测试：给定坐标返回节点ID"""
@@ -785,6 +814,9 @@ class KnowledgeGraphView(ttk.Frame):
             zoom_factor: 当前缩放比例（基准为1.0），用于同步缩放节点和字体。
         """
         g = self.graph
+        self._cached_scatters = []
+        self._cached_texts = []
+        self._cached_edges = []
         self.ax.clear()
         self.ax.set_facecolor("#fcfcfc")
 
@@ -866,13 +898,12 @@ class KnowledgeGraphView(ttk.Frame):
 
     # ── 缩放同步重绘 ──
 
-    def _zoom_redraw(self):
-        """缩放后重绘，保持布局缓存不变，仅调整节点/字体大小"""
+    def _zoom_update(self):
+        """缩放增量更新：调整已有节点/字体大小，不全量重绘"""
         if self._current_subgraph is None:
             self.canvas.draw_idle()
             return
 
-        # 保存当前视图范围
         x_lo, x_hi = self.ax.get_xlim()
         y_lo, y_hi = self.ax.get_ylim()
         current_x_range = x_hi - x_lo
@@ -882,20 +913,34 @@ class KnowledgeGraphView(ttk.Frame):
             zoom_factor = self._base_x_range / current_x_range
         self._current_zoom = zoom_factor
 
-        # 获取缓存布局
-        sub_key = frozenset(self._current_subgraph.nodes)
-        pos = self._pos_cache.get(sub_key)
-        if pos is None:
-            self.canvas.draw_idle()
-            return
+        # 更新已有 scatter 节点大小
+        for coll in self.ax.collections:
+            if hasattr(coll, 'get_sizes') and hasattr(coll, 'set_sizes'):
+                old_sizes = coll.get_sizes()
+                if len(old_sizes) > 0:
+                    # 从基准大小按比例缩放，保持相对尺寸
+                    base = old_sizes[0] / (self._current_zoom or 1)
+                    new_sizes = max(20, base * zoom_factor)
+                    coll.set_sizes([new_sizes] * len(old_sizes))
 
-        # 用新的 zoom_factor 重绘
-        self._draw_subgraph(self._current_subgraph, pos,
-                            self._selected_node, zoom_factor=zoom_factor)
+        # 更新已有文本大小
+        for txt in self.ax.texts:
+            try:
+                old_size = txt.get_fontsize()
+                new_size = max(5, min(20, old_size / (self._current_zoom / max(zoom_factor, 0.1))))
+                txt.set_fontsize(new_size)
+            except Exception:
+                pass
 
-        # 恢复视图范围
-        self.ax.set_xlim(x_lo, x_hi)
-        self.ax.set_ylim(y_lo, y_hi)
+        # 更新边宽
+        for line in self.ax.lines:
+            try:
+                old_w = line.get_linewidth()
+                new_w = max(0.5, old_w * (zoom_factor / max(self._current_zoom, 0.1)))
+                line.set_linewidth(new_w)
+            except Exception:
+                pass
+
         self.canvas.draw_idle()
 
     def _auto_zoom_to_fit(self):
@@ -922,7 +967,7 @@ class KnowledgeGraphView(ttk.Frame):
         self.ax.set_ylim(y_min - pad_y, y_max + pad_y)
 
         # 同步缩放节点/字体大小
-        self._zoom_redraw()
+        self._zoom_update()
 
     def _highlight_node(self, node_id: str):
         """高亮特定节点（支持缩放同步）"""
