@@ -596,7 +596,9 @@ class KnowledgeGraphView(ttk.Frame):
         if self._current_subgraph is not None:
             self._expand_history.append(set(self._current_subgraph.nodes))
 
-        # BFS 收集 2 跳内的关联节点（避免全图展开）
+        # BFS 收集 2 跳内的关联节点（只走核心关系边，避免发散）
+        CORE_EDGE_TYPES = {"belongs_to", "recommends_herb", "recommends_formula",
+                           "composes", "associated_with_herb"}
         visited = {center_node}
         queue = [(center_node, 0)]  # (node, depth)
         center_type = g.nodes[center_node].get("type", "?")
@@ -607,18 +609,24 @@ class KnowledgeGraphView(ttk.Frame):
             n, depth = queue.pop(0)
             if depth >= 2:
                 continue
-            for _, nbr in g.edges(n):
+            for _, nbr, ed in g.edges(n, data=True):
+                etype = ed.get("type", "")
+                if etype not in CORE_EDGE_TYPES:
+                    continue
                 if nbr not in visited:
                     nt = g.nodes[nbr].get("type", "?")
                     nn = g.nodes[nbr].get("name", nbr)
-                    logger.info("  depth=%d 出边: %s (%s)", depth + 1, nn, nt)
+                    logger.info("  depth=%d 出边[%s]: %s (%s)", depth + 1, etype, nn, nt)
                     visited.add(nbr)
                     queue.append((nbr, depth + 1))
-            for nbr, _ in g.in_edges(n):
+            for nbr, _, ed in g.in_edges(n, data=True):
+                etype = ed.get("type", "")
+                if etype not in CORE_EDGE_TYPES:
+                    continue
                 if nbr not in visited:
                     nt = g.nodes[nbr].get("type", "?")
                     nn = g.nodes[nbr].get("name", nbr)
-                    logger.info("  depth=%d 入边: %s (%s)", depth + 1, nn, nt)
+                    logger.info("  depth=%d 入边[%s]: %s (%s)", depth + 1, etype, nn, nt)
                     visited.add(nbr)
                     queue.append((nbr, depth + 1))
 
