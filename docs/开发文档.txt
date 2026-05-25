@@ -375,22 +375,32 @@ git add <files> && git commit -m "message" && git push origin main
 
 ## 改进方向（2026-05-25 代码扫描）
 
-### 一、代码质量（高价值 / 低风险）
+优先级排序：**高价值/低风险**（可立即执行）→ **高价值/中风险**（需谨慎规划）→ **中价值**（后续迭代）
 
-| # | 问题 | 影响 | 建议 |
+### 快速修复（高价值 / 低风险 — 可立即执行）
+
+| # | 文件 | 问题 | 建议 | 预计工时 |
+|---|------|------|------|---------|
+| 1 | `kg_view.py` ×6, `runtime.py` ×2, `app.py` ×1 | `except: pass` 10 处，异常被静默吞掉 | 全部加 `logger.warning` 或移除无用 catch | 10min |
+| 2 | 全项目 | 未使用导入 10+ 处（`platform`, `re`, `IntelligentSearch`, `NavigationToolbar2Tk`, `math` 等） | 用 `ruff check . --fix` 自动清理 | 5min |
+| 8 | `splash.py:193` | 引用未定义变量 `self.STAGES`（应为 `self.MESSAGES`） | 修复变量名 | 1min |
+| 9 | `.gitignore` | `scripts/test_splash.py` 被 git 跟踪但 .gitignore 已匹配 | `git rm --cached scripts/test_splash.py` | 1min |
+| 10 | 全项目 | `typing.Dict/List/Set` 与内置 `dict/list/set` 混用 | 统一使用内置泛型（Python >=3.9） | 5min |
+| 7 | `app.py:624`, `service.py:27`, `builder.py:458` | import 路径不统一：3 处 `from src.xxx`，其余用 `from core/desktop/kg` | 统一为 `from core/desktop/kg.xxx` | 5min |
+| 26 | `tcm_config.py:1115` | 文件末尾延迟导入 `from typing import List, Set` | 移至文件顶部统一导入 | 2min |
+| 22 | `kg/builder.py` | 每次方法调用都 `sqlite3.connect` 新建数据库连接 | 在 `__init__` 共享一个连接 | 10min |
+
+### 重构建议（高价值 / 低风险 — 需规划）
+
+| # | 文件 | 问题 | 建议 |
 |---|------|------|------|
-| 1 | `except: pass` 10 处（kg_view.py ×6, runtime.py ×2, app.py ×1, kg_view.py blit ×1） | 异常被静默吞掉，调试困难 | 全部加 `logger.warning` 或移除无用 catch |
-| 2 | 未使用导入 10+ 处（`platform`, `re`, `IntelligentSearch`, `NavigationToolbar2Tk`, `math` 等） | 代码膨胀 | 用 `ruff check . --fix` 自动清理 |
-| 3 | `kg_view.py` 超 1500 行 | 单一文件难以维护 | 拆分 Canvas 渲染逻辑到单独模块 |
-| 4 | `data_expansion.py` 3880 行纯数据 | 编辑器卡顿 | 拆分为 `herbs_data.py` + `formulas_data.py` |
-| 5 | `tcm_config.py` 1144 行 | 配置/数据/逻辑混合 | 拆为 `config_symptoms.py` + `config_herbs.py` + `config_fallback.py` |
-| 6 | 无自动化测试（仅 6 个手工冒烟脚本，均无 assert） | 修改没有安全保障 | 对 `symptom_analysis` / `tcm_config` 加 pytest 基础测试 |
-| 7 | import 路径不统一：3 处 `from src.xxx`，其余用 `from core/desktop/kg` | 风格不一致 | 统一为 `from core/desktop/kg.xxx` |
-| 8 | `splash.py:193` 引用未定义变量 `self.STAGES`（应为 `self.MESSAGES`） | 运行时 AttributeError | 修复变量名 |
-| 9 | `scripts/test_splash.py` 被 git 跟踪但 .gitignore 已匹配 | 版本控制不一致 | `git rm --cached scripts/test_splash.py` |
-| 10 | `typing.Dict/List/Set` 与内置 `dict/list/set` 混用（Python >=3.9 可用内置） | 风格不一致 | 统一使用内置泛型 |
+| 3 | `kg_view.py` | 超 1500 行，单一文件难以维护 | 拆分 Canvas 渲染逻辑到单独模块 |
+| 4 | `data_expansion.py` | 3880 行纯数据，编辑器卡顿 | 拆分为 `herbs_data.py` + `formulas_data.py` |
+| 5 | `tcm_config.py` | 1144 行，配置/数据/逻辑混合 | 拆为 `config_symptoms.py` + `config_herbs.py` + `config_fallback.py` |
+| 27 | `data_pipeline.py` | `_build_association_matrices` 单方法 >200 行 | 将 7 层构建逻辑拆为独立方法 |
+| 18 | `data_pipeline.py` / `train.py` / `recommend.py` | 药材特征在 3 个位置重复实现 | 统一到 `data_pipeline.py`，其他模块调用 |
 
-### 二、性能（高价值 / 中风险）
+### 性能优化（高价值 / 中风险 — 需谨慎）
 
 | # | 问题 | 影响 | 建议 |
 |---|------|------|------|
@@ -401,18 +411,14 @@ git add <files> && git commit -m "message" && git push origin main
 | 15 | KG 布局计算（`networkx.spring_layout`）在 GUI 线程执行 | 缩放/搜索时界面冻结 50-200ms | 预计算布局 + Canvas 缓存快照 |
 | 16 | `data_pipeline.py` 关联矩阵构建 7 层嵌套循环 | 构建耗时 30s+，内存 >6GB | 增量构建、稀疏矩阵、分批生成 |
 | 17 | `train.py` 全量加载 6GB 训练数据到内存 | 内存消耗大 | 使用 `np.load(mmap_mode='r')` 或 HDF5 |
-| 18 | 药材特征在 3 个位置重复实现（`data_pipeline.py` / `train.py` / `recommend.py`） | 冗余代码 + 重复计算 | 统一到 `data_pipeline.py`，其他模块调用 |
 
-### 三、功能完善（中价值 / 低风险）
+### 功能完善（中价值 — 后续迭代）
 
 | # | 问题 | 建议 |
 |---|------|------|
 | 19 | `tcm_config.SYMPTOM_LIST`（~65 种）与 `extended_config.EXTENDED_SYMPTOM_LIST`（228 种）定义不同步 | 将症状/证型定义统一用 YAML/JSON 外部配置管理 |
 | 20 | `models/nlu/qwen` 路径硬编码在 `nlu/engine.py` | 改为环境变量 `TCMAI_NLU_PATH` + 默认值 |
 | 21 | NLU 引擎 `device="cuda"` 硬编码，CPU 环境加载失败 | 改为 `device="cuda" if torch.cuda.is_available() else "cpu"` |
-| 22 | `kg/builder.py` 每次方法调用都 `sqlite3.connect` 新建数据库连接 | 在 `__init__` 共享一个连接 |
 | 23 | 知识图谱查询 `herb_profile()` 遍历全图所有症状节点 | 改为通过边索引直接定位关联节点 |
 | 24 | `requirements.txt` 缺少 `transformers` 和 `bitsandbytes` | 同步更新以匹配 `pyproject.toml` |
 | 25 | `pyproject.toml` 无 `[project.dependencies]` 基础段 | 补全基础依赖声明 |
-| 26 | `tcm_config.py:1115` 文件末尾延迟导入 `from typing import List, Set` | 移至文件顶部统一导入 |
-| 27 | `data_pipeline._build_association_matrices` 单方法 >200 行 | 将 7 层构建逻辑拆为独立方法 |
