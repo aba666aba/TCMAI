@@ -307,26 +307,60 @@ class KnowledgeGraphView(ttk.Frame):
         ttk.Button(row1, text="📷 导出PNG", command=self._export_png, width=10).pack(side="right", padx=(0, 4))
 
     def _build_edge_filter_bar(self):
-        """边类型过滤栏"""
+        """边类型过滤栏（单选模式）"""
         bar = tk.Frame(self, bg="#f5f5f5", padx=10, pady=3)
         bar.pack(fill="x")
-        tk.Label(bar, text="边:", bg="#f5f5f5",
+        tk.Label(bar, text="显示:", bg="#f5f5f5",
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
-        
-        self._edge_vars = {}
-        edge_labels = {
-            "belongs_to": "症状→证型", "recommends_herb": "证→药",
-            "recommends_formula": "证→方", "composes": "药→方",
-            "associated_with_herb": "症↔药",
-            "incompatible_with": "相反相畏", "co_occurs_with": "共现",
-        }
-        for etype, elabel in edge_labels.items():
-            var = tk.BooleanVar(value=True)
-            self._edge_vars[etype] = var
-            cb = tk.Checkbutton(bar, text=elabel, variable=var,
-                                bg="#f5f5f5",
+
+        self._edge_mode = tk.StringVar(value="all")
+        edge_modes = [
+            ("all", "全部关系"),
+            ("syndrome", "仅证型关联"),
+            ("herb", "仅药材关联"),
+            ("formula", "仅方剂关联"),
+            ("incompatible", "仅禁忌"),
+        ]
+        for mode_val, mode_label in edge_modes:
+            rb = tk.Radiobutton(bar, text=mode_label, variable=self._edge_mode,
+                                value=mode_val, bg="#f5f5f5",
                                 font=("Microsoft YaHei UI", 8))
-            cb.pack(side="left", padx=2)
+            rb.pack(side="left", padx=2)
+
+        # 初始化 edge_vars（供 _show_subgraph_given_nodes 使用）
+        self._edge_vars = {
+            "belongs_to": tk.BooleanVar(value=True),
+            "recommends_herb": tk.BooleanVar(value=True),
+            "recommends_formula": tk.BooleanVar(value=True),
+            "composes": tk.BooleanVar(value=True),
+            "associated_with_herb": tk.BooleanVar(value=True),
+            "incompatible_with": tk.BooleanVar(value=True),
+            "co_occurs_with": tk.BooleanVar(value=True),
+        }
+
+    def _apply_edge_mode(self):
+        """根据 _edge_mode 设置 _edge_vars"""
+        mode = self._edge_mode.get()
+        # 先全部关闭
+        for v in self._edge_vars.values():
+            v.set(False)
+        if mode == "all":
+            for v in self._edge_vars.values():
+                v.set(True)
+        elif mode == "syndrome":
+            self._edge_vars["belongs_to"].set(True)
+            self._edge_vars["recommends_herb"].set(True)
+            self._edge_vars["recommends_formula"].set(True)
+        elif mode == "herb":
+            self._edge_vars["associated_with_herb"].set(True)
+            self._edge_vars["composes"].set(True)
+            self._edge_vars["co_occurs_with"].set(True)
+        elif mode == "formula":
+            self._edge_vars["recommends_formula"].set(True)
+            self._edge_vars["composes"].set(True)
+            self._edge_vars["associated_with_herb"].set(True)
+        elif mode == "incompatible":
+            self._edge_vars["incompatible_with"].set(True)
 
     def _build_compact_toolbar(self):
         """嵌入模式：紧凑搜索栏"""
@@ -343,19 +377,50 @@ class KnowledgeGraphView(ttk.Frame):
         ttk.Button(toolbar, text="重置", command=self._reset_view, width=4).pack(side="left")
 
     def _build_filter_bar(self):
-        """类型过滤栏"""
+        """节点类型过滤（单选模式）"""
         filter_frame = tk.Frame(self, bg="#f0f0f0", padx=10, pady=4)
         filter_frame.pack(fill="x")
-        tk.Label(filter_frame, text="显示节点:", bg="#f0f0f0",
+        tk.Label(filter_frame, text="节点:", bg="#f0f0f0",
                  font=("Microsoft YaHei UI", 9)).pack(side="left")
-        self.type_vars = {}
-        for tname in ["Symptom", "Syndrome", "Herb", "Formula"]:
-            var = tk.BooleanVar(value=True)
-            self.type_vars[tname] = var
-            cb = tk.Checkbutton(filter_frame, text=tname, variable=var,
-                                bg="#f0f0f0",
+
+        self._node_mode = tk.StringVar(value="all")
+        node_modes = [
+            ("all", "全部"),
+            ("syndrome", "仅证型"),
+            ("herb_medicine", "仅药材"),
+            ("formula", "仅方剂"),
+            ("symptom_only", "仅症状"),
+        ]
+        for mode_val, mode_label in node_modes:
+            rb = tk.Radiobutton(filter_frame, text=mode_label, variable=self._node_mode,
+                                value=mode_val, bg="#f0f0f0",
                                 font=("Microsoft YaHei UI", 9))
-            cb.pack(side="left", padx=(4, 0))
+            rb.pack(side="left", padx=(4, 0))
+
+        self.type_vars = {
+            "Symptom": tk.BooleanVar(value=True),
+            "Syndrome": tk.BooleanVar(value=True),
+            "Herb": tk.BooleanVar(value=True),
+            "Formula": tk.BooleanVar(value=True),
+        }
+
+    def _apply_node_mode(self):
+        """根据 _node_mode 设置 type_vars"""
+        mode = self._node_mode.get()
+        for v in self.type_vars.values():
+            v.set(False)
+        if mode == "all":
+            for v in self.type_vars.values():
+                v.set(True)
+        elif mode == "syndrome":
+            self.type_vars["Syndrome"].set(True)
+        elif mode == "herb_medicine":
+            self.type_vars["Herb"].set(True)
+        elif mode == "formula":
+            self.type_vars["Formula"].set(True)
+        elif mode == "symptom_only":
+            self.type_vars["Symptom"].set(True)
+            self.type_vars["Syndrome"].set(True)
 
     def _build_legend(self, parent):
         """图例"""
@@ -743,6 +808,9 @@ class KnowledgeGraphView(ttk.Frame):
             return
         logger.info("_redraw_current: 清除布局缓存，重绘 %s 个节点",
                      self._current_subgraph.number_of_nodes())
+        # 应用模式设置
+        self._apply_edge_mode()
+        self._apply_node_mode()
         # 清除布局缓存强制重新计算
         sub_key = frozenset(self._current_subgraph.nodes)
         if sub_key in self._pos_cache:
