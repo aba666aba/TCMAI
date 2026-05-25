@@ -301,7 +301,7 @@ class KnowledgeGraphView(ttk.Frame):
         # 布局切换
         tk.Label(row1, text="布局:", bg="#f0f0f0",
                  font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(12, 2))
-        self._layout_var = tk.StringVar(value="spring")
+        self._layout_var = tk.StringVar(value="circular")
         layout_menu = ttk.Combobox(row1, textvariable=self._layout_var,
                                     values=["spring", "circular", "kamada_kawai", "shell"],
                                     width=10, state="readonly", font=("Microsoft YaHei UI", 9))
@@ -584,6 +584,38 @@ class KnowledgeGraphView(ttk.Frame):
         neighbors.add(center_node)
 
         self._show_subgraph_given_nodes(center_node, list(neighbors))
+
+    def _show_subgraph_all(self, center_node: str):
+        """显示与 center_node 相连的所有节点（全展开，圆形布局）"""
+        g = self.graph
+        if g is None:
+            self._load_graph()
+            g = self.graph
+
+        # 保存当前视图到展开历史（用于后退）
+        if self._current_subgraph is not None:
+            self._expand_history.append(set(self._current_subgraph.nodes))
+
+        # BFS 收集所有可达节点
+        visited = {center_node}
+        queue = [center_node]
+        while queue:
+            n = queue.pop(0)
+            for _, nbr in g.edges(n):
+                if nbr not in visited:
+                    visited.add(nbr)
+                    if len(visited) < 300:
+                        queue.append(nbr)
+            for nbr, _ in g.edges(n):
+                if nbr not in visited:
+                    visited.add(nbr)
+                    if len(visited) < 300:
+                        queue.append(nbr)
+
+        # 临时切换为圆形布局
+        if hasattr(self, '_layout_var'):
+            self._layout_var.set("circular")
+        self._show_subgraph_given_nodes(center_node, list(visited))
 
     def _on_pick(self, event):
         """节点点击事件：聚焦到该节点（显示1跳邻域 + 自动缩放 + 更新详情）"""
@@ -978,12 +1010,8 @@ class KnowledgeGraphView(ttk.Frame):
         if node:
             logger.info("_cv_on_press: 点击节点 %s", node)
             self._selected_node = node
-            # 保存当前视图到展开历史（用于后退）
-            if self._current_subgraph is not None:
-                self._expand_history.append(set(self._current_subgraph.nodes))
-                logger.info("_cv_on_press: 保存历史，当前深度 %d", len(self._expand_history))
-            # 显示1跳子图
-            self._show_subgraph(node)
+            # 显示该节点的所有关联节点（全展开）
+            self._show_subgraph_all(node)
 
     def _cv_on_drag(self, e):
         if self._cv_drag_start:
