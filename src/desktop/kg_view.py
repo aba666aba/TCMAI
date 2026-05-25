@@ -600,8 +600,13 @@ class KnowledgeGraphView(ttk.Frame):
         self.ax.set_xlim(cx + (x_lo - cx) * scale, cx + (x_hi - cx) * scale)
         self.ax.set_ylim(cy + (y_lo - cy) * scale, cy + (y_hi - cy) * scale)
 
-        # 增量更新：调整已有节点大小和文本，不全量重绘
-        self._zoom_update()
+        # 增量更新 + 防抖：50ms 内多次滚轮只触发一次重绘
+        if hasattr(self, '_zoom_timer'):
+            try:
+                self.winfo_toplevel().after_cancel(self._zoom_timer)
+            except Exception:
+                pass
+        self._zoom_timer = self.winfo_toplevel().after(50, self._zoom_update)
 
     def _on_motion(self, event):
         """鼠标移动：悬停节点时改变光标形状"""
@@ -895,9 +900,13 @@ class KnowledgeGraphView(ttk.Frame):
         self.ax.set_title(f"「{name}」的关联网络 ({n_nodes}节点, {n_edges}边)",
                           fontsize=title_font, color="#333", pad=12)
         self.canvas.draw_idle()
+        # 保存 blit 背景（供后续增量缩放使用）
+        try:
+            self.canvas.blit(self.ax.bbox)
+        except Exception:
+            pass
 
-    # ── 缩放同步重绘 ──
-
+    # ── 缩放增量更新（防抖 + blit） ──
     def _zoom_update(self):
         """缩放增量更新：调整已有节点/字体大小，不全量重绘"""
         if self._current_subgraph is None:
@@ -941,7 +950,11 @@ class KnowledgeGraphView(ttk.Frame):
             except Exception:
                 pass
 
-        self.canvas.draw_idle()
+        # blit 渲染：只更新 axes 区域，比 draw_idle() 全画布重绘快得多
+        try:
+            self.canvas.blit(self.ax.bbox)
+        except Exception:
+            self.canvas.draw_idle()
 
     def _auto_zoom_to_fit(self):
         """自动缩放以适配当前子图的所有节点（聚焦视图 + 同步缩放节点/字体）"""
