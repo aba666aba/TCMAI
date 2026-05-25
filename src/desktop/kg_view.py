@@ -572,11 +572,11 @@ class KnowledgeGraphView(ttk.Frame):
             self._load_graph()
             g = self.graph
 
-        # 收集1跳邻居
+        # 收集1跳邻居（有向图双向）
         neighbors = set()
         for _, nbr in g.edges(center_node):
             neighbors.add(nbr)
-        for nbr, _ in g.edges(center_node):
+        for nbr, _ in g.in_edges(center_node):
             neighbors.add(nbr)
         if extra_nodes:
             for n in extra_nodes:
@@ -596,21 +596,21 @@ class KnowledgeGraphView(ttk.Frame):
         if self._current_subgraph is not None:
             self._expand_history.append(set(self._current_subgraph.nodes))
 
-        # BFS 收集所有可达节点
+        # BFS 收集 2 跳内的关联节点（避免全图展开）
         visited = {center_node}
-        queue = [center_node]
+        queue = [(center_node, 0)]  # (node, depth)
         while queue:
-            n = queue.pop(0)
+            n, depth = queue.pop(0)
+            if depth >= 2:
+                continue
             for _, nbr in g.edges(n):
                 if nbr not in visited:
                     visited.add(nbr)
-                    if len(visited) < 300:
-                        queue.append(nbr)
-            for nbr, _ in g.edges(n):
+                    queue.append((nbr, depth + 1))
+            for nbr, _ in g.in_edges(n):
                 if nbr not in visited:
                     visited.add(nbr)
-                    if len(visited) < 300:
-                        queue.append(nbr)
+                    queue.append((nbr, depth + 1))
 
         # 临时切换为圆形布局
         if hasattr(self, '_layout_var'):
@@ -737,11 +737,11 @@ class KnowledgeGraphView(ttk.Frame):
         # 保存历史
         self._expand_history.append(set(current))
 
-        # 添加新邻居
+        # 添加新邻居（有向图双向）
         new_nodes = set(current)
         for _, nbr in g.edges(node_id):
             new_nodes.add(nbr)
-        for nbr, _ in g.edges(node_id):
+        for nbr, _ in g.in_edges(node_id):
             new_nodes.add(nbr)
 
         if len(new_nodes) == len(current):
