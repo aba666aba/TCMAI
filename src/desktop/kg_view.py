@@ -498,8 +498,9 @@ class KnowledgeGraphView(ttk.Frame):
         """显示加载提示"""
         if self._tk_canvas:
             self._tk_canvas.delete("all")
-            cw = max(self._tk_canvas.winfo_width(), 100)
-            ch = max(self._tk_canvas.winfo_height(), 100)
+            self._tk_canvas.update_idletasks()
+            cw = max(self._tk_canvas.winfo_width(), 800)
+            ch = max(self._tk_canvas.winfo_height(), 600)
             self._tk_canvas.create_text(cw/2, ch/2, text=text,
                 font=("Microsoft YaHei UI", 14), fill="#999", justify="center")
         else:
@@ -563,10 +564,10 @@ class KnowledgeGraphView(ttk.Frame):
         """显示初始提示"""
         if self._tk_canvas:
             self._tk_canvas.delete("all")
-            cw = self._tk_canvas.winfo_width() or 600
-            ch = self._tk_canvas.winfo_height() or 400
-            self._tk_canvas.create_text(cw/2, ch/2-20,
-                text="正在加载知识图谱...\n请稍候",
+            self._tk_canvas.update_idletasks()
+            cw = max(self._tk_canvas.winfo_width(), 800)
+            ch = max(self._tk_canvas.winfo_height(), 600)
+            self._tk_canvas.create_text(cw/2, ch/2, text="正在加载知识图谱...\n请稍候",
                 font=("Microsoft YaHei UI", 16), fill="#999", justify="center")
         else:
             self.ax.clear()
