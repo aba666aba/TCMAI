@@ -900,6 +900,7 @@ class KnowledgeGraphView(ttk.Frame):
         logger.info("_show_subgraph_given_nodes: 子图节点=%d, 边=%d",
                      sub.number_of_nodes(), sub.number_of_edges())
 
+        sub_key = frozenset(sub.nodes)
         if sub_key in self._pos_cache:
             pos = self._pos_cache[sub_key]
         else:
