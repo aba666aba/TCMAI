@@ -1,7 +1,7 @@
 # 中医药智能方剂生成系统 (TCMAI)
 
 > Traditional Chinese Medicine Intelligent Formula Generation System
-> 版本: 3.0.0 | 许可证: Apache-2.0
+> 许可证: Apache-2.0
 
 ---
 
@@ -16,7 +16,6 @@
 - [安装与运行](#安装与运行)
 - [AI 模型](#ai-模型)
 - [云端训练](#云端训练)
-- [项目状态](#项目状态)
 
 ---
 
@@ -315,26 +314,6 @@ python tcm_recommender/train.py --data data/train_data.npz \
 |------|------|
 | `best_model.pth` | 模型权重 (~127MB) |
 | `best_model.json` | 训练指标 |
-
----
-
-## 项目状态
-
-### 版本 3.0.0
-
-- [x] 新增 NLU 自然语言理解引擎 (Qwen2.5-1.5B 4-bit)
-- [x] 症状列表扩展 199→229 种，30 证型全部通过自查
-- [x] 知识图谱可视化与查询推荐
-- [x] 两阶段推理架构 (NLU + TCMNet)
-- [x] 证型→症状自动展开（输入"肾虚"→展开为典型症状）
-- [x] 首页推荐结果/知识图谱分 tab 显示
-- [x] 训练数据 563K 样本，7 层关联矩阵构建
-
-### 待实现
-
-- [ ] 药材用量提取与推荐（从 `herbs.usage` 字段结构化提取）
-- [ ] NLU prompt 持续优化（更多示例/少样本学习）
-- [ ] 知识图谱缓存自动重建
 
 ---
 
