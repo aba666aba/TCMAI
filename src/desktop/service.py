@@ -12,11 +12,64 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional
 
-from core.data_desensitize import DataDesensitizer
 from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
 from core.tcm_config import generate_health_tips
 from core.intelligent_search import IntelligentSearch
+
+# NLU 引擎（延迟导入，避免启动时加载大模型）
+_nlu_engine: Optional[Any] = None
+
+def _get_nlu_engine():
+    global _nlu_engine
+    if _nlu_engine is None:
+        try:
+            from src.nlu import NLUEngine
+            _nlu_engine = NLUEngine(device="cuda", use_4bit=True)
+            _nlu_engine.load()
+            logger.info("NLU 引擎已就绪")
+        except Exception as exc:
+            logger.warning("NLU 引擎加载失败，使用关键词匹配降级: %s", exc)
+            _nlu_engine = False
+    return _nlu_engine if _nlu_engine is not False else None
+
+def detect_symptoms_nlu(text: str) -> List[str]:
+    """NLU 优先检测症状，失败降级到关键词匹配
+    （如果输入是证型名如"肾虚"，自动展开为对应症状集）
+    """
+    # ── 证型→症状展开（用户可能直接输入"肾虚""脾虚"等） ──
+    expanded = list(text)
+    try:
+        from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
+        for syn_name, syn_info in EXTENDED_SYNDROME_DEFINITIONS.items():
+            # 精确匹配或包含匹配：如"肾虚"匹配"肾阳虚""肾阴虚"等
+            # 多种匹配：精确/包含/前缀/字符集包含（肾虚→肾阳虚/肾阴虚）
+            text_in_syn = text in syn_name
+            syn_in_text = syn_name in text
+            startswith = syn_name.startswith(text) or text.startswith(syn_name)
+            char_match = set(text) <= set(syn_name) and len(text) >= 2
+            if text_in_syn or syn_in_text or startswith or char_match:
+                logger.info("检测到证型名: %s → %s，展开症状: %s",
+                            text, syn_name, syn_info["symptoms"][:5])
+                expanded.extend(syn_info["symptoms"])
+    except ImportError:
+        pass
+    enhanced_text = "".join(expanded)
+
+    # ── NLU 提取 ──
+    try:
+        engine = _get_nlu_engine()
+        if engine:
+            result = engine.extract_symptoms(enhanced_text)
+            if result:
+                logger.info("NLU 提取症状: %s", result)
+                return result
+    except Exception as exc:
+        logger.warning("NLU 提取失败，降级: %s", exc)
+
+    # ── 降级：关键词匹配 ──
+    from core.symptom_pipeline import SymptomPipeline
+    return SymptomPipeline().detect(enhanced_text)
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +107,7 @@ def format_intelligent_knowledge_for_display(intel_result: Dict[str, Any]) -> st
         formula_parts = []
         for ref in recommended[:5]:
             formula_parts.append(
-                f"{ref['formula']}（{ref['syndrome']}：{ref['description']}）"
+                f"{ref['name']}（{ref['syndrome']}：{ref['description']}）"
             )
         parts.append(f"【推荐方剂】{'；'.join(formula_parts)}")
 
@@ -88,7 +141,6 @@ class TCMDesktopService:
     def __init__(self) -> None:
         self.kb = KnowledgeBase()
         self.verifier = ResultVerifier()
-        self.desensitizer = DataDesensitizer()
         self.history_lock = threading.Lock()
         self.history_file = self._resolve_history_file()
         self.history_lock_file = self.history_file.with_suffix(".lock")
@@ -125,23 +177,15 @@ class TCMDesktopService:
                     import fcntl
                     fcntl.lockf(handle, fcntl.LOCK_UN)
 
-    def _safe_desensitize(self, value: str) -> str:
-        text = value or ""
-        text = self.desensitizer.remove_pii(text)
-        text = self.desensitizer.anonymize_query(text)
-        text = re.sub(r"(我叫|我是|姓名是)([\u4e00-\u9fff]{2,4})", r"\1**", text)
-        text = re.sub(r"患者[：: ]?([\u4e00-\u9fff]{2,4})", "患者**", text)
-        return text[:4000]
-
     def _sanitize_history_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         symptoms = item.get("symptoms", [])
         if not isinstance(symptoms, list):
             symptoms = []
         return {
             "id": int(item.get("id", 0)),
-            "query": self._safe_desensitize(str(item.get("query", ""))),
-            "symptoms": [self._safe_desensitize(str(symptom))[:64] for symptom in symptoms[:20]],
-            "answer": self._safe_desensitize(str(item.get("answer", ""))),
+            "query": str(item.get("query", ""))[:500],
+            "symptoms": [str(s)[:64] for s in symptoms[:20]],
+            "answer": str(item.get("answer", ""))[:4000],
             "timestamp": str(item.get("timestamp", ""))[:32],
             "mode": "ai" if item.get("mode") == "ai" else "fast",
         }

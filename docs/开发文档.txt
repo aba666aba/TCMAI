@@ -1,23 +1,44 @@
-# TCMAI 中医药智能问答系统 — 开发手册
+# TCMAI 中医药智能方剂生成系统 — 开发手册
 
 ## 项目概况
 
-中医药桌面应用（Python + PyTorch），支持规则引擎快速模式和深度学习 AI 模式。
+**核心目标**：构建中医药智能方剂生成系统，基于 **自然语言理解 → 知识图谱推理 → 方剂生成（含用量）→ 禁忌筛查** 的完整管线，辅助医生提高诊断效率。
+
 项目路径：`E:\Tom\TCMAI` | Python >=3.10 | GPU: RTX 3050 4GB (CUDA 12.4)
+
+## 系统能力
+
+1. **自然语言理解** — 精准理解用户自然语言病情描述，提取症状/证型
+2. **知识图谱驱动推荐** — 症状→证型→药材/方剂推理（KG + TCMNet 模型双通道融合）
+3. **药材 + 用量推荐** — 从 `herbs.usage` 字段提取结构化用量范围，附于推荐药材
+4. **传统方剂匹配** — 匹配到的传统方剂一并输出
+5. **十八反十九畏筛选** — 自动过滤配伍禁忌，减少医生工作量（6层安全筛查）
+6. **知识图谱可视化** — 展示病症相关的知识子图
+
+> 设计原则：生成的药方**不需要确保真实可用**，医生做最终判断。系统做好基础安全筛选即可。
 
 ## 数据流架构
 
 ```
 用户输入 → TCMDesktopService.query()
-           ├─ AI模式 → TCMRecommender.recommend → 格式化回答 → 输出
-           └─ 快速模式 → generate_fallback_answer() → 输出
-                         └─ detect_symptoms() → 症状分析
-                         └─ search_herbs/formulas → 知识检索
+           ├─ AI模式(主) → TCMRecommender.recommend → KG融合推荐 → 安全筛查 → 输出(含dosage+方剂+图谱)
+           │                ├─ TCMNet 模型预测(症状→药材/方剂/证型)
+           │                ├─ KG 推理(symptom_to_recommendation + recommend_by_symptoms)
+           │                └─ 加权融合(model_weight * 模型分 + kg_weight * KG分 + boost)
+           └─ 快速模式(备) → generate_fallback_answer() → 输出
+                              └─ detect_symptoms() → 症状分析
+                              └─ search_herbs/formulas → 知识检索
 ```
 
-快速模式走规则引擎（src/core/fallback.py），AI模式走深度学习（tcm_recommender/recommend.py）。
+完整训练和推理管线：
+```
+DB → data_pipeline(500K样本)→ TCMNet训练 → 模型推理 → KG融合 →安全检查 → 输出
+     ↑                               ↑
+extended_config(228症状/30证型)    kg_cache.pkl(知识图谱)
+```
+
+快速模式走规则引擎（src/core/fallback.py），AI模式走深度学习（tcm_recommender/recommend.py）+ KG融合（src/kg/recommender.py）。
 桌面服务层在 src/desktop/service.py 中协调调用流程。
-`symptom_pipeline.py` 提供的症状分析功能供各模块按需调用，不再由 `service.py` 强制串接。
 
 ## 数据库表结构 (data/tcm_knowledge.db)
 
@@ -48,32 +69,57 @@ E:\Tom\TCMAI/
 │   │   ├── fallback.py           #   规则引擎降级回答
 │   │   ├── result_verify.py      #   合规校验+溯源
 │   │   ├── data_desensitize.py   #   脱敏（含中医药白名单保护）
-│   │   └── tcm_config.py         #   桌面端配置（33症状/9证型/15内置药材/14方剂）
-│   └── desktop/
-│       ├── app.py                #   tkinter GUI
-│       ├── service.py            #   业务服务层
-│       └── runtime.py            #   运行时工具
+│   │   ├── tcm_config.py         #   桌面端配置（33症状/9证型/15内置药材/14方剂）
+│   │   └── intelligent_search.py #   智能搜索引擎（Neo4j + 图谱查询）
+│   ├── desktop/
+│   │   ├── app.py                #   tkinter GUI
+│   │   ├── service.py            #   业务服务层
+│   │   ├── splash.py             #   全屏启动画面（深绿+金色主题）
+│   │   ├── kg_view.py            #   知识图谱可视化（matplotlib+networkx）
+│   │   └── runtime.py            #   运行时工具（控制台隐藏/错误弹窗）
+│   └── kg/                       # 知识图谱构建与查询（核心推理管道）
+│       ├── builder.py            #   TCMKnowledgeGraph 构建器（12种关系边）
+│       ├── query.py              #   KnowledgeGraphQuery 查询（症状→证型→药材/方剂推荐）
+│       └── recommender.py        #   KG增强推荐器（模型+KG双通道融合+安全检测）
 ├── tcm_recommender/
 │   ├── model.py                  #   TCMNet: Transformer+双塔+交叉注意力
 │   ├── train.py                  #   训练器: AMP+多任务损失+对比学习
-│   ├── recommend.py              #   推理接口
+│   ├── recommend.py              #   推理接口（含 safety_check）
 │   ├── data_pipeline.py          #   训练数据生成（5阶段管线）
 │   ├── data_expansion.py         #   数据库扩充（3000+药材数据源）
-│   └── extended_config.py        #   200症状/17证型定义（AI端数据源）
+│   ├── extended_config.py        #   228症状/30证型定义（AI端数据源）
+│   └── best_model.pth            #   最佳模型权重（41.6MB，d_model=384）
 ├── data/
-│   ├── tcm_knowledge.db          #   3010药材/1095方剂/125中成药/222验方
-│   └── train_data.npz            #   150380样本, avg 7.5正药材
-├── docs/                         # 软著材料
-├── import_knowledge.py/v2.py     # 知识库导入脚本
-├── launcher.py / launcher.pyw    # 启动入口
+│   ├── tcm_knowledge.db          #   2961药材/717方剂/228症状/30证型
+│   ├── kg_cache.pkl              #   知识图谱缓存（pickle序列化）
+│   └── train_data.npz            #   500K+样本, 228症状, 2961药材, 30证型（待生成）
+├── docs/                         # 软著材料（操作手册/设计说明书/源代码）
+├── 知识图谱中药方生成系统.pyw     # 启动入口（from launcher import main）
+├── launcher.py                   # 核心启动器（Splash+后台加载+主窗口）
 └── tcmai.spec                    # PyInstaller 打包配置
 ```
 
 ## 启动方式
 
-- 快速模式（规则引擎）：`python launcher.py` 或双击 `快速启动.bat`
+- 主入口：双击 `知识图谱中药方生成系统.pyw`（无控制台窗口）
+- 快速模式（规则引擎）：双击 `scripts\快速启动.bat`
 - AI 模式：GUI 中选择"回答模式→AI"
+- 调试入口（无 Splash）：`python src/main.py`
 - 打包 exe：双击 `打包exe.bat`
+
+### 启动流程
+
+```
+知识图谱中药方生成系统.pyw → launcher.main()
+  ├── 隐藏控制台 → 创建 Splash（全屏置顶 Toplevel）
+  ├── 后台初始化主窗口（DesktopApp，被 Splash 覆盖）
+  ├── _BgLoader 线程：加载知识图谱 + 推理管线
+  ├── Splash 自动关闭 → 主窗口露出
+  └── root.mainloop()
+```
+
+Splash 使用 `Toplevel(parent=root)` 覆盖层 + `-topmost` 全屏置顶，
+主窗口提前创建在后台，加载完成后 Splash 销毁直接露出。
 
 ## TCMNet 模型架构 (model.py)
 
@@ -85,24 +131,40 @@ CrossAttentionRanker(症状Q × 药材/方剂K,V) → 逐项评分
 
 ## 训练数据管线 (data_pipeline.py)
 
-5阶段生成150K样本：
-1. 证型驱动(50%)：按17证型定义生成症状变体+推荐药材标签
+5阶段生成 500K+ 样本（30证型/228症状/2961药材/717方剂）：
+1. 证型驱动(50%)：按30证型定义生成症状变体+推荐药材标签
 2. 药材驱动(20%)：每味药材匹配关联症状
 3. 方剂驱动(12%)：每个方剂匹配症状+药材组成标签
 4. 组合增强(25%)：随机症状组合+关联矩阵top-20标签
 5. 负样本(17%)：零关联症状-药材对（label=-1.0，训练时作为明确负标签参与loss）
 
+关联矩阵构建（7层递增）：
+1. 文本子串匹配（功效/主治含症状名）
+2. 方剂组成反推（方剂有症状→组成药材继承）
+3. 药材分类语义匹配（如"解表"→恶寒/发热/头痛）
+4. 功能关键词匹配（零关联药材/方剂补漏）
+5. 药材别名继承（别名继承正名的关联）
+6. 症状同义词映射（同义词症状继承关联）
+7. 硬编码兜底（仍有零关联的药材/症状做最后补救）
+
 ## 训练命令
 
 ```bash
-# 1 epoch 快速验证
+# 1 epoch 快速验证（11M参数, 4GB显存上限）
 python -m tcm_recommender.train --db data/tcm_knowledge.db --data data/train_data.npz --output tcm_recommender/best_model.pth --epochs 1 --batch-size 32 --lr 1e-4 --d-model 384 --num-layers 4 --device cuda --grad-accum 2 --contrastive-weight 0.2
 
-# 完整训练（early stopping ~15-25轮收敛）
+# 完整训练（early stopping ~15-25轮收敛，562K样本约2-3小时）
 python -m tcm_recommender.train --db data/tcm_knowledge.db --data data/train_data.npz --output tcm_recommender/best_model.pth --epochs 30 --batch-size 32 --lr 1e-4 --d-model 384 --num-layers 4 --device cuda --grad-accum 2 --contrastive-weight 0.2
 
-# 重新生成训练数据
-python -m tcm_recommender.data_pipeline --db data/tcm_knowledge.db --output data/train_data.npz --count 150000
+# 重新生成训练数据（562K样本）
+python -m tcm_recommender.data_pipeline --db data/tcm_knowledge.db --output data/train_data.npz --count 562075
+```
+
+## 构建知识图谱缓存
+
+```bash
+# 首次运行构建缓存 data/kg_cache.pkl（后续自动加载）
+python -c "from desktop.kg_view import get_kg; get_kg()"
 ```
 
 参数：`d_model=384`(≈11M参数, 4GB显存上限) / `batch_size=32` / `grad_accum=2` / `lr=1e-4` / early stopping 15轮
@@ -122,19 +184,97 @@ ruff check . && ruff format .
 
 ## 数据库说明
 
-清洗后无重复：药材3010种、方剂1095首、中成药125种、验方222条。
-症状-药材关联矩阵：5283非零/602000总数，密度0.88%（基于功效文本子串匹配，精度有限）。
-症状定义：200种（extended_config.py，AI端），33种（tcm_config.py，桌面端），证型定义：17种（AI端）/ 9种（桌面端）。
+清洗后无重复：药材2961种（训练用）、方剂717首（训练用）、中成药125种、民间验方216个。
+症状定义：228种（extended_config.py，AI端），33种（tcm_config.py，桌面端）。
+证型定义：30种（AI端）/ 9种（桌面端）。
+
+### 药材用量数据
+
+- `herbs.usage`：1934/2961（65.3%）非空，格式为自由文本（如"煎服，3-10g"、"先煎，15-60g"）
+- `formulas.dosage`：仅 1.7% 非空且内容为方剂描述而非用量，不可用
+- 用量提取策略：从 `herbs.usage` 通过正则提取数值范围（min_g, max_g），附于推荐药材输出
+
+### 禁忌数据
+
+- `herbs.contraindications`：2111/2961（71.3%）非空
+- 十八反十九畏：在 `tcm_config.INCOMPATIBLE_HERBS` 中明确定义（10对十八反 + 9对十九畏 + 13味孕妇禁忌）
+- `EXTENDED_TOXIC_HERBS`：6味毒性药材（生川乌/生草乌/附子/巴豆/甘遂/大戟/芫花）
+
+## 禁忌安全筛查体系（6层）
+
+| 层级 | 模块 | 检测内容 |
+|------|------|----------|
+| 1-配置定义 | `tcm_config.INCOMPATIBLE_HERBS` | 十八反10对、十九畏9对、孕妇禁用13味 |
+| 2-KG图注入 | `kg/builder._add_incompatibilities()` | 将配伍禁忌注入图结构，添加 `incompatible_with` 边和毒性/妊娠标记 |
+| 3-KG查询交叉 | `kg/query.herb_profile()` | 返回药材的相反相畏列表 |
+| 4-症状分析 | `symptom_analysis._check_contraindications()` | 基于证型的禁忌检查（如脾胃虚弱慎用寒凉） |
+| 5-模型安全 | `recommend.check_safety()` | 基于 herbs.contraindications 字段做交叉检测 |
+| 6-桌面UI | `service.py` 输出 | 检测到禁忌输出 ⚠️ 提示，图谱中用红色 `#c0392b` 显示 `incompatible_with` 关系 |
+
+## 知识图谱推理（src/kg/）
+
+### 构建器 builder.py
+
+实体类型（10种）：Symptom(228)、Syndrome(30)、Herb(2961)、Formula(717)、PatentMedicine(125)、FolkRemedy(216)、Category(61)、Meridian、Nature(5)、Flavor(5)
+关系类型（12种）：belongs_to、recommends_herb、recommends_formula、associated_with_herb、associated_with_formula、composes、has_nature、has_flavor、has_meridian、belongs_to_category、incompatible_with、toxic、treats
+
+### 查询接口 query.py
+
+- `symptom_to_recommendation(symptom)` — 单症状→关联药材/方剂/证型
+- `syndrome_analysis(symptom_names)` — 多症状综合分析→投票推断证型
+- `herb_profile(herb_name)` — 药材完整画像（含性味归经+共现+相反相畏）
+- `recommend_by_symptoms(symptoms)` — 综合推荐：多症状→多证型→综合药材+方剂（加权融合）
+
+### KG增强推荐器 recommender.py
+
+工作流程：模型预测 → KG推理（3条路径）→ 加权融合 → 推理路径可解释 → 安全检测
+融合公式：`model_weight * 模型分 + kg_weight * KG分 + boost（若两者都推荐）`
+
+## 知识图谱可视化 (src/desktop/kg_view.py)
+
+基于 matplotlib + networkx 的交互式知识图谱查看器，1150 行。
+
+### 交互特性
+- **点击节点**：显示该节点的1跳邻域子图，无关节点移除节省内存，自动缩放适配视图
+- **滚轮缩放**：节点圆点直径和标签字体大小随缩放比例同步变化（基于 `_base_x_range` 基准计算 zoom_factor）
+- **双击**：展开邻域（1跳→2跳）
+- **右键菜单**：查看详情/展开/设为中心/复制名称
+- **右侧知识面板**（standalone 模式）：ScrolledText 展示节点详细属性，含药材性味归经、证型推荐、方剂组成等
+
+### 缩放同步机制
+```
+首次绘制 → 记录 _base_x_range
+滚轮缩放 → 计算 zoom_factor = _base_x_range / current_x_range
+         → _draw_subgraph(zoom_factor) → node_size *= zoom_factor, fontsize *= zoom_factor
+```
+缩放范围：节点大小 20~∞，字体 5~20pt，边宽 0.5~3.0（指数衰减）。
+
+### 布局支持
+spring / circular / kamada_kawai / shell（按类型分层）四种布局可切换。
+
+## 启动画面 (src/desktop/splash.py)
+
+全屏无边框启动画面，183 行，Tkinter 实现。
+
+### 视觉设计
+- 深绿背景 `#0d2818` + 金色点缀 `#c8953e`
+- 品牌图标（三色装饰圆点）、标题、副标题、进度条、加载消息
+- 8 阶段加载进度（5%→95%），最少显示 9 秒保护
+
+### 架构
+- 独立模式（`parent=None`）：创建独立 `tk.Tk()`，向后兼容
+- 覆盖层模式（`parent=root`）：创建 `tk.Toplevel(parent)` + `-topmost` 全屏置顶
+- 主窗口提前创建后隐藏（`root.withdraw()`），Splash 就绪后 `root.deiconify()`
 
 ## 数据源设计原则
 
 两套配置各有侧重，不合并：
 - `tcm_config.py` — 桌面端/规则引擎用：33常见症状、9证型、15内置药材、14内置方剂。轻量，覆盖日常。无外部依赖。
-- `extended_config.py` — AI/训练管线用：200症状、17证型。完整覆盖，同一包内import，无fallback。
+- `extended_config.py` — AI/训练管线用：200症状、30证型。完整覆盖，同一包内import，无fallback。
 
 **调用链**：
 - `symptom_analysis.py` / `fallback.py` → 引用 `tcm_config.SYNDROME_DEFINITIONS`（9证型，已修复不再引用SYNDROME_RULES的3证型）
-- `data_pipeline.py` → 引用 `extended_config.EXTENDED_SYNDROME_DEFINITIONS`（17证型，直接import无try-except）
+- `data_pipeline.py` → 引用 `extended_config.EXTENDED_SYNDROME_DEFINITIONS`（30证型，直接import无try-except）
 - `data_pipeline._build_indices()` → 引用 `extended_config.EXTENDED_TOXIC_HERBS`（AI端副本，已解决跨包依赖）
 
 ## Bug 修复记录
@@ -185,6 +325,37 @@ ruff check . && ruff format .
 6. **`build_herb_features` 重复实现** — `train.py` 和 `data_pipeline.py` 各自的 `build_herb_features` 逻辑几乎一致，违背 DRY。建议将特征构建逻辑统一放在 `data_pipeline.py` 中，`train.py` 仅从 npz 加载或调用 pipeline 方法。
 7. **`fallback.py` `search_herbs`/`search_formulas` 使用 `in` 匹配** — 关键词搜索使用 `in` 操作符可能存在子串误匹配，建议统一改为 `re.search`。
 8. **`result_verify.py` 导入实际均被使用** — 经代码审查，`re`（正则过滤）和 `datetime`（时间戳）均被使用，非死代码。开发文档可移除该项。
+
+### 第四轮修复（2026-05-23）
+
+#### 已完成
+1. **Splash 覆盖层模式** — `splash.py` 支持 `parent` 参数创建 `Toplevel` 覆盖层，代替独立的 `tk.Tk()`。`launcher.py` 改为先创建主窗口（`root.withdraw()` 隐藏），再创建 Splash Toplevel 全屏置顶覆盖，后台加载完成后 Splash 销毁直接露出主窗口，消除窗口切换感。
+2. **知识图谱缩放同步** — `kg_view.py` 新增 `_zoom_redraw()` + `_auto_zoom_to_fit()`。滚轮缩放时节点直径和标签字体按 `zoom_factor = _base_x_range / current_x_range` 等比缩放。单击节点自动聚焦到1跳邻域并自动缩放适配视图。
+3. **右侧知识面板** — `kg_view.py` standalone 模式改为左右布局，右侧 300px `ScrolledText` 知识详情面板，展示节点属性、药材性味归经、证型推荐、方剂组成等详细知识，支持滚动。
+4. **`_highlight_node` 缩放兼容** — 高亮节点的尺寸也乘以 `_current_zoom`，确保缩放后高亮不偏移。
+
+#### 待优化
+1. **`_highlight_node` 不再被调用** — 单击现在走 `_show_subgraph` + `_auto_zoom_to_fit`，`_highlight_node` 成为死代码。保留以备后续上下文菜单/搜索高亮使用。
+2. **缩放性能** — 每次缩放都会完整重绘（`_draw_subgraph`），节点数 > 200 时可能卡顿。可考虑增量更新 artist 属性（`set_sizes` / `set_fontsize`）替代完全重绘。
+
+### 第五轮修复（2026-05-25）
+
+#### 数据质量修复
+1. **症状列表同步** — `extended_config.py` 中 `EXTENDED_SYMPTOM_LIST` 从 199 → 228 种。补充了30个证型引用缺失的症状（刺痛、痛有定处、干咳、少痰、咳嗽无力、声低、易感冒、颧红、唇甲色淡、唇舌紫暗、舌有瘀斑、舌苔厚腻、肢体酸痛、肢体困重、汗出、小便黄、月经量少、遗精、阳痿、早泄、不孕、久泻、脱肛、子宫脱垂、胃下垂、早衰、发脱、齿摇、皮肤晦暗）。
+2. **证型定义修复** — 30/30 证型全部通过自查（症状均在列表中、药材均在数据库中）：
+   - 湿热蕴结：`便秘或腹泻` 拆分为 `便秘` + `腹泻`
+   - 痰热壅肺/肺阴虚：`贝母` → `川贝母`（数据库实际存储为川贝母/浙贝母/平贝母等多品种）
+3. **方剂 indications 清洗** — 20 条方剂的 indications 中 。号后的治法描述分离到 functions 字段，`functions` 为空从 42 → 22 条
+4. **同义词映射验证** — 42 对症状同义词（如"疲倦→乏力"、"疲劳→乏力"）映射关系正确，无需修复
+
+#### 文档同步更新
+- 更新项目概况为"智能方剂生成系统"
+- 新增系统能力列表（6项）
+- 更新数据流架构（含 KG 融合推荐管线）
+- 更新症状数 200→228
+- 新增数据库用量数据说明
+- 新增禁忌安全筛查体系（6层）
+- 新增知识图谱推理模块详解（builder/query/recommender）
 
 ## 数据库导入（新增外部数据源时用）
 

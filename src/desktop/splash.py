@@ -11,18 +11,14 @@ from typing import Optional, Callable
 
 
 class SplashScreen:
-    """启动画面"""
+    """启动画面（不显示具体进度，仅显示通用加载提示）"""
 
-    # 加载阶段定义
-    STAGES = [
-        ("正在初始化系统...", 0.05),
-        ("正在加载核心模块...", 0.12),
-        ("正在建立知识库连接...", 0.20),
-        ("正在加载知识图谱...", 0.35),
-        ("正在启动智能引擎...", 0.55),
-        ("正在加载模型参数...", 0.70),
-        ("正在优化推理管线...", 0.85),
-        ("准备就绪，即将启动...", 0.95),
+    # 通用加载消息
+    MESSAGES = [
+        "正在加载，请稍候...",
+        "正在加载，请稍候...",
+        "正在加载，请稍候...",
+        "即将启动...",
     ]
 
     def __init__(self, parent: Optional[tk.Tk] = None):
@@ -55,11 +51,38 @@ class SplashScreen:
         self.TEXT_MUTED = "#8aae96"   # 灰绿
 
         self._progress = 0.0
-        self._message = "正在初始化..."
+        self._message = "正在加载，请稍候..."
         self._running = True
         self._on_close: Optional[Callable] = None
 
         self._build_ui()
+        self._start_anim()  # 开始进度条动画
+
+    def _start_anim(self):
+        """进度条往复动画"""
+        self._anim_dir = 1
+        self._anim_pos = 0
+        self._anim()
+
+    def _anim(self):
+        if not self._running:
+            return
+        bar_width = 560  # 进度条总宽度 (padx=40 → 600-80=520... 实际大概)
+        # 实际宽度近似
+        try:
+            bar_width = self.progress_container.winfo_width() - 10 or 520
+        except Exception:
+            bar_width = 520
+        seg = 120  # 光条长度
+        self._anim_pos += self._anim_dir * 6
+        if self._anim_pos >= bar_width - seg:
+            self._anim_dir = -1
+            self._anim_pos = bar_width - seg
+        elif self._anim_pos <= 0:
+            self._anim_dir = 1
+            self._anim_pos = 0
+        self.progress_bar.place(x=self._anim_pos, width=seg)
+        self.root.after(30, self._anim)
 
     def _build_ui(self):
         """构建全屏启动画面UI"""
@@ -111,12 +134,12 @@ class SplashScreen:
         msg.pack(pady=(0, 20))
 
         # ── 进度条 ──
-        progress_container = tk.Frame(inner, bg=self.BG_MID, height=10,
+        self.progress_container = tk.Frame(inner, bg=self.BG_MID, height=10,
                                        highlightthickness=0)
-        progress_container.pack(fill="x", padx=40)
-        progress_container.pack_propagate(False)
+        self.progress_container.pack(fill="x", padx=40)
+        self.progress_container.pack_propagate(False)
 
-        self.progress_bar = tk.Frame(progress_container, bg=self.ACCENT,
+        self.progress_bar = tk.Frame(self.progress_container, bg=self.ACCENT,
                                       height=10, highlightthickness=0)
         self.progress_bar.place(x=0, y=0, width=0, height=10)
 
@@ -137,47 +160,12 @@ class SplashScreen:
     # 公共接口
     # ═══════════════════════════════════════════════
 
-    def update_progress(self, value: float, message: str = ""):
-        """更新进度（0~1）和消息"""
-        self._progress = max(0.0, min(1.0, value))
+    def update_message(self, message: str = ""):
+        """更新加载消息"""
         if message:
             self._message = message
             self.msg_var.set(message)
-        # 更新进度条宽度
-        w = int(520 * self._progress)  # 进度条容器宽度
-        self.progress_bar.place(width=max(4, w))
         self.root.update_idletasks()
-
-    def set_stage(self, index: int):
-        """设置到预定义的加载阶段"""
-        if 0 <= index < len(self.STAGES):
-            msg, prog = self.STAGES[index]
-            self.update_progress(prog, msg)
-
-    def auto_progress(self, duration: float = 3.0, callback: Optional[Callable] = None):
-        """自动推进进度（用于模拟加载）"""
-        def _animate():
-            steps = 30
-            for i in range(steps):
-                if not self._running:
-                    break
-                t = i / steps
-                # 从当前进度到0.95
-                current = self._progress
-                target = 0.95
-                progress = current + (target - current) * (i / steps)
-                # 匹配最近的阶段消息
-                for stage_idx, (msg, stage_prog) in enumerate(self.STAGES):
-                    if progress <= stage_prog:
-                        self.update_progress(progress, msg)
-                        break
-                else:
-                    self.update_progress(progress, "准备就绪，即将启动...")
-                time.sleep(duration / steps)
-            self.update_progress(1.0, "启动完成！")
-            if callback:
-                self.root.after(0, callback)
-        threading.Thread(target=_animate, daemon=True).start()
 
     def close(self):
         """关闭启动画面"""

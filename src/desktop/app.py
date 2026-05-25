@@ -239,11 +239,6 @@ class DesktopApp:
             text="基于深度学习的中医药知识推荐 · 支持症状辨证与方剂推荐",
             style="Subtitle.TLabel",
         ).pack(anchor="w", pady=(4, 0))
-        ttk.Label(
-            hero,
-            text="AI 模式（深度学习）",
-            style="Accent.TLabel",
-        ).pack(anchor="w", pady=(6, 0))
 
         # ── 阴影装饰（Hero 底部投影效果）──
         shadow_bar = tk.Frame(container, bg=self.palette["shadow"], height=1)
@@ -283,21 +278,27 @@ class DesktopApp:
         input_row.pack(fill="x")
 
         self.query_input = tk.Text(
-            input_row, height=2, wrap="word",
+            input_row, height=1, wrap="word",
             font=("Microsoft YaHei UI", 12),
             relief="solid", bd=1,
             background=self.palette["input_bg"],
             foreground=self.palette["text"],
             insertbackground=self.palette["primary"],
-            highlightthickness=0, padx=12, pady=6,
+            highlightthickness=0, padx=12, pady=4,
         )
         self.query_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
+        self.clear_button = ttk.Button(
+            input_row, text="清空", style="Primary.TButton", width=6,
+            command=self._clear_query
+        )
+        self.clear_button.pack(side="right")
+
         self.submit_button = ttk.Button(
-            input_row, text="搜索", style="Primary.TButton",
+            input_row, text="搜索", style="Primary.TButton", width=6,
             command=self._submit_query
         )
-        self.submit_button.pack(side="right")
+        self.submit_button.pack(side="right", padx=(6, 0))
 
         # 快捷标签
         tags_row = tk.Frame(search_area, bg=self.palette["card"])
@@ -321,21 +322,24 @@ class DesktopApp:
         status_line.pack(fill="x", pady=(4, 0))
         self.status_var = tk.StringVar(value="输入症状，搜索中医药知识")
         tk.Label(status_line, textvariable=self.status_var,
-                 bg=self.palette["card"], fg=self.palette["muted"],
-                 font=("Microsoft YaHei UI", 9)).pack(side="left")
+                 bg=self.palette["card"], fg=self.palette["primary"],
+                 font=("Microsoft YaHei UI", 10, "bold")).pack(side="left")
         self.progress = ttk.Progressbar(
             status_line, mode="indeterminate", length=140,
             style="green.Horizontal.TProgressbar"
         )
         self.progress.pack(side="right")
 
-        # ── 结果区域（上下分栏） ──
-        result_paned = ttk.Panedwindow(container, orient="vertical")
-        result_paned.pack(fill="both", expand=True, pady=(4, 0))
+        # ── 结果区域（子标签页：推荐结果 + 知识图谱） ──
+        self._home_notebook = ttk.Notebook(container)
+        self._home_notebook.pack(fill="both", expand=True, pady=(4, 0))
 
-        # ── 上：推荐结果 ──
-        top_panel = ttk.Frame(result_paned, style="Card.TFrame", padding=10)
-        result_paned.add(top_panel, weight=1)
+        # ── 标签1：推荐结果 ──
+        result_tab = ttk.Frame(self._home_notebook, style="App.TFrame", padding=4)
+        self._home_notebook.add(result_tab, text="推荐结果")
+
+        top_panel = ttk.Frame(result_tab, style="Card.TFrame", padding=10)
+        top_panel.pack(fill="both", expand=True)
 
         tk.Frame(top_panel, bg=self.palette["primary"], height=2).pack(fill="x", pady=(0, 8))
         tk.Label(top_panel, text="推荐结果",
@@ -354,9 +358,12 @@ class DesktopApp:
         )
         self.answer_text.pack(fill="both", expand=True)
 
-        # ── 下：搜索后展示的知识图谱 ──
-        self._home_kg_frame = tk.Frame(result_paned, bg=self.palette["bg"])
-        # 初始不添加到 paned，搜索后才 add
+        # ── 标签2：知识图谱 ──
+        kg_tab = ttk.Frame(self._home_notebook, style="App.TFrame", padding=4)
+        self._home_notebook.add(kg_tab, text="知识图谱")
+
+        self._home_kg_frame = tk.Frame(kg_tab, bg=self.palette["bg"])
+        self._home_kg_frame.pack(fill="both", expand=True)
 
         self._home_kg_view = None
         if HAS_KG:
@@ -614,8 +621,10 @@ class DesktopApp:
 
     def _run_query(self, query: str) -> None:
         try:
-            pipeline = SymptomPipeline()
-            detected = pipeline.detect(query)
+            from src.desktop.service import detect_symptoms_nlu
+            # NLU 优先，失败降级关键词
+            detected = detect_symptoms_nlu(query)
+            logger.info("检测到症状: %s", detected)
             result = self.service.query(query, detected)
             self.result_queue.put(("success", result))
         except RuntimeError as exc:
@@ -653,7 +662,11 @@ class DesktopApp:
         self._set_text(self.answer_text, answer)
         self._load_history()
 
-        # ── 搜索后在首页动态展示相关知识图谱 ──
+        # ── 切换到推荐结果标签页 ──
+        if hasattr(self, '_home_notebook'):
+            self._home_notebook.select(0)  # 0 = 推荐结果
+
+        # ── 搜索后更新知识图谱标签页 ──
         if self._home_kg_view is not None:
             try:
                 knowledge = data.get("knowledge", {})
@@ -662,15 +675,6 @@ class DesktopApp:
                 syndrome_name = syndrome_info.get("name") if isinstance(syndrome_info, dict) else None
                 herb_names = [h["name"] for h in knowledge.get("herbs", [])]
                 formula_names = [f["name"] for f in knowledge.get("formulas", [])]
-
-                # 将 KG 面板动态加入结果区下方
-                if self._home_kg_frame is not None:
-                    parent = self._home_kg_frame.master
-                    if hasattr(parent, 'panes') and self._home_kg_frame not in parent.panes():
-                        try:
-                            parent.add(self._home_kg_frame, weight=1)
-                        except Exception as exc:
-                            logger.warning("知识图谱面板添加失败: %s", exc)
 
                 self._home_kg_view.show_query_result(
                     symptoms=symptoms,

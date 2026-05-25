@@ -103,7 +103,7 @@ class TCMRecommender:
         logger.info("推荐器初始化完成")
 
     def parse_symptoms(self, symptom_text: str) -> Tuple[List[int], List[str], List[str]]:
-        """解析症状文本"""
+        """解析症状文本（精确匹配，症状由上游 NLU 或关键词模块提取）"""
         for sep in [' ', ',', '，', '、', ';', '；']:
             symptom_text = symptom_text.replace(sep, ' ')
 
@@ -117,19 +117,10 @@ class TCMRecommender:
                 symptom_ids.append(self.symptom_to_id[symp])
                 valid_symptoms.append(symp)
             else:
-                # 尝试别名匹配
-                matched = False
-                for std_name, sid in self.symptom_to_id.items():
-                    if symp in std_name or std_name in symp:
-                        symptom_ids.append(sid)
-                        valid_symptoms.append(std_name)
-                        matched = True
-                        break
-                if not matched:
-                    unknown_symptoms.append(symp)
+                unknown_symptoms.append(symp)
 
         if unknown_symptoms:
-            logger.warning("未知症状：%s", unknown_symptoms)
+            logger.warning("未知症状（不在 229 症状列表中）: %s", unknown_symptoms)
         if symptoms and not symptom_ids:
             logger.warning("所有症状都无效，输入：%s", symptoms)
 

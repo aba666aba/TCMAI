@@ -114,7 +114,7 @@ class _BgLoader:
             self._send_stage(4)  # "正在启动智能引擎..."
             time.sleep(1.5)
 
-            self._send(0.65, "正在初始化推理管线...")
+            self._send("正在初始化推理管线...")
             self.log.info("后台预加载推理管线...")
             try:
                 from tcm_recommender.data_pipeline import TCMDataPipeline
@@ -124,7 +124,7 @@ class _BgLoader:
             except Exception as exc:
                 self.log.warning("推理管线预加载失败(不影响启动): %s", exc)
 
-            self._send(0.85, "准备就绪...")
+            self._send("准备就绪...")
             time.sleep(1.0)
         except Exception as exc:
             self.log.warning("后台初始化异常(不影响启动): %s", exc)
@@ -132,22 +132,19 @@ class _BgLoader:
             self._ready = True
 
     def _send_stage(self, index):
-        self._progress_q.put(("stage", index, None))
+        self._progress_q.put("正在加载，请稍候...")
 
-    def _send(self, progress, message):
-        self._progress_q.put(("progress", progress, message))
+    def _send(self, message):
+        self._progress_q.put(message)
 
     # ── 主线程轮询 ──
 
     def _poll_progress(self):
-        """主线程执行：消费进度队列，更新 Splash UI"""
+        """主线程执行：消费消息队列，更新 Splash UI"""
         try:
             while True:
-                kind, a, b = self._progress_q.get_nowait()
-                if kind == "stage":
-                    self.splash.set_stage(a)
-                elif kind == "progress":
-                    self.splash.update_progress(a, b)
+                msg = self._progress_q.get_nowait()
+                self.splash.update_message(msg)
         except queue.Empty:
             pass
 

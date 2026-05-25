@@ -487,6 +487,7 @@ def main():
         data = pipeline.generate_samples(args.samples)
         pipeline.save(data, str(data_path))
         pipeline.close()
+        data = dict(np.load(data_path, allow_pickle=True))  # 重新加载（含 herb_features 缓存）
     else:
         logger.info("加载已有数据: %s", data_path)
         data = dict(np.load(data_path, allow_pickle=True))

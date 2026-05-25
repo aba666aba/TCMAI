@@ -230,7 +230,7 @@ class KnowledgeGraphView(ttk.Frame):
         self.fig = Figure(figsize=(10, 7), dpi=80, facecolor="#fcfcfc")
         self.ax = self.fig.add_subplot(111)
         self.ax.set_facecolor("#fcfcfc")
-        self.fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+        self.fig.subplots_adjust(left=0.02, right=0.98, top=0.92, bottom=0.02)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=canvas_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -861,7 +861,7 @@ class KnowledgeGraphView(ttk.Frame):
         n_edges = sub.number_of_edges()
         title_font = max(8, min(18, 11 * zoom_factor ** 0.6))
         self.ax.set_title(f"「{name}」的关联网络 ({n_nodes}节点, {n_edges}边)",
-                          fontsize=title_font, color="#333", pad=8)
+                          fontsize=title_font, color="#333", pad=12)
         self.canvas.draw_idle()
 
     # ── 缩放同步重绘 ──
@@ -1169,10 +1169,10 @@ class KnowledgeGraphView(ttk.Frame):
             self._set_detail(f"未在图谱中找到相关节点: {symptoms}")
             return
 
-        # 优先用证型作为中心
+        # 优先用首个症状作为中心，让用户看到自己输入的症状关联了什么
         primary = target_nodes[0]
         for n in target_nodes:
-            if g.nodes[n].get("type") == "Syndrome":
+            if g.nodes[n].get("type") == "Symptom":
                 primary = n
                 break
 
