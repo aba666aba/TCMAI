@@ -7,8 +7,9 @@ TCM 知识图谱查询接口
 - 推理查询（症状→证型→药物推荐）
 - 最短路径分析
 """
+
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 
 import networkx as nx
 
@@ -25,8 +26,9 @@ class KnowledgeGraphQuery:
     # 实体查询
     # ═══════════════════════════════════════════
 
-    def find_nodes(self, name: Optional[str] = None,
-                   node_type: Optional[str] = None) -> list[str]:
+    def find_nodes(
+        self, name: Optional[str] = None, node_type: Optional[str] = None
+    ) -> list[str]:
         """按名称和类型查找节点"""
         results = []
         for nid in self.graph.nodes:
@@ -52,8 +54,9 @@ class KnowledgeGraphQuery:
     # 关系查询
     # ═══════════════════════════════════════════
 
-    def get_neighbors(self, node_id: str,
-                      edge_type: Optional[str] = None) -> list[tuple[str, str, dict]]:
+    def get_neighbors(
+        self, node_id: str, edge_type: Optional[str] = None
+    ) -> list[tuple[str, str, dict]]:
         """获取邻接节点（含边信息）"""
         results = []
         for _, neighbor, data in self.graph.edges(node_id, data=True):
@@ -70,8 +73,7 @@ class KnowledgeGraphQuery:
     # 推理查询
     # ═══════════════════════════════════════════
 
-    def symptom_to_recommendation(self, symptom_name: str,
-                                  top_k: int = 10) -> Dict:
+    def symptom_to_recommendation(self, symptom_name: str, top_k: int = 10) -> Dict:
         """
         症状→推荐（核心推理链路）
 
@@ -99,9 +101,7 @@ class KnowledgeGraphQuery:
             if data.get("type") == "associated_with_herb":
                 herb_scores.append((self._node_name(nbr), data.get("weight", 0)))
         herb_scores.sort(key=lambda x: -x[1])
-        result["herbs"] = [
-            {"name": h, "score": s} for h, s in herb_scores[:top_k]
-        ]
+        result["herbs"] = [{"name": h, "score": s} for h, s in herb_scores[:top_k]]
 
         # 3. 查关联方剂
         formula_scores = []
@@ -202,10 +202,12 @@ class KnowledgeGraphQuery:
             elif etype == "composes":
                 profile["in_formulas"].append(self._node_name(nbr))
             elif etype == "co_occurs_with":
-                profile["co_occurring_herbs"].append({
-                    "name": self._node_name(nbr),
-                    "strength": edata.get("weight", 0),
-                })
+                profile["co_occurring_herbs"].append(
+                    {
+                        "name": self._node_name(nbr),
+                        "strength": edata.get("weight", 0),
+                    }
+                )
             elif etype == "incompatible_with":
                 profile["incompatible_with"].append(self._node_name(nbr))
 
@@ -215,10 +217,12 @@ class KnowledgeGraphQuery:
                 continue
             for _, nbr2, edata2 in self.graph.edges(nid, data=True):
                 if nbr2 == hnid and edata2.get("type") == "associated_with_herb":
-                    profile["associated_symptoms"].append({
-                        "name": self._node_name(nid),
-                        "weight": edata2.get("weight", 0),
-                    })
+                    profile["associated_symptoms"].append(
+                        {
+                            "name": self._node_name(nid),
+                            "weight": edata2.get("weight", 0),
+                        }
+                    )
 
         # 排序
         profile["co_occurring_herbs"].sort(key=lambda x: -x["strength"])
@@ -237,8 +241,7 @@ class KnowledgeGraphQuery:
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return None
 
-    def recommend_by_symptoms(self, symptoms: list[str],
-                              top_k: int = 10) -> dict:
+    def recommend_by_symptoms(self, symptoms: list[str], top_k: int = 10) -> dict:
         """
         综合推荐：多症状 → 多证型 → 综合药材+方剂
         """

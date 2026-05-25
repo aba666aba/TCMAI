@@ -4,11 +4,12 @@ TCM 知识图谱构建器
 从 database + config + pipeline 抽取实体和关系，
 构建 NetworkX 有向图。
 """
+
 import logging
 import sqlite3
 import re
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import networkx as nx
 
@@ -34,20 +35,20 @@ class TCMKnowledgeGraph:
     FLAVOR = "Flavor"
 
     # 关系类型
-    BELONGS_TO = "belongs_to"                # 症状→证型
-    RECOMMENDS_HERB = "recommends_herb"       # 证型→药材
-    RECOMMENDS_FORMULA = "recommends_formula" # 证型→方剂
-    ASSOC_HERB = "associated_with_herb"       # 症状→药材
-    ASSOC_FORMULA = "associated_with_formula" # 症状→方剂
-    COMPOSES = "composes"                     # 药材→方剂
-    HAS_NATURE = "has_nature"                 # 药材→性
-    HAS_FLAVOR = "has_flavor"                 # 药材→味
-    HAS_MERIDIAN = "has_meridian"             # 药材→归经
-    BELONGS_CAT = "belongs_to_category"       # 药材→分类
-    INCOMPATIBLE = "incompatible_with"        # 药材↔药材
-    TOXIC = "toxic"                           # 药材→标记
-    CO_OCCURS = "co_occurs_with"              # 药材↔药材
-    TREATS = "treats"                         # 方剂→症状（从主治）
+    BELONGS_TO = "belongs_to"  # 症状→证型
+    RECOMMENDS_HERB = "recommends_herb"  # 证型→药材
+    RECOMMENDS_FORMULA = "recommends_formula"  # 证型→方剂
+    ASSOC_HERB = "associated_with_herb"  # 症状→药材
+    ASSOC_FORMULA = "associated_with_formula"  # 症状→方剂
+    COMPOSES = "composes"  # 药材→方剂
+    HAS_NATURE = "has_nature"  # 药材→性
+    HAS_FLAVOR = "has_flavor"  # 药材→味
+    HAS_MERIDIAN = "has_meridian"  # 药材→归经
+    BELONGS_CAT = "belongs_to_category"  # 药材→分类
+    INCOMPATIBLE = "incompatible_with"  # 药材↔药材
+    TOXIC = "toxic"  # 药材→标记
+    CO_OCCURS = "co_occurs_with"  # 药材↔药材
+    TREATS = "treats"  # 方剂→症状（从主治）
 
     def __init__(self, db_path: Optional[str] = None):
         self.graph = nx.MultiDiGraph()
@@ -80,9 +81,11 @@ class TCMKnowledgeGraph:
         self._add_syndrome_recommendations()
         # 构建一次pipeline，各方法共享
         import sys
+
         sys.path.insert(0, str(_PROJECT / "src"))
         sys.path.insert(0, str(_PROJECT))
         from tcm_recommender.data_pipeline import TCMDataPipeline
+
         pipeline = TCMDataPipeline(self.db_path)
         pipeline.load_all()
 
@@ -92,9 +95,11 @@ class TCMKnowledgeGraph:
         self._add_cooccurrence(pipeline)
 
         logger.info("=" * 50)
-        logger.info("构建完成: %s 节点, %s 边",
-                     self.graph.number_of_nodes(),
-                     self.graph.number_of_edges())
+        logger.info(
+            "构建完成: %s 节点, %s 边",
+            self.graph.number_of_nodes(),
+            self.graph.number_of_edges(),
+        )
         return self
 
     # ═══════════════════════════════════════════
@@ -104,6 +109,7 @@ class TCMKnowledgeGraph:
     def _add_symptoms_and_syndromes_nodes(self):
         """添加症状和证型节点（不含推荐边）"""
         import sys
+
         sys.path.insert(0, str(_PROJECT / "src"))
         sys.path.insert(0, str(_PROJECT))
         from tcm_recommender.extended_config import (
@@ -135,7 +141,8 @@ class TCMKnowledgeGraph:
             for sym in syn_def.get("symptoms", []):
                 if self.graph.has_node(f"symptom:{sym}"):
                     self.graph.add_edge(
-                        f"symptom:{sym}", f"syndrome:{syn_name}",
+                        f"symptom:{sym}",
+                        f"syndrome:{syn_name}",
                         type=self.BELONGS_TO,
                         label="属于",
                     )
@@ -145,6 +152,7 @@ class TCMKnowledgeGraph:
     def _add_syndrome_recommendations(self):
         """在所有节点就绪后添加证型推荐边"""
         import sys
+
         sys.path.insert(0, str(_PROJECT / "src"))
         sys.path.insert(0, str(_PROJECT))
         from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
@@ -155,7 +163,8 @@ class TCMKnowledgeGraph:
                 nid = f"herb:{herb_name}"
                 if self.graph.has_node(nid):
                     self.graph.add_edge(
-                        f"syndrome:{syn_name}", nid,
+                        f"syndrome:{syn_name}",
+                        nid,
                         type=self.RECOMMENDS_HERB,
                         label="推荐药材",
                     )
@@ -165,7 +174,8 @@ class TCMKnowledgeGraph:
                 nid = f"formula:{fml_name}"
                 if self.graph.has_node(nid):
                     self.graph.add_edge(
-                        f"syndrome:{syn_name}", nid,
+                        f"syndrome:{syn_name}",
+                        nid,
                         type=self.RECOMMENDS_FORMULA,
                         label="推荐方剂",
                     )
@@ -178,9 +188,11 @@ class TCMKnowledgeGraph:
         """从数据库添加药材节点"""
         conn = self._db
         cur = conn.cursor()
-        cur.execute("SELECT id, name, category, efficacy, indications, "
-                     "nature, flavor, meridian, usage, contraindications, source "
-                     "FROM herbs ORDER BY id")
+        cur.execute(
+            "SELECT id, name, category, efficacy, indications, "
+            "nature, flavor, meridian, usage, contraindications, source "
+            "FROM herbs ORDER BY id"
+        )
         rows = cur.fetchall()
         for row in rows:
             hid, name, cat, eff, ind, nat, flv, mer, usage, contra, src = row
@@ -209,7 +221,8 @@ class TCMKnowledgeGraph:
                         name=cat_clean,
                     )
                 self.graph.add_edge(
-                    f"herb:{name}", f"category:{cat_clean}",
+                    f"herb:{name}",
+                    f"category:{cat_clean}",
                     type=self.BELONGS_CAT,
                     label="属于分类",
                 )
@@ -223,9 +236,11 @@ class TCMKnowledgeGraph:
         """从数据库添加方剂节点"""
         conn = self._db
         cur = conn.cursor()
-        cur.execute("SELECT id, name, category, source_book, composition, "
-                     "dosage, functions, indications, usage, modification "
-                     "FROM formulas ORDER BY id")
+        cur.execute(
+            "SELECT id, name, category, source_book, composition, "
+            "dosage, functions, indications, usage, modification "
+            "FROM formulas ORDER BY id"
+        )
         rows = cur.fetchall()
         for row in rows:
             fid, name, cat, src, comp, dose, func, ind, usage, mod = row
@@ -252,9 +267,11 @@ class TCMKnowledgeGraph:
     def _add_patent_medicines(self):
         conn = self._db
         cur = conn.cursor()
-        cur.execute("SELECT id, name, category, composition, functions, "
-                     "indications, usage_dosage, contraindications, source "
-                     "FROM patent_medicines ORDER BY id")
+        cur.execute(
+            "SELECT id, name, category, composition, functions, "
+            "indications, usage_dosage, contraindications, source "
+            "FROM patent_medicines ORDER BY id"
+        )
         rows = cur.fetchall()
         for row in rows:
             pid, name, cat, comp, func, ind, usage, contra, src = row
@@ -279,8 +296,10 @@ class TCMKnowledgeGraph:
     def _add_folk_remedies(self):
         conn = self._db
         cur = conn.cursor()
-        cur.execute("SELECT id, disease, remedy, ingredients, method, source "
-                     "FROM folk_remedies ORDER BY id")
+        cur.execute(
+            "SELECT id, disease, remedy, ingredients, method, source "
+            "FROM folk_remedies ORDER BY id"
+        )
         rows = cur.fetchall()
         for row in rows:
             rid, disease, remedy, ingr, method, src = row
@@ -307,8 +326,18 @@ class TCMKnowledgeGraph:
         nature_values = {"寒", "热", "温", "凉", "平", "微寒", "微温", "大寒", "大热"}
         flavor_values = {"酸", "苦", "甘", "辛", "咸", "淡", "涩"}
         meridian_names = {
-            "心", "肝", "脾", "肺", "肾", "胆", "胃", "大肠", "小肠",
-            "膀胱", "三焦", "心包",
+            "心",
+            "肝",
+            "脾",
+            "肺",
+            "肾",
+            "胆",
+            "胃",
+            "大肠",
+            "小肠",
+            "膀胱",
+            "三焦",
+            "心包",
         }
 
         for nid in list(self.graph.nodes):
@@ -344,18 +373,27 @@ class TCMKnowledgeGraph:
                         self.graph.add_node(mn, type=self.MERIDIAN, name=mv)
                     self.graph.add_edge(nid, mn, type=self.HAS_MERIDIAN, label=mv)
 
-        self.stats["nodes"]["Nature"] = len([
-            n for n in self.graph.nodes
-            if self.graph.nodes[n].get("type") == self.NATURE
-        ])
-        self.stats["nodes"]["Flavor"] = len([
-            n for n in self.graph.nodes
-            if self.graph.nodes[n].get("type") == self.FLAVOR
-        ])
-        self.stats["nodes"]["Meridian"] = len([
-            n for n in self.graph.nodes
-            if self.graph.nodes[n].get("type") == self.MERIDIAN
-        ])
+        self.stats["nodes"]["Nature"] = len(
+            [
+                n
+                for n in self.graph.nodes
+                if self.graph.nodes[n].get("type") == self.NATURE
+            ]
+        )
+        self.stats["nodes"]["Flavor"] = len(
+            [
+                n
+                for n in self.graph.nodes
+                if self.graph.nodes[n].get("type") == self.FLAVOR
+            ]
+        )
+        self.stats["nodes"]["Meridian"] = len(
+            [
+                n
+                for n in self.graph.nodes
+                if self.graph.nodes[n].get("type") == self.MERIDIAN
+            ]
+        )
 
     # ═══════════════════════════════════════════
     # 7. 症状-药材/方剂 关联
@@ -381,7 +419,8 @@ class TCMKnowledgeGraph:
                     hnid = f"herb:{herb_name}"
                     if self.graph.has_node(hnid):
                         self.graph.add_edge(
-                            snid, hnid,
+                            snid,
+                            hnid,
                             type=self.ASSOC_HERB,
                             weight=float(val),
                             label="关联",
@@ -409,7 +448,8 @@ class TCMKnowledgeGraph:
                     snid = f"symptom:{s_name}"
                     if self.graph.has_node(snid):
                         self.graph.add_edge(
-                            snid, fnid,
+                            snid,
+                            fnid,
                             type=self.ASSOC_FORMULA,
                             weight=float(sfm[si, fi]),
                             label="关联",
@@ -437,7 +477,8 @@ class TCMKnowledgeGraph:
                 hnid = f"herb:{herb_name}"
                 if self.graph.has_node(hnid):
                     self.graph.add_edge(
-                        hnid, fnid,
+                        hnid,
+                        fnid,
                         type=self.COMPOSES,
                         label="组成",
                     )
@@ -451,6 +492,7 @@ class TCMKnowledgeGraph:
     def _add_incompatibilities(self):
         """添加十八反十九畏 和 毒性"""
         import sys
+
         sys.path.insert(0, str(_PROJECT / "src"))
         from core.tcm_config import INCOMPATIBLE_HERBS, TOXIC_HERBS
 
@@ -462,10 +504,12 @@ class TCMKnowledgeGraph:
                     h1, h2 = pair
                     n1, n2 = f"herb:{h1}", f"herb:{h2}"
                     if self.graph.has_node(n1) and self.graph.has_node(n2):
-                        self.graph.add_edge(n1, n2, type=self.INCOMPATIBLE,
-                                            label=f"{category_name}")
-                        self.graph.add_edge(n2, n1, type=self.INCOMPATIBLE,
-                                            label=f"{category_name}")
+                        self.graph.add_edge(
+                            n1, n2, type=self.INCOMPATIBLE, label=f"{category_name}"
+                        )
+                        self.graph.add_edge(
+                            n2, n1, type=self.INCOMPATIBLE, label=f"{category_name}"
+                        )
 
         # 孕妇禁用标记
         pregnant_forbidden = INCOMPATIBLE_HERBS.get("孕妇禁用", [])
@@ -506,7 +550,8 @@ class TCMKnowledgeGraph:
                     n1, n2 = f"herb:{h1}", f"herb:{h2}"
                     if self.graph.has_node(n1) and self.graph.has_node(n2):
                         self.graph.add_edge(
-                            n1, n2,
+                            n1,
+                            n2,
                             type=self.CO_OCCURS,
                             weight=float(val),
                             label="共现",

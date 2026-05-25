@@ -2,8 +2,6 @@ import concurrent.futures
 import json
 import logging
 import os
-import platform
-import re
 import sys
 import threading
 from contextlib import contextmanager
@@ -15,16 +13,17 @@ from typing import Any, Optional
 from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
 from core.tcm_config import generate_health_tips
-from core.intelligent_search import IntelligentSearch
 
 # NLU 引擎（延迟导入，避免启动时加载大模型）
 _nlu_engine: Optional[Any] = None
+
 
 def _get_nlu_engine():
     global _nlu_engine
     if _nlu_engine is None:
         try:
             from nlu import NLUEngine
+
             _nlu_engine = NLUEngine(device="cuda", use_4bit=True)
             _nlu_engine.load()
             logger.info("NLU 引擎已就绪")
@@ -32,6 +31,7 @@ def _get_nlu_engine():
             logger.warning("NLU 引擎加载失败，使用关键词匹配降级: %s", exc)
             _nlu_engine = False
     return _nlu_engine if _nlu_engine is not False else None
+
 
 def detect_symptoms_nlu(text: str) -> list[str]:
     """NLU 优先检测症状，失败降级到关键词匹配
@@ -41,6 +41,7 @@ def detect_symptoms_nlu(text: str) -> list[str]:
     expanded = list(text)
     try:
         from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
+
         for syn_name, syn_info in EXTENDED_SYNDROME_DEFINITIONS.items():
             # 精确匹配或包含匹配：如"肾虚"匹配"肾阳虚""肾阴虚"等
             # 多种匹配：精确/包含/前缀/字符集包含（肾虚→肾阳虚/肾阴虚）
@@ -49,8 +50,12 @@ def detect_symptoms_nlu(text: str) -> list[str]:
             startswith = syn_name.startswith(text) or text.startswith(syn_name)
             char_match = set(text) <= set(syn_name) and len(text) >= 2
             if text_in_syn or syn_in_text or startswith or char_match:
-                logger.info("检测到证型名: %s → %s，展开症状: %s",
-                            text, syn_name, syn_info["symptoms"][:5])
+                logger.info(
+                    "检测到证型名: %s → %s，展开症状: %s",
+                    text,
+                    syn_name,
+                    syn_info["symptoms"][:5],
+                )
                 expanded.extend(syn_info["symptoms"])
     except ImportError:
         pass
@@ -69,7 +74,9 @@ def detect_symptoms_nlu(text: str) -> list[str]:
 
     # ── 降级：关键词匹配 ──
     from core.symptom_pipeline import SymptomPipeline
+
     return SymptomPipeline().detect(enhanced_text)
+
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +103,7 @@ def format_intelligent_knowledge_for_display(intel_result: dict[str, Any]) -> st
     if syndromes:
         syndrome_parts = []
         for syn in syndromes[:2]:
-            syndrome_parts.append(
-                f"{syn['syndrome']}({syn['score']:.0%})"
-            )
+            syndrome_parts.append(f"{syn['syndrome']}({syn['score']:.0%})")
         parts.append(f"【推断证型】{'，'.join(syndrome_parts)}")
 
     # 推荐的方剂
@@ -114,23 +119,17 @@ def format_intelligent_knowledge_for_display(intel_result: dict[str, Any]) -> st
     # 知识库搜索到的方剂
     db_formulas = intel_result.get("formulas", [])
     if db_formulas:
-        parts.append(
-            f"【知识库方剂】{', '.join(f['name'] for f in db_formulas[:5])}"
-        )
+        parts.append(f"【知识库方剂】{', '.join(f['name'] for f in db_formulas[:5])}")
 
     # 药材
     db_herbs = intel_result.get("herbs", [])
     if db_herbs:
-        parts.append(
-            f"【相关药材】{', '.join(h['name'] for h in db_herbs[:5])}"
-        )
+        parts.append(f"【相关药材】{', '.join(h['name'] for h in db_herbs[:5])}")
 
     # 中成药
     db_patents = intel_result.get("patent_medicines", [])
     if db_patents:
-        parts.append(
-            f"【相关中成药】{', '.join(p['name'] for p in db_patents[:5])}"
-        )
+        parts.append(f"【相关中成药】{', '.join(p['name'] for p in db_patents[:5])}")
 
     return "\n".join(parts) if parts else "暂无相关知识"
 
@@ -162,9 +161,11 @@ class TCMDesktopService:
             handle.seek(0)
             if sys.platform == "win32":
                 import msvcrt
+
                 msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
             else:
                 import fcntl
+
                 fcntl.lockf(handle, fcntl.LOCK_EX)
             try:
                 yield
@@ -172,9 +173,11 @@ class TCMDesktopService:
                 handle.seek(0)
                 if sys.platform == "win32":
                     import msvcrt
+
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
                 else:
                     import fcntl
+
                     fcntl.lockf(handle, fcntl.LOCK_UN)
 
     def _sanitize_history_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -230,7 +233,9 @@ class TCMDesktopService:
 
     def save_history(self) -> None:
         try:
-            sanitized = self._normalize_history(self.history_data)[-self.MAX_HISTORY_ITEMS :]
+            sanitized = self._normalize_history(self.history_data)[
+                -self.MAX_HISTORY_ITEMS :
+            ]
             with self._acquire_file_lock():
                 with NamedTemporaryFile(
                     "w",
@@ -296,7 +301,9 @@ class TCMDesktopService:
         parts = []
 
         parts.append("【症状分析】")
-        parts.append(f"根据您描述的症状：{'、'.join(symptoms) if symptoms else query_text}")
+        parts.append(
+            f"根据您描述的症状：{'、'.join(symptoms) if symptoms else query_text}"
+        )
 
         if result.get("symptoms"):
             parts.append(f"系统识别到：{'、'.join(result['symptoms'])}")
@@ -396,7 +403,9 @@ class TCMDesktopService:
                 if attempt == 0:
                     logger.warning("推荐模型推理超时，重试一次…")
                     continue
-                raise RuntimeError("AI 模型推理超时，请稍后重试。若持续超时，请检查 GPU/CPU 负载。")
+                raise RuntimeError(
+                    "AI 模型推理超时，请稍后重试。若持续超时，请检查 GPU/CPU 负载。"
+                )
             except Exception as exc:
                 logger.error("推荐模型推理失败(%s): %s", type(exc).__name__, exc)
                 if attempt == 0:
@@ -432,9 +441,13 @@ class TCMDesktopService:
                 ],
             }
 
-        disclaimer = "温馨提示：本结果基于深度学习模型推荐，仅供参考。实际用药请咨询专业中医师。"
+        disclaimer = (
+            "温馨提示：本结果基于深度学习模型推荐，仅供参考。实际用药请咨询专业中医师。"
+        )
 
-        history_item = self._append_history(query_text, filtered_symptoms, final_answer, "ai")
+        history_item = self._append_history(
+            query_text, filtered_symptoms, final_answer, "ai"
+        )
         return {
             "success": True,
             "answer": final_answer,
@@ -482,9 +495,13 @@ class TCMDesktopService:
         }
         return answer, knowledge
 
-    def _append_history(self, query_text: str, symptoms: list[str], answer: str, mode: str) -> dict[str, Any]:
+    def _append_history(
+        self, query_text: str, symptoms: list[str], answer: str, mode: str
+    ) -> dict[str, Any]:
         with self.history_lock:
-            next_id = max((item.get("id", 0) for item in self.history_data), default=0) + 1
+            next_id = (
+                max((item.get("id", 0) for item in self.history_data), default=0) + 1
+            )
             record = self._sanitize_history_item(
                 {
                     "id": next_id,
@@ -513,7 +530,9 @@ class TCMDesktopService:
     def delete_history_item(self, item_id: int) -> bool:
         with self.history_lock:
             before = len(self.history_data)
-            self.history_data[:] = [item for item in self.history_data if item.get("id") != item_id]
+            self.history_data[:] = [
+                item for item in self.history_data if item.get("id") != item_id
+            ]
             changed = len(self.history_data) != before
             if changed:
                 self.save_history()

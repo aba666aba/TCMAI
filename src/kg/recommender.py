@@ -6,10 +6,11 @@ KG 增强推荐器
   2. KG推理 → 症状→证型→推荐药材/方剂（含路径）
   3. 融合 → 加权合并 + 图谱验证 + 推理路径解释
 """
+
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 
@@ -31,19 +32,19 @@ class KGEnhancedRecommender:
         self.model = model_recommender
         self.kg = kg_query
         self.cfg = kg_config or {
-            "model_weight": 0.6,      # 模型预测权重
-            "kg_weight": 0.4,         # KG推理权重
-            "kg_boost": 0.15,         # KG验证通过的额外加分
-            "syndrome_weight": 0.3,   # 证型推荐路径权重
+            "model_weight": 0.6,  # 模型预测权重
+            "kg_weight": 0.4,  # KG推理权重
+            "kg_boost": 0.15,  # KG验证通过的额外加分
+            "syndrome_weight": 0.3,  # 证型推荐路径权重
         }
 
     # ═══════════════════════════════════════════
     # 主入口
     # ═══════════════════════════════════════════
 
-    def recommend(self, symptom_text: str,
-                  top_k_herb: int = 10,
-                  top_k_formula: int = 5) -> Dict:
+    def recommend(
+        self, symptom_text: str, top_k_herb: int = 10, top_k_formula: int = 5
+    ) -> Dict:
         """
         KG 增强推荐
 
@@ -129,17 +130,13 @@ class KGEnhancedRecommender:
                 if h not in path_herbs:
                     path_herbs[h] = {"score": 0, "paths": []}
                 path_herbs[h]["score"] += match_ratio
-                path_herbs[h]["paths"].append(
-                    f"症状→{syn_name}→{h}"
-                )
+                path_herbs[h]["paths"].append(f"症状→{syn_name}→{h}")
             # 证型→方剂
             for f in syn.get("recommended_formulas", []):
                 if f not in path_formulas:
                     path_formulas[f] = {"score": 0, "paths": []}
                 path_formulas[f]["score"] += match_ratio
-                path_formulas[f]["paths"].append(
-                    f"症状→{syn_name}→{f}"
-                )
+                path_formulas[f]["paths"].append(f"症状→{syn_name}→{f}")
 
         # 归一化分数到 [0, 1]
         for d in [path_herbs, path_formulas]:
@@ -180,8 +177,9 @@ class KGEnhancedRecommender:
     # 融合
     # ═══════════════════════════════════════════
 
-    def _fusion(self, model_result: Dict, kg_result: Dict,
-                top_k_herb: int, top_k_formula: int) -> Dict:
+    def _fusion(
+        self, model_result: Dict, kg_result: Dict, top_k_herb: int, top_k_formula: int
+    ) -> Dict:
         """融合模型预测 + KG推理结果"""
 
         # ── 药材融合 ──
@@ -203,7 +201,9 @@ class KGEnhancedRecommender:
             herb_scores[name]["kg_score"] = max(
                 herb_scores[name]["kg_score"], info["score"]
             )
-            herb_scores[name]["path"] = info["paths"][0] if info["paths"] else "证型推荐"
+            herb_scores[name]["path"] = (
+                info["paths"][0] if info["paths"] else "证型推荐"
+            )
 
         # KG 直接关联
         for name, score in kg_result["symptom_direct"]["herbs"].items():
@@ -227,13 +227,15 @@ class KGEnhancedRecommender:
             # 如果模型和KG都推荐 → 额外加分
             if ms > 0 and ks > 0:
                 fused_score += boost
-            fused_herbs.append({
-                "name": name,
-                "score": round(fused_score, 4),
-                "model_score": round(ms, 4),
-                "kg_score": round(ks, 4),
-                "path": scores["path"],
-            })
+            fused_herbs.append(
+                {
+                    "name": name,
+                    "score": round(fused_score, 4),
+                    "model_score": round(ms, 4),
+                    "kg_score": round(ks, 4),
+                    "path": scores["path"],
+                }
+            )
 
         fused_herbs.sort(key=lambda x: -x["score"])
 
@@ -253,7 +255,9 @@ class KGEnhancedRecommender:
             formula_scores[name]["kg_score"] = max(
                 formula_scores[name]["kg_score"], info["score"]
             )
-            formula_scores[name]["path"] = info["paths"][0] if info["paths"] else "证型推荐"
+            formula_scores[name]["path"] = (
+                info["paths"][0] if info["paths"] else "证型推荐"
+            )
 
         for name, score in kg_result["symptom_direct"]["formulas"].items():
             if name not in formula_scores:
@@ -269,13 +273,15 @@ class KGEnhancedRecommender:
             fused_score = ms * mw + ks * kw
             if ms > 0 and ks > 0:
                 fused_score += boost
-            fused_formulas.append({
-                "name": name,
-                "score": round(fused_score, 4),
-                "model_score": round(ms, 4),
-                "kg_score": round(ks, 4),
-                "path": scores["path"],
-            })
+            fused_formulas.append(
+                {
+                    "name": name,
+                    "score": round(fused_score, 4),
+                    "model_score": round(ms, 4),
+                    "kg_score": round(ks, 4),
+                    "path": scores["path"],
+                }
+            )
 
         fused_formulas.sort(key=lambda x: -x["score"])
 
@@ -290,8 +296,7 @@ class KGEnhancedRecommender:
     # 可解释性：推理路径
     # ═══════════════════════════════════════════
 
-    def _build_paths(self, symptoms: list[str],
-                     kg_result: dict) -> list[dict]:
+    def _build_paths(self, symptoms: list[str], kg_result: dict) -> list[dict]:
         """构建可读的推理路径"""
         paths = []
 
@@ -300,35 +305,41 @@ class KGEnhancedRecommender:
             syn_name = syn["name"]
             matched = syn.get("matched_symptom_count", 0)
             desc = syn.get("description", "")
-            paths.append({
-                "type": "syndrome_reasoning",
-                "title": f"辨证: {syn_name}",
-                "detail": (
-                    f"输入症状中 {matched} 个匹配「{syn_name}」证型"
-                    + (f"（{desc}）" if desc else "")
-                ),
-                "path": " → ".join(symptoms[:4] + [syn_name]),
-            })
+            paths.append(
+                {
+                    "type": "syndrome_reasoning",
+                    "title": f"辨证: {syn_name}",
+                    "detail": (
+                        f"输入症状中 {matched} 个匹配「{syn_name}」证型"
+                        + (f"（{desc}）" if desc else "")
+                    ),
+                    "path": " → ".join(symptoms[:4] + [syn_name]),
+                }
+            )
 
         # 药材推荐路径
         for syn in kg_result["syndrome_analysis"].get("matched_syndromes", [])[:2]:
             syn_name = syn["name"]
             herbs = syn.get("recommended_herbs", [])[:3]
             if herbs:
-                paths.append({
-                    "type": "herb_recommendation",
-                    "title": f"「{syn_name}」推荐药材",
-                    "detail": f"证型「{syn_name}」的推荐药材: {'、'.join(herbs)}",
-                    "path": f"症状 → {syn_name} → {' → '.join(herbs)}",
-                })
+                paths.append(
+                    {
+                        "type": "herb_recommendation",
+                        "title": f"「{syn_name}」推荐药材",
+                        "detail": f"证型「{syn_name}」的推荐药材: {'、'.join(herbs)}",
+                        "path": f"症状 → {syn_name} → {' → '.join(herbs)}",
+                    }
+                )
             formulas = syn.get("recommended_formulas", [])[:2]
             if formulas:
-                paths.append({
-                    "type": "formula_recommendation",
-                    "title": f"「{syn_name}」推荐方剂",
-                    "detail": f"证型「{syn_name}」的推荐方剂: {'、'.join(formulas)}",
-                    "path": f"症状 → {syn_name} → {' → '.join(formulas)}",
-                })
+                paths.append(
+                    {
+                        "type": "formula_recommendation",
+                        "title": f"「{syn_name}」推荐方剂",
+                        "detail": f"证型「{syn_name}」的推荐方剂: {'、'.join(formulas)}",
+                        "path": f"症状 → {syn_name} → {' → '.join(formulas)}",
+                    }
+                )
 
         return paths
 
@@ -336,8 +347,7 @@ class KGEnhancedRecommender:
     # KG 洞察
     # ═══════════════════════════════════════════
 
-    def _kg_insights(self, herbs: list[dict],
-                     formulas: list[dict]) -> dict:
+    def _kg_insights(self, herbs: list[dict], formulas: list[dict]) -> dict:
         """从 KG 提取额外洞察"""
         insights = {}
 
@@ -355,7 +365,7 @@ class KGEnhancedRecommender:
         # 相反相畏
         incompatible_pairs = []
         for i, h1 in enumerate(herbs):
-            for h2 in herbs[i + 1:]:
+            for h2 in herbs[i + 1 :]:
                 profile = self.kg.herb_profile(h1["name"])
                 if isinstance(profile, dict):
                     if h2["name"] in profile.get("incompatible_with", []):
@@ -408,22 +418,34 @@ class KGEnhancedRecommender:
 
         if result.get("syndrome"):
             s = result["syndrome"]
-            lines.append(f"\n🏥 证型：{s['name']} (模型概率: {s.get('confidence', 0)*100:.1f}%)")
+            lines.append(
+                f"\n🏥 证型：{s['name']} (模型概率: {s.get('confidence', 0) * 100:.1f}%)"
+            )
 
         lines.append("\n🌿 推荐药材：")
         for i, h in enumerate(result.get("herbs", []), 1):
-            score_str = f"{h['score']*100:.1f}%"
-            tag = " [模型+图谱]" if h.get("model_score", 0) > 0 and h.get("kg_score", 0) > 0 else \
-                   " [模型]" if h.get("model_score", 0) > 0 else " [图谱]"
+            score_str = f"{h['score'] * 100:.1f}%"
+            tag = (
+                " [模型+图谱]"
+                if h.get("model_score", 0) > 0 and h.get("kg_score", 0) > 0
+                else " [模型]"
+                if h.get("model_score", 0) > 0
+                else " [图谱]"
+            )
             lines.append(f"  {i}. {h['name']} ({score_str}){tag}")
             if h.get("path"):
                 lines.append(f"     路径: {h['path']}")
 
         lines.append("\n📜 推荐方剂：")
         for i, f in enumerate(result.get("formulas", []), 1):
-            score_str = f"{f['score']*100:.1f}%"
-            tag = " [模型+图谱]" if f.get("model_score", 0) > 0 and f.get("kg_score", 0) > 0 else \
-                   " [模型]" if f.get("model_score", 0) > 0 else " [图谱]"
+            score_str = f"{f['score'] * 100:.1f}%"
+            tag = (
+                " [模型+图谱]"
+                if f.get("model_score", 0) > 0 and f.get("kg_score", 0) > 0
+                else " [模型]"
+                if f.get("model_score", 0) > 0
+                else " [图谱]"
+            )
             lines.append(f"  {i}. {f['name']} ({score_str}){tag}")
 
         if result.get("reasoning_paths"):

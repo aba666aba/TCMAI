@@ -23,7 +23,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
@@ -43,181 +43,280 @@ MIN_SYMPTOMS = 2
 RANDOM_SEED = 42
 
 
-
-
 # ── 功能关键词→症状映射表（用于方剂反推增强） ──
 
 _FUNCTION_SYMPTOM_MAP = {
-        "风寒": ["恶寒", "发热", "无汗", "头痛", "鼻塞"],
-        "风热": ["发热", "恶风", "咽喉肿痛", "口渴", "头痛"],
-        "风邪": ["恶寒", "发热", "头痛", "鼻塞"],
-        "暑邪": ["发热", "口渴", "心烦"],
-        "湿邪": ["脘痞", "腹胀", "食欲不振", "便溏", "水肿"],
-        "燥邪": ["口干", "咽干", "干咳", "皮肤干燥"],
-        "清热": ["发热", "口渴", "咽喉肿痛", "口干", "心烦", "面赤"],
-        "解毒": ["发热", "咽喉肿痛", "疮疡", "痈肿"],
-        "泻火": ["发热", "口渴", "心烦", "面赤", "目赤", "牙龈肿痛"],
-        "凉血": ["发热", "斑疹", "便血", "鼻衄", "皮肤发黄"],
-        "滋阴": ["口干", "盗汗", "五心烦热", "手足心热", "消瘦"],
-        "养阴": ["口干", "盗汗", "五心烦热", "咽干"],
-        "生津": ["口干", "口渴", "咽干"],
-        "温阳": ["畏寒", "手足不温", "面色苍白", "腰膝酸软"],
-        "助阳": ["畏寒", "腰膝酸软", "夜尿多"],
-        "壮阳": ["畏寒", "腰膝酸软", "阳痿"],
-        "补肾": ["腰膝酸软", "耳鸣", "头晕", "夜尿多", "腰酸"],
-        "补肝": ["头晕", "目眩", "视物模糊", "胁痛"],
-        "健脾": ["食欲不振", "乏力", "便溏", "腹胀", "面色萎黄"],
-        "补脾": ["食欲不振", "乏力", "便溏", "腹胀"],
-        "养心": ["心悸", "失眠", "心烦", "健忘"],
-        "补心": ["心悸", "气短", "乏力", "失眠"],
-        "润肺": ["干咳", "咽干", "咳嗽", "少痰"],
-        "宣肺": ["咳嗽", "鼻塞", "无汗"],
-        "清肺": ["咳嗽", "痰黄", "发热", "咽喉肿痛"],
-        "疏肝": ["胁痛", "胁胀", "善太息", "抑郁", "易怒"],
-        "平肝": ["头晕", "头痛", "眩晕", "耳鸣"],
-        "潜阳": ["头晕", "头痛", "眩晕", "耳鸣"],
-        "理气": ["胸闷", "胁胀", "腹胀", "胃胀", "嗳气"],
-        "行气": ["胸闷", "胁痛", "腹胀", "胃痛"],
-        "活血": ["胸痛", "胁痛", "痛经", "月经不调", "经行腹痛"],
-        "化瘀": ["胸痛", "胁痛", "痛经", "经行腹痛"],
-        "止血": ["便血", "牙龈出血", "鼻衄", "月经过多", "崩漏"],
-        "散瘀": ["胸痛", "胁痛", "刺痛"],
-        "祛瘀": ["胸痛", "胁痛", "月经不调"],
-        "益气": ["乏力", "气短", "自汗", "神疲", "懒言"],
-        "补气": ["乏力", "气短", "自汗", "神疲", "面色苍白"],
-        "养血": ["面色萎黄", "心悸", "头晕", "失眠", "月经不调"],
-        "补血": ["面色萎黄", "心悸", "头晕", "失眠", "月经不调"],
-        "安神": ["失眠", "多梦", "心悸", "心烦", "健忘"],
-        "开窍": ["神昏", "谵语"],
-        "化痰": ["咳嗽", "咳痰", "痰多", "气喘"],
-        "祛痰": ["咳嗽", "咳痰", "痰多"],
-        "止咳": ["咳嗽"],
-        "平喘": ["气喘", "哮喘"],
-        "消食": ["食欲不振", "纳呆", "腹胀", "嗳气"],
-        "导滞": ["腹胀", "便秘", "食欲不振"],
-        "利水": ["水肿", "小便不利", "浮肿"],
-        "通淋": ["小便不利", "小便涩痛", "小便短赤"],
-        "退黄": ["皮肤发黄", "目黄"],
-        "祛湿": ["便溏", "水肿", "脘痞", "腹胀"],
-        "燥湿": ["便溏", "脘痞", "食欲不振"],
-        "化湿": ["脘痞", "腹胀", "恶心", "食欲不振"],
-        "祛风": ["头痛", "关节痛", "皮肤瘙痒", "恶寒"],
-        "除痹": ["关节痛", "关节肿胀", "四肢麻木", "腰痛"],
-        "通络": ["四肢麻木", "关节痛", "胸痛"],
-        "止痛": ["头痛", "腹痛", "胸痛", "胁痛", "胃痛", "腰痛", "关节痛"],
-        "散寒": ["恶寒", "畏寒", "腹痛", "手足不温"],
-        "温中": ["腹痛", "腹泻", "畏寒", "食欲不振"],
-        "降逆": ["恶心", "呕吐", "嗳气", "呃逆"],
-        "解表": ["恶寒", "发热", "头痛", "鼻塞", "无汗"],
-        "发汗": ["无汗", "恶寒", "发热"],
-        "固表": ["自汗", "乏力", "气短"],
-        "固精": ["遗尿", "夜尿多", "带下过多"],
-        "缩尿": ["遗尿", "夜尿多", "小便频数"],
-        "止带": ["带下过多"],
-        "安胎": ["胎动不安"],
-        "通便": ["便秘", "大便干结"],
-        "润肠": ["便秘", "大便干结"],
-        "泻下": ["便秘", "大便干结"],
-        "消痈": ["疮疡", "痈肿"],
-        "排脓": ["疮疡", "咳痰"],
-        "明目": ["视物模糊", "目赤", "目涩", "目眩"],
-        "利咽": ["咽喉肿痛", "咽干", "声音嘶哑"],
-        "通窍": ["鼻塞", "头痛"],
-        "醒神": ["神昏"],
-        "息风": ["四肢抽搐", "头晕", "眩晕"],
-        "定惊": ["四肢抽搐", "善惊", "心悸"],
-        "截疟": ["寒战", "发热"],
-        "驱虫": ["腹痛"],
-        "降火": ["发热", "口渴", "心烦", "牙龈肿痛", "口疮"],
-        "退虚热": ["五心烦热", "骨蒸发热", "盗汗", "手足心热"],
-        "清心": ["心烦", "失眠", "口疮", "心悸"],
-        "清肝": ["目赤", "头痛", "头晕", "胁痛", "易怒"],
-        "清胃": ["牙龈肿痛", "口臭", "口渴", "胃痛"],
-        "温肾": ["畏寒", "腰膝酸软", "夜尿多", "腰冷痛"],
-        "补肺": ["气短", "咳嗽", "自汗", "乏力"],
-        "疏风": ["头痛", "恶寒", "发热", "鼻塞"],
-        "润燥": ["口干", "咽干", "皮肤干燥", "便秘"],
-        "清暑": ["发热", "口渴", "心烦"],
-        "化浊": ["脘痞", "恶心", "食欲不振"],
-        "久咳": ["咳嗽"], "咳喘": ["咳嗽", "气喘"], "咳嗽": ["咳嗽"],
-        "肺寒": ["咳嗽", "咳痰", "气喘"], "胃寒": ["胃痛", "腹痛", "呕吐"],
-        "肝火": ["头痛", "目赤", "易怒", "口苦"], "心火": ["心烦", "口疮", "失眠"],
-        "肺热": ["咳嗽", "痰黄", "咽喉肿痛"],
-        "湿热": ["发热", "小便短赤", "带下色黄", "皮肤发黄"],
-        "痰湿": ["咳痰", "痰多", "脘痞", "食欲不振"],
-        "气虚": ["乏力", "气短", "自汗", "神疲"],
-        "血虚": ["面色萎黄", "心悸", "头晕", "失眠"],
-        "阴虚": ["口干", "盗汗", "五心烦热", "消瘦"],
-        "阳虚": ["畏寒", "手足不温", "腰膝酸软"],
-        "气滞": ["胸闷", "胁胀", "腹胀", "嗳气"],
-        "血瘀": ["胸痛", "胁痛", "痛经", "月经不调"],
-        "目赤": ["目赤", "目眵多", "目痛"],
-        "鼻渊": ["鼻塞", "鼻流浊涕", "头痛"],
-        "鼻鼽": ["鼻塞", "鼻流清涕", "鼻痒", "喷嚏"],
-        "喉痹": ["咽喉肿痛", "咽干", "咽痒"],
-        "口疮": ["口疮", "口臭"],
-        "目痒": ["目痒", "目赤"],
-        "耳疮": ["耳痛", "耳痒"],
-        "斑疹": ["斑疹", "皮疹", "斑丘疹", "皮肤瘙痒"],
-        "口糜": ["口疮", "口黏腻"],
-        "口味异常": ["口甜", "口酸", "口咸", "口苦", "口淡", "口黏腻"],
-    }
+    "风寒": ["恶寒", "发热", "无汗", "头痛", "鼻塞"],
+    "风热": ["发热", "恶风", "咽喉肿痛", "口渴", "头痛"],
+    "风邪": ["恶寒", "发热", "头痛", "鼻塞"],
+    "暑邪": ["发热", "口渴", "心烦"],
+    "湿邪": ["脘痞", "腹胀", "食欲不振", "便溏", "水肿"],
+    "燥邪": ["口干", "咽干", "干咳", "皮肤干燥"],
+    "清热": ["发热", "口渴", "咽喉肿痛", "口干", "心烦", "面赤"],
+    "解毒": ["发热", "咽喉肿痛", "疮疡", "痈肿"],
+    "泻火": ["发热", "口渴", "心烦", "面赤", "目赤", "牙龈肿痛"],
+    "凉血": ["发热", "斑疹", "便血", "鼻衄", "皮肤发黄"],
+    "滋阴": ["口干", "盗汗", "五心烦热", "手足心热", "消瘦"],
+    "养阴": ["口干", "盗汗", "五心烦热", "咽干"],
+    "生津": ["口干", "口渴", "咽干"],
+    "温阳": ["畏寒", "手足不温", "面色苍白", "腰膝酸软"],
+    "助阳": ["畏寒", "腰膝酸软", "夜尿多"],
+    "壮阳": ["畏寒", "腰膝酸软", "阳痿"],
+    "补肾": ["腰膝酸软", "耳鸣", "头晕", "夜尿多", "腰酸"],
+    "补肝": ["头晕", "目眩", "视物模糊", "胁痛"],
+    "健脾": ["食欲不振", "乏力", "便溏", "腹胀", "面色萎黄"],
+    "补脾": ["食欲不振", "乏力", "便溏", "腹胀"],
+    "养心": ["心悸", "失眠", "心烦", "健忘"],
+    "补心": ["心悸", "气短", "乏力", "失眠"],
+    "润肺": ["干咳", "咽干", "咳嗽", "少痰"],
+    "宣肺": ["咳嗽", "鼻塞", "无汗"],
+    "清肺": ["咳嗽", "痰黄", "发热", "咽喉肿痛"],
+    "疏肝": ["胁痛", "胁胀", "善太息", "抑郁", "易怒"],
+    "平肝": ["头晕", "头痛", "眩晕", "耳鸣"],
+    "潜阳": ["头晕", "头痛", "眩晕", "耳鸣"],
+    "理气": ["胸闷", "胁胀", "腹胀", "胃胀", "嗳气"],
+    "行气": ["胸闷", "胁痛", "腹胀", "胃痛"],
+    "活血": ["胸痛", "胁痛", "痛经", "月经不调", "经行腹痛"],
+    "化瘀": ["胸痛", "胁痛", "痛经", "经行腹痛"],
+    "止血": ["便血", "牙龈出血", "鼻衄", "月经过多", "崩漏"],
+    "散瘀": ["胸痛", "胁痛", "刺痛"],
+    "祛瘀": ["胸痛", "胁痛", "月经不调"],
+    "益气": ["乏力", "气短", "自汗", "神疲", "懒言"],
+    "补气": ["乏力", "气短", "自汗", "神疲", "面色苍白"],
+    "养血": ["面色萎黄", "心悸", "头晕", "失眠", "月经不调"],
+    "补血": ["面色萎黄", "心悸", "头晕", "失眠", "月经不调"],
+    "安神": ["失眠", "多梦", "心悸", "心烦", "健忘"],
+    "开窍": ["神昏", "谵语"],
+    "化痰": ["咳嗽", "咳痰", "痰多", "气喘"],
+    "祛痰": ["咳嗽", "咳痰", "痰多"],
+    "止咳": ["咳嗽"],
+    "平喘": ["气喘", "哮喘"],
+    "消食": ["食欲不振", "纳呆", "腹胀", "嗳气"],
+    "导滞": ["腹胀", "便秘", "食欲不振"],
+    "利水": ["水肿", "小便不利", "浮肿"],
+    "通淋": ["小便不利", "小便涩痛", "小便短赤"],
+    "退黄": ["皮肤发黄", "目黄"],
+    "祛湿": ["便溏", "水肿", "脘痞", "腹胀"],
+    "燥湿": ["便溏", "脘痞", "食欲不振"],
+    "化湿": ["脘痞", "腹胀", "恶心", "食欲不振"],
+    "祛风": ["头痛", "关节痛", "皮肤瘙痒", "恶寒"],
+    "除痹": ["关节痛", "关节肿胀", "四肢麻木", "腰痛"],
+    "通络": ["四肢麻木", "关节痛", "胸痛"],
+    "止痛": ["头痛", "腹痛", "胸痛", "胁痛", "胃痛", "腰痛", "关节痛"],
+    "散寒": ["恶寒", "畏寒", "腹痛", "手足不温"],
+    "温中": ["腹痛", "腹泻", "畏寒", "食欲不振"],
+    "降逆": ["恶心", "呕吐", "嗳气", "呃逆"],
+    "解表": ["恶寒", "发热", "头痛", "鼻塞", "无汗"],
+    "发汗": ["无汗", "恶寒", "发热"],
+    "固表": ["自汗", "乏力", "气短"],
+    "固精": ["遗尿", "夜尿多", "带下过多"],
+    "缩尿": ["遗尿", "夜尿多", "小便频数"],
+    "止带": ["带下过多"],
+    "安胎": ["胎动不安"],
+    "通便": ["便秘", "大便干结"],
+    "润肠": ["便秘", "大便干结"],
+    "泻下": ["便秘", "大便干结"],
+    "消痈": ["疮疡", "痈肿"],
+    "排脓": ["疮疡", "咳痰"],
+    "明目": ["视物模糊", "目赤", "目涩", "目眩"],
+    "利咽": ["咽喉肿痛", "咽干", "声音嘶哑"],
+    "通窍": ["鼻塞", "头痛"],
+    "醒神": ["神昏"],
+    "息风": ["四肢抽搐", "头晕", "眩晕"],
+    "定惊": ["四肢抽搐", "善惊", "心悸"],
+    "截疟": ["寒战", "发热"],
+    "驱虫": ["腹痛"],
+    "降火": ["发热", "口渴", "心烦", "牙龈肿痛", "口疮"],
+    "退虚热": ["五心烦热", "骨蒸发热", "盗汗", "手足心热"],
+    "清心": ["心烦", "失眠", "口疮", "心悸"],
+    "清肝": ["目赤", "头痛", "头晕", "胁痛", "易怒"],
+    "清胃": ["牙龈肿痛", "口臭", "口渴", "胃痛"],
+    "温肾": ["畏寒", "腰膝酸软", "夜尿多", "腰冷痛"],
+    "补肺": ["气短", "咳嗽", "自汗", "乏力"],
+    "疏风": ["头痛", "恶寒", "发热", "鼻塞"],
+    "润燥": ["口干", "咽干", "皮肤干燥", "便秘"],
+    "清暑": ["发热", "口渴", "心烦"],
+    "化浊": ["脘痞", "恶心", "食欲不振"],
+    "久咳": ["咳嗽"],
+    "咳喘": ["咳嗽", "气喘"],
+    "咳嗽": ["咳嗽"],
+    "肺寒": ["咳嗽", "咳痰", "气喘"],
+    "胃寒": ["胃痛", "腹痛", "呕吐"],
+    "肝火": ["头痛", "目赤", "易怒", "口苦"],
+    "心火": ["心烦", "口疮", "失眠"],
+    "肺热": ["咳嗽", "痰黄", "咽喉肿痛"],
+    "湿热": ["发热", "小便短赤", "带下色黄", "皮肤发黄"],
+    "痰湿": ["咳痰", "痰多", "脘痞", "食欲不振"],
+    "气虚": ["乏力", "气短", "自汗", "神疲"],
+    "血虚": ["面色萎黄", "心悸", "头晕", "失眠"],
+    "阴虚": ["口干", "盗汗", "五心烦热", "消瘦"],
+    "阳虚": ["畏寒", "手足不温", "腰膝酸软"],
+    "气滞": ["胸闷", "胁胀", "腹胀", "嗳气"],
+    "血瘀": ["胸痛", "胁痛", "痛经", "月经不调"],
+    "目赤": ["目赤", "目眵多", "目痛"],
+    "鼻渊": ["鼻塞", "鼻流浊涕", "头痛"],
+    "鼻鼽": ["鼻塞", "鼻流清涕", "鼻痒", "喷嚏"],
+    "喉痹": ["咽喉肿痛", "咽干", "咽痒"],
+    "口疮": ["口疮", "口臭"],
+    "目痒": ["目痒", "目赤"],
+    "耳疮": ["耳痛", "耳痒"],
+    "斑疹": ["斑疹", "皮疹", "斑丘疹", "皮肤瘙痒"],
+    "口糜": ["口疮", "口黏腻"],
+    "口味异常": ["口甜", "口酸", "口咸", "口苦", "口淡", "口黏腻"],
+}
 
 # ── 症状同义词映射（口语/近似表达→标准症状名） ──
 _SYMPTOM_SYNONYM_MAP = {
-    "疲倦": "乏力", "疲劳": "乏力", "没劲": "乏力", "无力": "乏力",
-    "倦怠": "乏力", "浑身无力": "乏力",
-    "面部浮肿": "浮肿", "脸肿": "浮肿", "眼皮肿": "浮肿",
-    "面色晦暗": "面色萎黄", "脸色暗": "面色萎黄",
-    "头皮麻木": "四肢麻木", "头重": "头重",
-    "骨蒸发热": "五心烦热", "战汗": "自汗",
-    "视物模糊": "目眩", "口渴不欲饮": "口干", "烦渴引饮": "口渴",
-    "完谷不化": "腹泻", "大便失禁": "腹泻",
-    "抑郁": "善太息", "善悲": "抑郁", "善恐": "善惊", "痴呆": "健忘",
-    "月经先后无定期": "月经不调", "月经过少": "月经不调", "经期延长": "月经不调",
-    "带下色黄": "带下过多", "带下色白": "带下过多", "带下赤白": "带下过多",
-    "皮疹": "皮肤瘙痒", "风团": "皮肤瘙痒",
-    "颈项强痛": "头痛", "关节变形": "关节痛",
-    "胃部疼痛": "胃痛", "胃疼": "胃痛", "胃胀": "胃痛",
-    "消谷善饥": "多食易饥", "偏嗜异物": "食欲不振",
-    "痰白": "咳痰", "少腹痛": "腹痛", "小腹痛": "腹痛",
-    "小便清长": "小便频数", "易醒": "失眠", "多梦": "失眠",
+    "疲倦": "乏力",
+    "疲劳": "乏力",
+    "没劲": "乏力",
+    "无力": "乏力",
+    "倦怠": "乏力",
+    "浑身无力": "乏力",
+    "面部浮肿": "浮肿",
+    "脸肿": "浮肿",
+    "眼皮肿": "浮肿",
+    "面色晦暗": "面色萎黄",
+    "脸色暗": "面色萎黄",
+    "头皮麻木": "四肢麻木",
+    "头重": "头重",
+    "骨蒸发热": "五心烦热",
+    "战汗": "自汗",
+    "视物模糊": "目眩",
+    "口渴不欲饮": "口干",
+    "烦渴引饮": "口渴",
+    "完谷不化": "腹泻",
+    "大便失禁": "腹泻",
+    "抑郁": "善太息",
+    "善悲": "抑郁",
+    "善恐": "善惊",
+    "痴呆": "健忘",
+    "月经先后无定期": "月经不调",
+    "月经过少": "月经不调",
+    "经期延长": "月经不调",
+    "带下色黄": "带下过多",
+    "带下色白": "带下过多",
+    "带下赤白": "带下过多",
+    "皮疹": "皮肤瘙痒",
+    "风团": "皮肤瘙痒",
+    "颈项强痛": "头痛",
+    "关节变形": "关节痛",
+    "胃部疼痛": "胃痛",
+    "胃疼": "胃痛",
+    "胃胀": "胃痛",
+    "消谷善饥": "多食易饥",
+    "偏嗜异物": "食欲不振",
+    "痰白": "咳痰",
+    "少腹痛": "腹痛",
+    "小腹痛": "腹痛",
+    "小便清长": "小便频数",
+    "易醒": "失眠",
+    "多梦": "失眠",
 }
 
 # ── 药材别名→正名映射（用于关联继承） ──
 _HERB_ALIAS_MAP = {
-    "杭菊花": "菊花", "甘菊花": "菊花", "毫菊花": "菊花",
-    "黄菊花": "菊花", "白菊花": "菊花", "滁菊花": "菊花",
-    "忍冬花": "金银花", "双花": "金银花", "二宝花": "金银花",
-    "二花": "金银花", "银花": "金银花",
-    "黄花地丁": "蒲公英", "婆婆丁": "蒲公英", "公英": "蒲公英",
-    "甘枸杞": "枸杞子", "杞子": "枸杞子", "宁夏枸杞": "枸杞子", "枸杞": "枸杞子",
-    "女贞实": "女贞子", "冬青子": "女贞子", "腊树子": "女贞子",
-    "明天麻": "天麻", "赤箭": "天麻", "定风草": "天麻", "羊角天麻": "天麻",
-    "赤芝": "灵芝", "灵芝草": "灵芝", "菌灵芝": "灵芝",
-    "三七末": "三七", "山漆": "三七", "金不换": "三七", "田七": "三七",
-    "薏米": "薏苡仁", "苡仁": "薏苡仁", "苡米": "薏苡仁",
-    "米仁": "薏苡仁", "生薏仁": "薏苡仁", "炒薏仁": "薏苡仁", "麸炒薏仁": "薏苡仁",
-    "制何首乌": "何首乌", "首乌": "何首乌",
-    "北五味子": "五味子", "南五味子": "五味子", "华中五味子": "五味子",
-    "川连": "黄连", "雅连": "黄连", "云连": "黄连", "鸡爪连": "黄连", "味连": "黄连",
-    "坤草": "益母草", "茺蔚草": "益母草", "益母": "益母草",
-    "光杏仁": "杏仁", "杏核仁": "杏仁", "北杏仁": "杏仁", "苦杏仁": "杏仁",
-    "枝子": "栀子", "焦栀子": "栀子", "炒栀子": "栀子", "生栀子": "栀子",
-    "杷叶": "枇杷叶", "炙枇杷叶": "枇杷叶", "蜜枇杷叶": "枇杷叶",
-    "竹二青": "竹茹", "淡竹茹": "竹茹", "姜竹茹": "竹茹",
-    "龙芽草": "仙鹤草", "脱力草": "仙鹤草", "石打穿": "仙鹤草",
-    "菟丝实": "菟丝子", "吐丝子": "菟丝子", "炒菟丝子": "菟丝子", "盐菟丝子": "菟丝子",
-    "国老": "甘草", "甜草": "甘草", "蜜甘草": "甘草", "粉甘草": "甘草", "甘草梢": "甘草",
-    "野山参": "人参", "园参": "人参", "高丽参": "人参",
-    "生晒参": "人参", "糖参": "人参", "白参": "人参", "吉林参": "人参",
-    "当归须": "当归", "秦归": "当归",
-    "艾草": "艾叶", "白芨": "白及", "丁香花": "丁香", "冬桑叶": "桑叶",
-    "牡丹": "牡丹皮", "虫草": "冬虫夏草", "虫草花": "冬虫夏草",
+    "杭菊花": "菊花",
+    "甘菊花": "菊花",
+    "毫菊花": "菊花",
+    "黄菊花": "菊花",
+    "白菊花": "菊花",
+    "滁菊花": "菊花",
+    "忍冬花": "金银花",
+    "双花": "金银花",
+    "二宝花": "金银花",
+    "二花": "金银花",
+    "银花": "金银花",
+    "黄花地丁": "蒲公英",
+    "婆婆丁": "蒲公英",
+    "公英": "蒲公英",
+    "甘枸杞": "枸杞子",
+    "杞子": "枸杞子",
+    "宁夏枸杞": "枸杞子",
+    "枸杞": "枸杞子",
+    "女贞实": "女贞子",
+    "冬青子": "女贞子",
+    "腊树子": "女贞子",
+    "明天麻": "天麻",
+    "赤箭": "天麻",
+    "定风草": "天麻",
+    "羊角天麻": "天麻",
+    "赤芝": "灵芝",
+    "灵芝草": "灵芝",
+    "菌灵芝": "灵芝",
+    "三七末": "三七",
+    "山漆": "三七",
+    "金不换": "三七",
+    "田七": "三七",
+    "薏米": "薏苡仁",
+    "苡仁": "薏苡仁",
+    "苡米": "薏苡仁",
+    "米仁": "薏苡仁",
+    "生薏仁": "薏苡仁",
+    "炒薏仁": "薏苡仁",
+    "麸炒薏仁": "薏苡仁",
+    "制何首乌": "何首乌",
+    "首乌": "何首乌",
+    "北五味子": "五味子",
+    "南五味子": "五味子",
+    "华中五味子": "五味子",
+    "川连": "黄连",
+    "雅连": "黄连",
+    "云连": "黄连",
+    "鸡爪连": "黄连",
+    "味连": "黄连",
+    "坤草": "益母草",
+    "茺蔚草": "益母草",
+    "益母": "益母草",
+    "光杏仁": "杏仁",
+    "杏核仁": "杏仁",
+    "北杏仁": "杏仁",
+    "苦杏仁": "杏仁",
+    "枝子": "栀子",
+    "焦栀子": "栀子",
+    "炒栀子": "栀子",
+    "生栀子": "栀子",
+    "杷叶": "枇杷叶",
+    "炙枇杷叶": "枇杷叶",
+    "蜜枇杷叶": "枇杷叶",
+    "竹二青": "竹茹",
+    "淡竹茹": "竹茹",
+    "姜竹茹": "竹茹",
+    "龙芽草": "仙鹤草",
+    "脱力草": "仙鹤草",
+    "石打穿": "仙鹤草",
+    "菟丝实": "菟丝子",
+    "吐丝子": "菟丝子",
+    "炒菟丝子": "菟丝子",
+    "盐菟丝子": "菟丝子",
+    "国老": "甘草",
+    "甜草": "甘草",
+    "蜜甘草": "甘草",
+    "粉甘草": "甘草",
+    "甘草梢": "甘草",
+    "野山参": "人参",
+    "园参": "人参",
+    "高丽参": "人参",
+    "生晒参": "人参",
+    "糖参": "人参",
+    "白参": "人参",
+    "吉林参": "人参",
+    "当归须": "当归",
+    "秦归": "当归",
+    "艾草": "艾叶",
+    "白芨": "白及",
+    "丁香花": "丁香",
+    "冬桑叶": "桑叶",
+    "牡丹": "牡丹皮",
+    "虫草": "冬虫夏草",
+    "虫草花": "冬虫夏草",
     # 第二批次别名（补充）
-    "九节菖蒲": "石菖蒲", "鲜菖蒲": "石菖蒲",
-    "人参芦": "人参", "土人参叶": "人参",
-    "黎芦": "藜芦", "藜芦（鲜）": "藜芦",
+    "九节菖蒲": "石菖蒲",
+    "鲜菖蒲": "石菖蒲",
+    "人参芦": "人参",
+    "土人参叶": "人参",
+    "黎芦": "藜芦",
+    "藜芦（鲜）": "藜芦",
     "升药": "升药",
     "落地生根": "落地生根",
     "番木瓜": "番木瓜",
@@ -226,6 +325,7 @@ _HERB_ALIAS_MAP = {
     "青礞石": "青礞石",
     "苦楝根皮": "苦楝根皮",
 }
+
 
 class TCMDataPipeline:
     """大规模中医药训练数据管线"""
@@ -279,8 +379,13 @@ class TCMDataPipeline:
         self._build_indices()
         self._build_association_matrices()
         self._build_cooccurrence()
-        logger.info("数据加载完成: %s 药材 | %s 方剂 | %s 症状 | %s 证型",
-                     self.num_herbs, self.num_formulas, self.num_symptoms, self.num_syndromes)
+        logger.info(
+            "数据加载完成: %s 药材 | %s 方剂 | %s 症状 | %s 证型",
+            self.num_herbs,
+            self.num_formulas,
+            self.num_symptoms,
+            self.num_syndromes,
+        )
         return self
 
     def _load_herbs(self):
@@ -308,6 +413,7 @@ class TCMDataPipeline:
     def _load_symptoms(self):
         # 统一使用 extended_config（同包，无需 try-import fallback）
         from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST
+
         self.symptoms = list(EXTENDED_SYMPTOM_LIST)
         self.num_symptoms = len(self.symptoms)
         self.symptom_to_idx = {s: i for i, s in enumerate(self.symptoms)}
@@ -316,6 +422,7 @@ class TCMDataPipeline:
     def _load_syndromes(self):
         # 统一使用 extended_config（17 证型），替代早期的 SYNDROME_RULES（3 证型）
         from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
+
         self.syndromes = EXTENDED_SYNDROME_DEFINITIONS
         self.num_syndromes = len(self.syndromes)
         logger.info("  [OK] 证型: %s", self.num_syndromes)
@@ -337,9 +444,13 @@ class TCMDataPipeline:
             for i in range(1, self.num_herbs + 1)
         ]
         from tcm_recommender.extended_config import EXTENDED_TOXIC_HERBS
+
         toxic_set = set(EXTENDED_TOXIC_HERBS)
         self.herb_toxic_mask = np.array(
-            [1.0 if self.herb_names[i] in toxic_set else 0.0 for i in range(self.num_herbs)],
+            [
+                1.0 if self.herb_names[i] in toxic_set else 0.0
+                for i in range(self.num_herbs)
+            ],
             dtype=np.float32,
         )
 
@@ -388,8 +499,11 @@ class TCMDataPipeline:
                         sym_herb[si, hi] = 0.8
                         formula_backprop += 1
 
-        logger.info("    文本匹配: %s 关联, 方剂反推: %s 新增",
-                     text_match_count, formula_backprop)
+        logger.info(
+            "    文本匹配: %s 关联, 方剂反推: %s 新增",
+            text_match_count,
+            formula_backprop,
+        )
 
         # ── 第三层：药材分类语义匹配 ──
         category_symptom_map = {
@@ -403,7 +517,15 @@ class TCMDataPipeline:
             "理气": ["胸闷", "胁胀", "腹胀", "胃胀", "嗳气", "善太息", "乳房胀痛"],
             "消食": ["食欲不振", "纳呆", "腹胀", "嗳气", "多食易饥"],
             "止血": ["便血", "牙龈出血", "鼻衄", "月经过多", "崩漏"],
-            "活血化瘀": ["胸痛", "胁痛", "痛经", "月经不调", "经行头痛", "经行乳房胀痛", "癃闭"],
+            "活血化瘀": [
+                "胸痛",
+                "胁痛",
+                "痛经",
+                "月经不调",
+                "经行头痛",
+                "经行乳房胀痛",
+                "癃闭",
+            ],
             "化痰止咳": ["咳嗽", "咳痰", "气喘", "痰多", "痰黄", "喉中痰鸣"],
             "安神": ["失眠", "多梦", "心悸", "心烦", "健忘", "易惊"],
             "平肝息风": ["头晕", "头痛", "眩晕", "耳鸣", "四肢抽搐", "四肢麻木"],
@@ -417,14 +539,14 @@ class TCMDataPipeline:
             "攻毒杀虫": ["皮肤瘙痒", "疮疡", "痈肿"],
             "平肝": ["头晕", "头痛", "眩晕", "耳鸣"],
             "清热凉血": ["发热", "口渴", "皮肤发黄", "斑疹", "便血"],
-        "清热燥湿": ["发热", "口苦", "小便短赤", "带下色黄"],
-        "清热解毒": ["发热", "咽喉肿痛", "疮疡", "痈肿", "斑疹"],
-        "清热泻火": ["发热", "口渴", "目赤", "口疮", "心烦"],
-        "耳鼻喉": ["鼻塞", "鼻流清涕", "咽喉肿痛", "耳鸣", "耳痛"],
-        "眼科": ["目赤", "目痛", "目痒", "目涩", "视物模糊"],
-        "皮肤科": ["皮肤瘙痒", "皮疹", "斑疹", "疮疡"],
-        "消肿": ["水肿", "浮肿"],
-        "止痛": ["头痛", "腹痛", "胃痛", "胁痛", "腰痛", "关节痛", "痛经"],
+            "清热燥湿": ["发热", "口苦", "小便短赤", "带下色黄"],
+            "清热解毒": ["发热", "咽喉肿痛", "疮疡", "痈肿", "斑疹"],
+            "清热泻火": ["发热", "口渴", "目赤", "口疮", "心烦"],
+            "耳鼻喉": ["鼻塞", "鼻流清涕", "咽喉肿痛", "耳鸣", "耳痛"],
+            "眼科": ["目赤", "目痛", "目痒", "目涩", "视物模糊"],
+            "皮肤科": ["皮肤瘙痒", "皮疹", "斑疹", "疮疡"],
+            "消肿": ["水肿", "浮肿"],
+            "止痛": ["头痛", "腹痛", "胃痛", "胁痛", "腰痛", "关节痛", "痛经"],
         }
 
         cat_match = 0
@@ -446,7 +568,7 @@ class TCMDataPipeline:
         # ── 第四层：功能关键词→症状映射（对所有零关联目标做语义扩展） ──
         func_match_count = 0
         func_herb_count = 0
-        
+
         # 对方剂：对仍然零症状关联的方剂做功能关键词匹配
         for fid, formula in self.formulas.items():
             f_idx = self.formula_db_id_to_model_idx.get(fid)
@@ -463,7 +585,7 @@ class TCMDataPipeline:
                         if si is not None and sym_formula[si, f_idx - 1] == 0:
                             sym_formula[si, f_idx - 1] = 0.7
                             func_match_count += 1
-        
+
         # 对药材：对仍未关联任何症状的药材做功能关键词匹配（不限文本长度）
         for hid, herb in self.herbs.items():
             h_idx = self.herb_db_id_to_model_idx.get(hid)
@@ -474,20 +596,33 @@ class TCMDataPipeline:
                 continue
             # 搜集所有可用文本
             text_parts = [
-                herb.get('efficacy', '') or '',
-                herb.get('indications', '') or '',
-                herb.get('category', '') or '',
+                herb.get("efficacy", "") or "",
+                herb.get("indications", "") or "",
+                herb.get("category", "") or "",
             ]
-            nature = herb.get('nature', '') or ''
-            flavor = herb.get('flavor', '') or ''
+            nature = herb.get("nature", "") or ""
+            flavor = herb.get("flavor", "") or ""
             # 从nature/flavor中提取关键性味词（寒热温凉平、酸苦甘辛咸）
             simple_attrs = []
-            for ch in ['寒','热','温','凉','平','酸','苦','甘','辛','咸','淡','涩']:
+            for ch in [
+                "寒",
+                "热",
+                "温",
+                "凉",
+                "平",
+                "酸",
+                "苦",
+                "甘",
+                "辛",
+                "咸",
+                "淡",
+                "涩",
+            ]:
                 if ch in nature or ch in flavor:
                     simple_attrs.append(ch)
             text_parts.extend(simple_attrs)
-            text = ' '.join(text_parts)
-            
+            text = " ".join(text_parts)
+
             for kw, symptoms in _FUNCTION_SYMPTOM_MAP.items():
                 if kw in text:
                     for s_name in symptoms:
@@ -496,21 +631,32 @@ class TCMDataPipeline:
                             sym_herb[si, h_idx - 1] = 0.5
                             func_herb_count += 1
 
-        logger.info("    功能关键词新增(零关联补漏): 方剂=%s 关联, 药材=%s 关联",
-                     func_match_count, func_herb_count)
-        
-        logger.info("    功能关键词新增: 方剂=%s 关联, 药材=%s 关联 (功效过短药材专用)",
-                     func_match_count, func_herb_count)
-        logger.info("    总关联: %s (密度 %.4f%%)",
-                     int(sym_herb.sum()),
-                     int(sym_herb.sum()) / (ns * nh) * 100)
+        logger.info(
+            "    功能关键词新增(零关联补漏): 方剂=%s 关联, 药材=%s 关联",
+            func_match_count,
+            func_herb_count,
+        )
+
+        logger.info(
+            "    功能关键词新增: 方剂=%s 关联, 药材=%s 关联 (功效过短药材专用)",
+            func_match_count,
+            func_herb_count,
+        )
+        logger.info(
+            "    总关联: %s (密度 %.4f%%)",
+            int(sym_herb.sum()),
+            int(sym_herb.sum()) / (ns * nh) * 100,
+        )
 
         # ── 第五层：药材别名继承（别名→正名的关联传播） ──
         alias_count = 0
         for alias_name, primary_name in _HERB_ALIAS_MAP.items():
             # 找主药
             primary_db_id = self.herb_name_to_db_id.get(primary_name)
-            if primary_db_id is None or primary_db_id not in self.herb_db_id_to_model_idx:
+            if (
+                primary_db_id is None
+                or primary_db_id not in self.herb_db_id_to_model_idx
+            ):
                 continue
             primary_idx = self.herb_db_id_to_model_idx[primary_db_id] - 1
             # 找别名
@@ -526,7 +672,7 @@ class TCMDataPipeline:
                     alias_count += 1
         if alias_count > 0:
             logger.info("    别名继承: %s 关联", alias_count)
-        
+
         # ── 第六层：症状同义词映射（扩展覆盖剩余症状） ──
         synonym_count = 0
         for si, s_name in enumerate(self.symptoms):
@@ -546,9 +692,18 @@ class TCMDataPipeline:
                         sym_herb[si, hi] = source_assoc[hi] * 0.7  # 继承但权重略低
                         synonym_count += 1
         if synonym_count > 0:
-            logger.info("    症状同义词: %s 关联（覆盖 %s 个症状）",
-                         synonym_count, 
-                         len([s for s in self.symptoms if s in _SYMPTOM_SYNONYM_MAP and np.count_nonzero(sym_herb[self.symptom_to_idx[s], :]) == 0]))
+            logger.info(
+                "    症状同义词: %s 关联（覆盖 %s 个症状）",
+                synonym_count,
+                len(
+                    [
+                        s
+                        for s in self.symptoms
+                        if s in _SYMPTOM_SYNONYM_MAP
+                        and np.count_nonzero(sym_herb[self.symptom_to_idx[s], :]) == 0
+                    ]
+                ),
+            )
 
         # ── 第七层：硬编码兜底（对剩余零关联做最后补救） ──
         zero_herb_fallback = 0
@@ -581,7 +736,7 @@ class TCMDataPipeline:
                     if si is not None and sym_herb[si, h_idx - 1] == 0:
                         sym_herb[si, h_idx - 1] = 0.5
                         zero_herb_fallback += 1
-        
+
         # 已知的零关联症状 → 应该关联的药材类别关键词
         SYMPTOM_FALLBACK = {
             "目眵多": ["目赤", "目痛"],
@@ -608,14 +763,19 @@ class TCMDataPipeline:
                             if source[hi] > 0 and sym_herb[si, hi] == 0:
                                 sym_herb[si, hi] = source[hi] * 0.5
                                 zero_sym_fallback += 1
-        
+
         if zero_herb_fallback > 0 or zero_sym_fallback > 0:
-            logger.info("    硬编码兜底: 药材=%s 关联, 症状=%s 关联",
-                         zero_herb_fallback, zero_sym_fallback)
-        
-        logger.info("    最终总关联: %s (密度 %.4f%%)",
-                     int(sym_herb.sum()),
-                     int(sym_herb.sum()) / (ns * nh) * 100)
+            logger.info(
+                "    硬编码兜底: 药材=%s 关联, 症状=%s 关联",
+                zero_herb_fallback,
+                zero_sym_fallback,
+            )
+
+        logger.info(
+            "    最终总关联: %s (密度 %.4f%%)",
+            int(sym_herb.sum()),
+            int(sym_herb.sum()) / (ns * nh) * 100,
+        )
 
         self.symptom_herb_matrix = sym_herb
         self.symptom_formula_matrix = sym_formula
@@ -635,15 +795,19 @@ class TCMDataPipeline:
         row_sum = cooc.sum(axis=1, keepdims=True)
         row_sum[row_sum == 0] = 1
         self.herb_cooccurrence = cooc / row_sum
-        logger.info("  药材共现矩阵: %s×%s, %s 非零边",
-                     self.num_herbs, self.num_herbs, int((cooc > 0).sum()))
+        logger.info(
+            "  药材共现矩阵: %s×%s, %s 非零边",
+            self.num_herbs,
+            self.num_herbs,
+            int((cooc > 0).sum()),
+        )
 
     def _parse_composition_indices(self, composition: str) -> list[int]:
         """增强版组成解析：处理更多真实格式（带炮制/剂量/子串回退）"""
         if not composition or not composition.strip():
             return []
         import re
-        
+
         text = composition
         text = text.replace("、", "，").replace("；", "，").replace(";", "，")
         text = re.sub(r"[（(][^)）]*[)）]", "", text)
@@ -651,18 +815,30 @@ class TCMDataPipeline:
         text = re.sub(r"[.．～~]", "", text)
         text = re.sub(r"(先煎|后下|包煎|烊化|冲服|另煎|煎汤代水)", "", text)
         text = re.sub(r"[\u4e00-\u9fff]{2,4}汤\s*\+\s*[\u4e00-\u9fff]{2,4}汤", "", text)
-        
+
         parts = [p.strip() for p in text.split("，") if p.strip()]
         indices = []
-        
-        PREFIX_MAP = {"制": "", "炙": "", "生": "", "炒": "", "煅": "", "鲜": "", "酒": "", "醋": "", "盐": "", "姜": "", "蜜": ""}
-        
+
+        PREFIX_MAP = {
+            "制": "",
+            "炙": "",
+            "生": "",
+            "炒": "",
+            "煅": "",
+            "鲜": "",
+            "酒": "",
+            "醋": "",
+            "盐": "",
+            "姜": "",
+            "蜜": "",
+        }
+
         for part in parts:
             if not part or "+" in part:
                 continue
             name = part.strip()
             name = re.sub(r"\s+", "", name)
-            
+
             hid = self.herb_name_to_db_id.get(name)
             if hid:
                 if hid in self.herb_db_id_to_model_idx:
@@ -670,13 +846,13 @@ class TCMDataPipeline:
                     if idx not in indices:
                         indices.append(idx)
                 continue
-            
+
             base_name = name
             for prefix in PREFIX_MAP:
                 if base_name.startswith(prefix) and len(base_name) > len(prefix) + 1:
-                    base_name = base_name[len(prefix):]
+                    base_name = base_name[len(prefix) :]
                     break
-            
+
             if base_name != name:
                 hid = self.herb_name_to_db_id.get(base_name)
                 if hid and hid in self.herb_db_id_to_model_idx:
@@ -684,7 +860,7 @@ class TCMDataPipeline:
                     if idx not in indices:
                         indices.append(idx)
                     continue
-            
+
             if len(base_name) >= 2:
                 for hname, hid in self.herb_name_to_db_id.items():
                     if base_name in hname or hname in base_name:
@@ -693,7 +869,7 @@ class TCMDataPipeline:
                             if idx not in indices:
                                 indices.append(idx)
                             break
-        
+
         return indices
 
     # ═══════════════════════════════════════════════
@@ -705,11 +881,11 @@ class TCMDataPipeline:
         logger.info("=" * 50)
         logger.info("开始生成 %s 个训练样本...", target_count)
 
-        all_symptoms = []       # list[list[int]]
-        all_herb_labels = []    # list[np.ndarray]
-        all_formula_labels = [] # list[int]
-        all_syndrome_labels = []# list[int]
-        all_weights = []        # list[float]
+        all_symptoms = []  # list[list[int]]
+        all_herb_labels = []  # list[np.ndarray]
+        all_formula_labels = []  # list[int]
+        all_syndrome_labels = []  # list[int]
+        all_weights = []  # list[float]
 
         # ── 阶段 1: 证型驱动 ──
         syn_samples = self._generate_syndrome_samples(target_count // 2)
@@ -748,7 +924,9 @@ class TCMDataPipeline:
         logger.info("  组合增强: %s 样本", len(aug_samples[0]))
 
         # ── 阶段 5: 负样本 ──
-        neg_samples = self._generate_negative_samples(target_count // 6)  # 提高负样本比例
+        neg_samples = self._generate_negative_samples(
+            target_count // 6
+        )  # 提高负样本比例
         all_symptoms.extend(neg_samples[0])
         all_herb_labels.extend(neg_samples[1])
         all_formula_labels.extend(neg_samples[2])
@@ -757,8 +935,13 @@ class TCMDataPipeline:
         logger.info("  负样本: %s 样本", len(neg_samples[0]))
 
         # 打包
-        result = self._pack_samples(all_symptoms, all_herb_labels, all_formula_labels,
-                                     all_syndrome_labels, all_weights)
+        result = self._pack_samples(
+            all_symptoms,
+            all_herb_labels,
+            all_formula_labels,
+            all_syndrome_labels,
+            all_weights,
+        )
         logger.info("=" * 50)
         logger.info("生成完成: %s 样本", len(all_symptoms))
         self._print_stats(result)
@@ -779,7 +962,11 @@ class TCMDataPipeline:
                 continue
 
             # 症状 → indices
-            syn_s_indices = [self.symptom_to_idx[s] for s in syn_symptom_names if s in self.symptom_to_idx]
+            syn_s_indices = [
+                self.symptom_to_idx[s]
+                for s in syn_symptom_names
+                if s in self.symptom_to_idx
+            ]
             if len(syn_s_indices) < 2:
                 continue
 
@@ -795,7 +982,10 @@ class TCMDataPipeline:
             if syn_formula_names:
                 for f_name in syn_formula_names:
                     for fid, f_info in self.formulas.items():
-                        if f_info.get("name") == f_name and fid in self.formula_db_id_to_model_idx:
+                        if (
+                            f_info.get("name") == f_name
+                            and fid in self.formula_db_id_to_model_idx
+                        ):
                             syn_f_label = self.formula_db_id_to_model_idx[fid]
                             break
                     if syn_f_label != 0:
@@ -815,7 +1005,9 @@ class TCMDataPipeline:
                     unrelated = [si for si in range(ns) if si not in set(syn_s_indices)]
                     if unrelated:
                         noise_n = self.rng.randint(1, min(3, len(unrelated)))
-                        noise = list(self.rng.choice(unrelated, size=noise_n, replace=False))
+                        noise = list(
+                            self.rng.choice(unrelated, size=noise_n, replace=False)
+                        )
                         chosen = sorted(set(chosen) | set(noise))
 
                 hl = np.zeros(nh, dtype=np.float32)
@@ -834,7 +1026,13 @@ class TCMDataPipeline:
 
     def _generate_herb_samples(self, count: int):
         """药材驱动：为每味药材匹配其关联症状"""
-        symptoms_list, herbs_list, formulas_list, syndromes_list, weights = [], [], [], [], []
+        symptoms_list, herbs_list, formulas_list, syndromes_list, weights = (
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
         ns, nh, nf = self.num_symptoms, self.num_herbs, self.num_formulas
 
         for hid, herb in self.herbs.items():
@@ -843,7 +1041,9 @@ class TCMDataPipeline:
                 continue
 
             text = f"{herb.get('efficacy', '')} {herb.get('indications', '')}"
-            related_s = [si for si, s_name in enumerate(self.symptoms) if s_name in text]
+            related_s = [
+                si for si, s_name in enumerate(self.symptoms) if s_name in text
+            ]
             if len(related_s) < 1:
                 continue
 
@@ -851,7 +1051,9 @@ class TCMDataPipeline:
             samples_per_herb = max(count // nh, 2)
 
             for _ in range(samples_per_herb):
-                k = self.rng.randint(1, min(len(related_s) + 1, MAX_SYMPTOMS_PER_SAMPLE // 2))
+                k = self.rng.randint(
+                    1, min(len(related_s) + 1, MAX_SYMPTOMS_PER_SAMPLE // 2)
+                )
                 chosen = sorted(self.rng.choice(related_s, size=k, replace=False))
 
                 # 噪声
@@ -859,14 +1061,21 @@ class TCMDataPipeline:
                     unrelated = [si for si in range(ns) if si not in set(related_s)]
                     if unrelated:
                         noise_n = self.rng.randint(1, min(2, len(unrelated)))
-                        chosen = sorted(set(chosen) | set(self.rng.choice(unrelated, size=noise_n, replace=False)))
+                        chosen = sorted(
+                            set(chosen)
+                            | set(
+                                self.rng.choice(unrelated, size=noise_n, replace=False)
+                            )
+                        )
 
                 hl = np.zeros(nh, dtype=np.float32)
                 hl[h_idx] = 1.0
 
                 # 补充同症状组合下的其他相关药材（通过关联矩阵）
                 if self.symptom_herb_matrix is not None:
-                    co_herb_scores = self.symptom_herb_matrix[list(chosen)].sum(axis=0)  # [nh]
+                    co_herb_scores = self.symptom_herb_matrix[list(chosen)].sum(
+                        axis=0
+                    )  # [nh]
                     co_herb_scores[h_idx] = 0  # 排除自身
                     # 选择关联得分 ≥ 50% 最大值的其他药材，最多3味
                     max_score = co_herb_scores.max()
@@ -875,7 +1084,9 @@ class TCMDataPipeline:
                         extra_candidates = np.where(co_herb_scores >= threshold)[0]
                         extra_n = min(len(extra_candidates), 3)
                         if extra_n > 0:
-                            extra = self.rng.choice(extra_candidates, size=extra_n, replace=False)
+                            extra = self.rng.choice(
+                                extra_candidates, size=extra_n, replace=False
+                            )
                             for ei in extra:
                                 hl[ei] = 1.0
 
@@ -905,13 +1116,17 @@ class TCMDataPipeline:
                 continue
 
             # 解析药材组成
-            herb_indices = self._parse_composition_indices(formula.get("composition", ""))
+            herb_indices = self._parse_composition_indices(
+                formula.get("composition", "")
+            )
             if len(herb_indices) < 2:
                 continue
 
             # 匹配症状
             text = f"{formula.get('functions', '')} {formula.get('indications', '')}"
-            related_s = [si for si, s_name in enumerate(self.symptoms) if s_name in text]
+            related_s = [
+                si for si, s_name in enumerate(self.symptoms) if s_name in text
+            ]
             if not related_s:
                 continue
 
@@ -948,7 +1163,9 @@ class TCMDataPipeline:
         for _ in range(count):
             # 随机 2-6 个症状
             k = self.rng.randint(MIN_SYMPTOMS, 7)
-            chosen = sorted(self.rng.choice(all_s_indices, size=min(k, ns), replace=False))
+            chosen = sorted(
+                self.rng.choice(all_s_indices, size=min(k, ns), replace=False)
+            )
 
             # 基于关联矩阵计算药材标签
             herb_scores = self.symptom_herb_matrix[chosen].sum(axis=0)  # [nh]
@@ -967,7 +1184,9 @@ class TCMDataPipeline:
                         candidates = np.argsort(herb_scores)[-top_n:]
                 # 如果还是太多，只取 top-20
                 if len(candidates) > MAX_POS_HERBS:
-                    candidates = candidates[np.argsort(herb_scores[candidates])[-MAX_POS_HERBS:]]
+                    candidates = candidates[
+                        np.argsort(herb_scores[candidates])[-MAX_POS_HERBS:]
+                    ]
                 for hi in candidates:
                     hl[hi] = 1.0
 
@@ -1053,7 +1272,9 @@ class TCMDataPipeline:
     # 3. 数据打包
     # ═══════════════════════════════════════════════
 
-    def _pack_samples(self, symptoms, herb_labels, formula_labels, syndrome_labels, weights):
+    def _pack_samples(
+        self, symptoms, herb_labels, formula_labels, syndrome_labels, weights
+    ):
         """将变长样本列表打包为固定格式 NDArray（padding）"""
         n = len(symptoms)
         ns, nh = self.num_symptoms, self.num_herbs
@@ -1063,8 +1284,8 @@ class TCMDataPipeline:
         symptom_mask = np.zeros((n, MAX_SYMPTOMS_PER_SAMPLE), dtype=np.float32)
         for i, s_list in enumerate(symptoms):
             s_list = s_list[:MAX_SYMPTOMS_PER_SAMPLE]
-            symptom_tensor[i, :len(s_list)] = [s + 1 for s in s_list]  # 1-based
-            symptom_mask[i, :len(s_list)] = 1.0
+            symptom_tensor[i, : len(s_list)] = [s + 1 for s in s_list]  # 1-based
+            symptom_mask[i, : len(s_list)] = 1.0
 
         # 药材多标签
         herb_label_tensor = np.zeros((n, nh), dtype=np.float32)
@@ -1136,12 +1357,14 @@ class TCMDataPipeline:
         for model_idx in range(1, nh + 1):
             db_id = self.model_idx_to_herb_db_id[model_idx]
             herb = self.herbs[db_id]
-            herb_texts[model_idx] = f"{herb.get('efficacy', '')} {herb.get('indications', '')}"
+            herb_texts[model_idx] = (
+                f"{herb.get('efficacy', '')} {herb.get('indications', '')}"
+            )
 
         char_set: set = set()
         for text in herb_texts.values():
             for ch in text:
-                if '\u4e00' <= ch <= '\u9fff':
+                if "\u4e00" <= ch <= "\u9fff":
                     char_set.add(ch)
         char_list = sorted(char_set)
         char_to_idx = {ch: i for i, ch in enumerate(char_list)}
@@ -1154,14 +1377,20 @@ class TCMDataPipeline:
                     char_mh[mi - 1, char_to_idx[ch]] = 1.0
 
         # 类别索引
-        all_categories = sorted(set(
-            self.herbs[self.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
-            for mi in range(1, nh + 1)
-        ))
+        all_categories = sorted(
+            set(
+                self.herbs[self.model_idx_to_herb_db_id[mi]].get("category", "")
+                or "未知"
+                for mi in range(1, nh + 1)
+            )
+        )
         cat_to_idx = {c: i + 1 for i, c in enumerate(all_categories)}
         cat_idx = np.zeros(nh, dtype=np.int32)
         for mi in range(1, nh + 1):
-            cat = self.herbs[self.model_idx_to_herb_db_id[mi]].get("category", "") or "未知"
+            cat = (
+                self.herbs[self.model_idx_to_herb_db_id[mi]].get("category", "")
+                or "未知"
+            )
             cat_idx[mi - 1] = cat_to_idx.get(cat, 0)
 
         # 药性索引
@@ -1215,6 +1444,7 @@ class TCMDataPipeline:
             logger.info("药材特征已缓存到 npz")
         np.savez_compressed(path, **save_data)
         import os
+
         size_mb = os.path.getsize(path) / (1024 * 1024)
         logger.info("数据已保存: %s (%.1f MB)", path, size_mb)
 
@@ -1228,6 +1458,7 @@ class TCMDataPipeline:
 def main():
     """CLI 入口"""
     import argparse
+
     parser = argparse.ArgumentParser(description="TCM 数据管线")
     parser.add_argument("--db", default="data/tcm_knowledge.db")
     parser.add_argument("--output", default="data/train_data.npz")

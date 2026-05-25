@@ -23,14 +23,6 @@ from core.tcm_config import (
     generate_health_tips,
 )
 
-# 向后兼容：旧代码可能直接引用这些名称
-TCM_KNOWLEDGE = {
-    "herbs": FALLBACK_HERBS,
-    "formulas": FALLBACK_FORMULAS,
-    "symptoms": FALLBACK_SYMPTOMS,
-}
-SYNDROMES = SYNDROME_DEFINITIONS
-
 logger = logging.getLogger(__name__)
 
 
@@ -74,7 +66,9 @@ def search_formulas(keyword: str) -> list[dict]:
     return results[:5]
 
 
-def generate_fallback_answer(query: str, kb_result: Optional[dict] = None) -> dict[str, Any]:
+def generate_fallback_answer(
+    query: str, kb_result: Optional[dict] = None
+) -> dict[str, Any]:
     """生成降级回答（基于规则的中医药知识回答）"""
     logger.info("使用降级方案生成回答：%s", query[:50])
 
@@ -130,7 +124,9 @@ def generate_fallback_answer(query: str, kb_result: Optional[dict] = None) -> di
                 if formulas:
                     answer_parts.append(f"• 相关方剂（{keyword}）：")
                     for formula in formulas[:2]:
-                        answer_parts.append(f"  - {formula['name']}：{formula['efficacy']}")
+                        answer_parts.append(
+                            f"  - {formula['name']}：{formula['efficacy']}"
+                        )
                         answer_parts.append(f"    组成：{formula['composition']}")
             if not keywords:
                 answer_parts.append("暂无相关知识")

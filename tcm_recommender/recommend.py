@@ -14,12 +14,12 @@ import json
 import logging
 import argparse
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 
 # 项目路径
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     PROJECT_ROOT = Path(sys.executable).parent
 else:
     PROJECT_ROOT = Path(__file__).parent.parent
@@ -28,12 +28,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from tcm_recommender.model import TCMNet, create_model
 from tcm_recommender.train import build_herb_features
 from tcm_recommender.data_pipeline import TCMDataPipeline
-from tcm_recommender.extended_config import EXTENDED_SYMPTOM_LIST, EXTENDED_SYNDROME_DEFINITIONS
+from tcm_recommender.extended_config import (
+    EXTENDED_SYMPTOM_LIST,
+    EXTENDED_SYNDROME_DEFINITIONS,
+)
 
 # 配置日志
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -72,7 +74,9 @@ class TCMRecommender:
         # 药材/方剂名称列表
         self._herb_name_list = self._pipeline.herb_names
         self._formula_name_list = [
-            self._pipeline.formulas[self._pipeline.model_idx_to_formula_db_id[i]]["name"]
+            self._pipeline.formulas[self._pipeline.model_idx_to_formula_db_id[i]][
+                "name"
+            ]
             for i in range(1, self._pipeline.num_formulas + 1)
         ]
 
@@ -102,10 +106,12 @@ class TCMRecommender:
 
         logger.info("推荐器初始化完成")
 
-    def parse_symptoms(self, symptom_text: str) -> tuple[list[int], list[str], list[str]]:
+    def parse_symptoms(
+        self, symptom_text: str
+    ) -> tuple[list[int], list[str], list[str]]:
         """解析症状文本（精确匹配，症状由上游 NLU 或关键词模块提取）"""
-        for sep in [' ', ',', '，', '、', ';', '；']:
-            symptom_text = symptom_text.replace(sep, ' ')
+        for sep in [" ", ",", "，", "、", ";", "；"]:
+            symptom_text = symptom_text.replace(sep, " ")
 
         symptoms = [s.strip() for s in symptom_text.split() if s.strip()]
         symptom_ids = []
@@ -133,7 +139,8 @@ class TCMRecommender:
         if not symptoms:
             return {
                 "error": "无有效症状",
-                "herbs": [], "formulas": [],
+                "herbs": [],
+                "formulas": [],
                 "suggestion": "请提供有效症状描述",
             }
 
@@ -142,7 +149,8 @@ class TCMRecommender:
 
         with torch.no_grad():
             result = self.model.predict(
-                symptom_tensor, mask,
+                symptom_tensor,
+                mask,
                 self._herb_feat["char_multihot"].to(self.device),
                 self._herb_feat["category_idx"].to(self.device),
                 self._herb_feat["nature_idx"].to(self.device),
@@ -163,9 +171,17 @@ class TCMRecommender:
             name = self._herb_name_list[list_idx]
             prob = float(torch.sigmoid(torch.tensor(score)))  # logits→概率
             if name not in seen_names or prob > seen_names[name]["score"]:
-                seen_names[name] = {"id": int(herb_idx), "name": name, "score": prob, "efficacy": "", "is_toxic": False}
+                seen_names[name] = {
+                    "id": int(herb_idx),
+                    "name": name,
+                    "score": prob,
+                    "efficacy": "",
+                    "is_toxic": False,
+                }
 
-        herb_results = sorted(seen_names.values(), key=lambda x: x["score"], reverse=True)[:top_k_herb]
+        herb_results = sorted(
+            seen_names.values(), key=lambda x: x["score"], reverse=True
+        )[:top_k_herb]
 
         # 方剂结果
         # 注意：模型输出维度 = num_formulas + 1，index 0 为背景类(padding)
@@ -179,18 +195,23 @@ class TCMRecommender:
             # 内部索引：模型 idx 1..N → formula_name_list[idx-1]
             list_idx = formula_idx - 1
             if list_idx < 0 or list_idx >= len(self._formula_name_list):
-                logger.warning("方剂索引越界: model_idx=%d, list_len=%d",
-                              formula_idx, len(self._formula_name_list))
+                logger.warning(
+                    "方剂索引越界: model_idx=%d, list_len=%d",
+                    formula_idx,
+                    len(self._formula_name_list),
+                )
                 continue
 
             name = self._formula_name_list[list_idx]
-            formula_results.append({
-                "id": int(formula_idx),
-                "name": name,
-                "score": prob,
-                "composition": "",
-                "functions": "",
-            })
+            formula_results.append(
+                {
+                    "id": int(formula_idx),
+                    "name": name,
+                    "score": prob,
+                    "composition": "",
+                    "functions": "",
+                }
+            )
             if len(formula_results) >= top_k_formula:
                 break
 
@@ -210,7 +231,11 @@ class TCMRecommender:
                 }
 
         return {
-            "symptoms": [self._symptom_list[s - 1] for s in symptoms if 0 < s <= len(self._symptom_list)],
+            "symptoms": [
+                self._symptom_list[s - 1]
+                for s in symptoms
+                if 0 < s <= len(self._symptom_list)
+            ],
             "syndrome": top_syndrome,
             "herbs": herb_results,
             "formulas": formula_results,
@@ -219,6 +244,7 @@ class TCMRecommender:
     def check_safety(self, herb_names: list[str]) -> dict:
         """安全检查（十八反/十九畏/孕妇禁用），同一药名只显示一条警告"""
         import sqlite3
+
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
 
@@ -228,7 +254,9 @@ class TCMRecommender:
             if h in seen:
                 continue
             seen.add(h)
-            cur.execute("SELECT contraindications FROM herbs WHERE name = ? LIMIT 1", (h,))
+            cur.execute(
+                "SELECT contraindications FROM herbs WHERE name = ? LIMIT 1", (h,)
+            )
             row = cur.fetchone()
             if row and row[0]:
                 warnings.append("%s: %s" % (h, row[0][:100]))
@@ -238,32 +266,34 @@ class TCMRecommender:
 
     def format_output(self, result: Dict) -> str:
         """格式化输出"""
-        if 'error' in result:
-            return "错误：%s" % result['error']
+        if "error" in result:
+            return "错误：%s" % result["error"]
 
         lines = []
         lines.append("=" * 60)
         lines.append("  中医药智能推荐结果")
         lines.append("=" * 60)
-        lines.append("\n症状：%s" % ", ".join(result['symptoms']))
+        lines.append("\n症状：%s" % ", ".join(result["symptoms"]))
 
-        if result.get('syndrome'):
-            s = result['syndrome']
-            lines.append("\n证型：%s (概率: %.1f%%)" % (s['name'], s['confidence'] * 100))
+        if result.get("syndrome"):
+            s = result["syndrome"]
+            lines.append(
+                "\n证型：%s (概率: %.1f%%)" % (s["name"], s["confidence"] * 100)
+            )
 
         lines.append("\n推荐药材:")
-        for i, h in enumerate(result['herbs'], 1):
-            lines.append("  %d. %s (概率: %.1f%%)" % (i, h['name'], h['score'] * 100))
+        for i, h in enumerate(result["herbs"], 1):
+            lines.append("  %d. %s (概率: %.1f%%)" % (i, h["name"], h["score"] * 100))
 
         lines.append("\n推荐方剂:")
-        for i, f in enumerate(result['formulas'], 1):
-            lines.append("  %d. %s (概率: %.1f%%)" % (i, f['name'], f['score'] * 100))
+        for i, f in enumerate(result["formulas"], 1):
+            lines.append("  %d. %s (概率: %.1f%%)" % (i, f["name"], f["score"] * 100))
 
         lines.append("\n安全校验:")
-        herb_names = [h['name'] for h in result['herbs'][:10]]
+        herb_names = [h["name"] for h in result["herbs"][:10]]
         safety = self.check_safety(herb_names)
-        if safety['warnings']:
-            for w in safety['warnings']:
+        if safety["warnings"]:
+            for w in safety["warnings"]:
                 lines.append("  %s" % w)
         else:
             lines.append("  未发现明显配伍禁忌")
@@ -275,19 +305,26 @@ class TCMRecommender:
 
     def close(self):
         """释放资源"""
-        if hasattr(self, '_pipeline'):
+        if hasattr(self, "_pipeline"):
             self._pipeline.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='中医药智能推荐系统')
-    parser.add_argument('symptoms', type=str, help='症状列表（空格/逗号分隔）')
-    parser.add_argument('--model', type=str, default='tcm_recommender/best_model.pth', help='模型文件路径')
-    parser.add_argument('--db', type=str, default='data/tcm_knowledge.db', help='数据库路径')
-    parser.add_argument('--top-herb', type=int, default=10, help='返回药材数')
-    parser.add_argument('--top-formula', type=int, default=5, help='返回方剂数')
-    parser.add_argument('--device', type=str, default='cpu', help='运行设备')
-    parser.add_argument('--json', action='store_true', help='JSON 格式输出')
+    parser = argparse.ArgumentParser(description="中医药智能推荐系统")
+    parser.add_argument("symptoms", type=str, help="症状列表（空格/逗号分隔）")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="tcm_recommender/best_model.pth",
+        help="模型文件路径",
+    )
+    parser.add_argument(
+        "--db", type=str, default="data/tcm_knowledge.db", help="数据库路径"
+    )
+    parser.add_argument("--top-herb", type=int, default=10, help="返回药材数")
+    parser.add_argument("--top-formula", type=int, default=5, help="返回方剂数")
+    parser.add_argument("--device", type=str, default="cpu", help="运行设备")
+    parser.add_argument("--json", action="store_true", help="JSON 格式输出")
 
     args = parser.parse_args()
     model_path = Path(PROJECT_ROOT) / args.model
@@ -314,5 +351,5 @@ def main():
     r.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

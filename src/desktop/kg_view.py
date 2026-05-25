@@ -2,22 +2,16 @@
 知识图谱可视化组件
 
 嵌入 Tkinter 的交互式知识图谱查看器。
-使用 matplotlib 渲染，支持搜索、缩放和节点点击查看详情。
+使用 Tk Canvas 渲染，支持搜索、缩放和节点点击查看详情。
 """
 
 import logging
-import math
 import threading
 import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Optional
 
-import matplotlib
-
-matplotlib.use("TkAgg")
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from matplotlib.figure import Figure
 import networkx as nx
 
 logger = logging.getLogger(__name__)
@@ -61,30 +55,6 @@ EDGE_COLORS = {
     "incompatible_with": "#c0392b",
     "co_occurs_with": "#7f8c8d",
 }
-
-# ── 中文字体 ──
-_CN_FONT = None
-import os as _os
-
-_win_fonts = [
-    _os.path.expandvars(r"%WINDIR%\Fonts\msyh.ttc"),
-    _os.path.expandvars(r"%WINDIR%\Fonts\simhei.ttf"),
-    _os.path.expandvars(r"%WINDIR%\Fonts\msyhl.ttc"),
-]
-for _fp in _win_fonts:
-    if _os.path.exists(_fp):
-        from matplotlib.font_manager import FontProperties
-
-        _CN_FONT = FontProperties(fname=_fp, size=11)
-        # 同时设全局字体，消除 matplotlib 后端警告
-        import matplotlib as _mpl
-
-        _mpl.rcParams["font.sans-serif"] = [_CN_FONT.get_name()] + _mpl.rcParams[
-            "font.sans-serif"
-        ]
-        _mpl.rcParams["axes.unicode_minus"] = False
-        break
-
 
 KG_INSTANCE = None  # 全局缓存图谱实例
 _KG_LOCK = threading.Lock()  # 构建锁，防止并发构建
@@ -177,9 +147,6 @@ class KnowledgeGraphView(ttk.Frame):
         self._selected_node = None
         self._expand_history = []  # 展开历史栈
         self._all_node_ids = []  # 当前子图节点列表
-        # 缩放相关
-        self._base_x_range = None  # 基准 x 范围（用于计算缩放因子）
-        self._current_zoom = 1.0  # 当前缩放因子
         # 快速 Canvas 渲染（替代 matplotlib，极致性能）
         self._tk_canvas = None  # tkinter Canvas 控件
         self._canvas_items = {}  # {node_id: {"oval": id, "text": id}}
@@ -784,119 +751,6 @@ class KnowledgeGraphView(ttk.Frame):
             self._layout_var.set("circular")
         self._show_subgraph_given_nodes(center_node, list(visited))
 
-    def _on_pick(self, event):
-        """节点点击事件：聚焦到该节点（显示1跳邻域 + 自动缩放 + 更新详情）"""
-        node_id = self._get_picked_node(event)
-        if node_id:
-            self._selected_node = node_id
-            # 保存当前视图到展开历史（用于后退）
-            if self._current_subgraph is not None:
-                self._expand_history.append(set(self._current_subgraph.nodes))
-            # 以该节点为中心显示1跳子图
-            self._show_subgraph(node_id)
-            # 自动缩放聚焦到节点邻域
-            self._auto_zoom_to_fit()
-
-    def _on_click(self, event):
-        """鼠标事件：双击展开 + 右键菜单"""
-        if event.inaxes != self.ax:
-            return
-        # 右键菜单
-        if event.button == 3:
-            node_id = self._hit_test_node(event.xdata, event.ydata)
-            if node_id:
-                self._selected_node = node_id
-                self._context_menu.tk_popup(
-                    event.guiEvent.x_root
-                    if hasattr(event, "guiEvent")
-                    else self.winfo_pointerx(),
-                    event.guiEvent.y_root
-                    if hasattr(event, "guiEvent")
-                    else self.winfo_pointery(),
-                )
-            return
-        # 双击展开
-        if event.button == 1 and event.dblclick:
-            node_id = self._hit_test_node(event.xdata, event.ydata)
-            if node_id:
-                self._expand_node(node_id)
-
-    def _on_mouse_wheel(self, event):
-        """鼠标滚轮缩放，以鼠标位置为中心，节点/字体同步缩放"""
-        if event.inaxes != self.ax:
-            return
-        # 缩放系数：上滚放大，下滚缩小
-        scale = 0.85 if event.step > 0 else 1.15
-        x_lo, x_hi = self.ax.get_xlim()
-        y_lo, y_hi = self.ax.get_ylim()
-        cx, cy = event.xdata, event.ydata  # 鼠标在数据坐标中的位置
-        # 以鼠标位置为中心缩放
-        self.ax.set_xlim(cx + (x_lo - cx) * scale, cx + (x_hi - cx) * scale)
-        self.ax.set_ylim(cy + (y_lo - cy) * scale, cy + (y_hi - cy) * scale)
-
-        # 增量更新 + 防抖：50ms 内多次滚轮只触发一次重绘
-        if hasattr(self, "_zoom_timer"):
-            try:
-                self.winfo_toplevel().after_cancel(self._zoom_timer)
-            except Exception as exc:
-                logger.warning("取消缩放定时器失败: %s", exc)
-        self._zoom_timer = self.winfo_toplevel().after(50, self._zoom_update)
-
-    def _on_motion(self, event):
-        """鼠标移动：悬停节点时改变光标形状"""
-        if event.inaxes != self.ax:
-            if self._motion_node_id is not None:
-                self._motion_node_id = None
-                self.config(cursor="")
-            return
-        node = self._hit_test_node(event.xdata, event.ydata)
-        if node is not None and node != self._motion_node_id:
-            self._motion_node_id = node
-            self.config(cursor="hand2")
-        elif node is None and self._motion_node_id is not None:
-            self._motion_node_id = None
-            self.config(cursor="")
-
-    def _hit_test_node(self, x, y):
-        """命中测试：给定坐标返回节点ID"""
-        if self._current_subgraph is None:
-            return None
-        sub = self._current_subgraph
-        sub_key = frozenset(sub.nodes)
-        pos = self._pos_cache.get(sub_key)
-        if pos is None:
-            return None
-        # 找最近节点（阈值30像素）
-        import math
-
-        best_dist = 30.0 / self.fig.dpi  # 屏幕像素转数据坐标
-        best_node = None
-        for n, (nx, ny) in pos.items():
-            dist = math.hypot(x - nx, y - ny)
-            if dist < best_dist:
-                best_dist = dist
-                best_node = n
-        return best_node
-
-    def _get_picked_node(self, event):
-        """从pick event获取节点ID（支持 artist→node 映射和旧式索引两种方式）"""
-        if not hasattr(event, "artist"):
-            return None
-        aid = id(event.artist)
-        if aid in self._artist_to_node:
-            return self._artist_to_node[aid]
-        # 旧式索引回退（分组绘制时用）
-        if not hasattr(event.artist, "get_offsets"):
-            return None
-        if event.ind is None or len(event.ind) == 0:
-            return None
-        idx = event.ind[0]
-        if self._current_subgraph is not None:
-            nodes = list(self._current_subgraph.nodes)
-            if idx < len(nodes):
-                return nodes[idx]
-        return None
-
     def _expand_node(self, node_id: str):
         """双击展开：将节点的1跳邻居加入子图"""
         if self.graph is None or self._current_subgraph is None:
@@ -1025,17 +879,17 @@ class KnowledgeGraphView(ttk.Frame):
     # ── 导出PNG ──
 
     def _export_png(self):
-        """导出当前图谱为PNG"""
+        """导出当前图谱为EPS"""
         from tkinter import filedialog
 
         path = filedialog.asksaveasfilename(
-            defaultextension=".png",
-            filetypes=[("PNG 图片", "*.png")],
+            defaultextension=".eps",
+            filetypes=[("EPS 图片", "*.eps")],
             title="导出知识图谱",
         )
         if path:
-            self._tk_canvas.postscript(file=path.replace(".png", ".eps"))
-            tk.messagebox.showinfo("导出", f"已保存到:\n{path.replace('.png', '.eps')}")
+            self._tk_canvas.postscript(file=path)
+            tk.messagebox.showinfo("导出", f"已保存到:\n{path}")
 
     # ── 子图绘制（改进版） ──
 
@@ -1087,18 +941,14 @@ class KnowledgeGraphView(ttk.Frame):
         self._all_node_ids = list(sub.nodes)
 
         # 使用快速 Canvas 渲染（如果有 tk_canvas）
-        if self._tk_canvas is not None:
-            logger.info(
-                "渲染子图: %s 节点, %s 边", sub.number_of_nodes(), sub.number_of_edges()
-            )
-            try:
-                self._draw_canvas(sub, pos, center)
-            except Exception as exc:
-                logger.exception("Canvas 渲染失败: %s", exc)
-                self._set_detail(f"❌ 渲染失败: {exc}")
-        else:
-            self._draw_subgraph(sub, pos, center)
-        self._current_zoom = 1.0
+        logger.info(
+            "渲染子图: %s 节点, %s 边", sub.number_of_nodes(), sub.number_of_edges()
+        )
+        try:
+            self._draw_canvas(sub, pos, center)
+        except Exception as exc:
+            logger.exception("Canvas 渲染失败: %s", exc)
+            self._set_detail(f"❌ 渲染失败: {exc}")
         self._show_node_detail(center)
 
     # ── 快速 Canvas 渲染（Tkinter Canvas，硬件加速，丝滑缩放平移） ──
@@ -1305,255 +1155,6 @@ class KnowledgeGraphView(ttk.Frame):
             self._selected_node = node
             self._show_node_detail(node)
             self._context_menu.tk_popup(e.x_root, e.y_root)
-
-    def _draw_subgraph(self, sub, pos, center_node=None, zoom_factor=1.0):
-        """绘制子图（包含边过滤）
-
-        Args:
-            zoom_factor: 当前缩放比例（基准为1.0），用于同步缩放节点和字体。
-        """
-        g = self.graph
-        self._cached_scatters = []
-        self._cached_texts = []
-        self._cached_edges = []
-        self.ax.clear()
-        self.ax.set_facecolor("#fcfcfc")
-
-        # 边过滤
-        edge_vars = getattr(self, "_edge_vars", {})
-        active_edges = {t for t, v in edge_vars.items() if v.get()}
-
-        # 画边（边的宽度也随缩放微调）
-        edge_groups = {}
-        for u, v, data in sub.edges(data=True):
-            etype = data.get("type", "")
-            if active_edges and etype not in active_edges:
-                continue
-            edge_groups.setdefault(etype, []).append((u, v))
-
-        edge_width = max(0.5, 1.0 * zoom_factor**0.5)
-        for etype, edges in edge_groups.items():
-            ecolor = EDGE_COLORS.get(etype, "#ccc")
-            nx.draw_networkx_edges(
-                sub,
-                pos,
-                ax=self.ax,
-                edgelist=edges,
-                edge_color=ecolor,
-                alpha=0.3,
-                width=edge_width,
-                style="-",
-            )
-
-        # 按类型分组画节点
-        type_groups = {}
-        for n in sub.nodes:
-            ntype = g.nodes[n].get("type", "Unknown")
-            type_groups.setdefault(ntype, []).append(n)
-
-        for ntype, nodes in type_groups.items():
-            color = NODE_COLORS.get(ntype, "#bdc3c7")
-            base_size = NODE_SIZE_MAP.get(ntype, 80)
-            size = max(20, base_size * zoom_factor)
-            nx.draw_networkx_nodes(
-                sub,
-                pos,
-                ax=self.ax,
-                nodelist=nodes,
-                node_color=color,
-                node_size=size,
-                alpha=0.9,
-                edgecolors="#fff",
-                linewidths=min(3.0, 1.2 * zoom_factor**0.5),
-            )
-
-        # 标签（截断长名，使用中文字体，大小随缩放同步）
-        labels = {}
-        for n in sub.nodes:
-            name = g.nodes[n].get("name", "")
-            labels[n] = name if len(name) <= 8 else name[:7] + "…"
-        fontsize = max(5, min(20, 9 * zoom_factor))
-        for n, (x, y) in pos.items():
-            label = labels.get(n, "")
-            if not label:
-                continue
-            kwargs = dict(fontsize=fontsize, color="#333", ha="center", va="center")
-            if _CN_FONT:
-                kwargs["fontproperties"] = _CN_FONT
-            self.ax.text(x, y, label, **kwargs)
-
-        # 高亮中心
-        if center_node and center_node in sub.nodes:
-            ctype = g.nodes[center_node].get("type", "")
-            c_base = NODE_SIZE_MAP.get(ctype, 80)
-            c_size = max(30, (c_base + 40) * zoom_factor)
-            nx.draw_networkx_nodes(
-                sub,
-                pos,
-                ax=self.ax,
-                nodelist=[center_node],
-                node_color=NODE_COLORS.get(ctype, "#ccc"),
-                node_size=c_size,
-                alpha=1.0,
-                edgecolors="#2c3e50",
-                linewidths=min(4, 3 * zoom_factor**0.5),
-            )
-
-        self.ax.axis("off")
-        name = g.nodes[center_node].get("name", "") if center_node else ""
-        n_nodes = sub.number_of_nodes()
-        n_edges = sub.number_of_edges()
-        title_font = max(8, min(18, 11 * zoom_factor**0.6))
-        self.ax.set_title(
-            f"「{name}」的关联网络 ({n_nodes}节点, {n_edges}边)",
-            fontsize=title_font,
-            color="#333",
-            pad=12,
-        )
-        self.canvas.draw_idle()
-        # 保存 blit 背景（供后续增量缩放使用）
-        try:
-            self.canvas.blit(self.ax.bbox)
-        except Exception as exc:
-            logger.warning("Canvas blit 保存背景失败: %s", exc)
-
-    # ── 缩放增量更新（防抖 + blit） ──
-    def _zoom_update(self):
-        """缩放增量更新：调整已有节点/字体大小，不全量重绘"""
-        if self._current_subgraph is None:
-            self.canvas.draw_idle()
-            return
-
-        x_lo, x_hi = self.ax.get_xlim()
-        y_lo, y_hi = self.ax.get_ylim()
-        current_x_range = x_hi - x_lo
-
-        zoom_factor = 1.0
-        if self._base_x_range and current_x_range > 0:
-            zoom_factor = self._base_x_range / current_x_range
-        self._current_zoom = zoom_factor
-
-        # 更新已有 scatter 节点大小
-        for coll in self.ax.collections:
-            if hasattr(coll, "get_sizes") and hasattr(coll, "set_sizes"):
-                old_sizes = coll.get_sizes()
-                if len(old_sizes) > 0:
-                    # 从基准大小按比例缩放，保持相对尺寸
-                    base = old_sizes[0] / (self._current_zoom or 1)
-                    new_sizes = max(20, base * zoom_factor)
-                    coll.set_sizes([new_sizes] * len(old_sizes))
-
-        # 更新已有文本大小
-        for txt in self.ax.texts:
-            try:
-                old_size = txt.get_fontsize()
-                new_size = max(
-                    5, min(20, old_size / (self._current_zoom / max(zoom_factor, 0.1)))
-                )
-                txt.set_fontsize(new_size)
-            except Exception as exc:
-                logger.warning("缩放更新 - 调整字体大小失败: %s", exc)
-
-        # 更新边宽
-        for line in self.ax.lines:
-            try:
-                old_w = line.get_linewidth()
-                new_w = max(0.5, old_w * (zoom_factor / max(self._current_zoom, 0.1)))
-                line.set_linewidth(new_w)
-            except Exception as exc:
-                logger.warning("缩放更新 - 调整线宽失败: %s", exc)
-
-        # blit 渲染：只更新 axes 区域，比 draw_idle() 全画布重绘快得多
-        try:
-            self.canvas.blit(self.ax.bbox)
-        except Exception:
-            self.canvas.draw_idle()
-
-    def _auto_zoom_to_fit(self):
-        """自动缩放以适配当前子图的所有节点（聚焦视图 + 同步缩放节点/字体）"""
-        if self._current_subgraph is None:
-            return
-        sub_key = frozenset(self._current_subgraph.nodes)
-        pos = self._pos_cache.get(sub_key)
-        if pos is None:
-            return
-
-        nodes = list(self._current_subgraph.nodes)
-        xs = [pos[n][0] for n in nodes if n in pos]
-        ys = [pos[n][1] for n in nodes if n in pos]
-        if not xs or not ys:
-            return
-
-        x_min, x_max = min(xs), max(xs)
-        y_min, y_max = min(ys), max(ys)
-        pad_x = max((x_max - x_min) * 0.4, 0.5)
-        pad_y = max((y_max - y_min) * 0.4, 0.5)
-
-        self.ax.set_xlim(x_min - pad_x, x_max + pad_x)
-        self.ax.set_ylim(y_min - pad_y, y_max + pad_y)
-
-        # 同步缩放节点/字体大小
-        self._zoom_update()
-
-    def _highlight_node(self, node_id: str):
-        """高亮特定节点（支持缩放同步）"""
-        if self._current_subgraph is None or node_id not in self._current_subgraph:
-            return
-        g = self.graph
-        sub = self._current_subgraph
-        sub_key = frozenset(sub.nodes)
-        pos = self._pos_cache.get(sub_key)
-        if pos is None:
-            return
-        z = self._current_zoom  # 当前缩放因子
-
-        # 移除旧的节点绘制
-        for artist in self.ax.collections[:]:
-            try:
-                artist.remove()
-            except Exception as exc:
-                logger.warning("清除旧节点绘制失败: %s", exc)
-
-        type_groups = {}
-        for n in sub.nodes:
-            ntype = g.nodes[n].get("type", "Unknown")
-            type_groups.setdefault(ntype, []).append(n)
-
-        for ntype, nodes in type_groups.items():
-            color = NODE_COLORS.get(ntype, "#bdc3c7")
-            base = NODE_SIZE_MAP.get(ntype, 80)
-            size = max(20, base * z)
-            ec, lw = ("#fff", min(3.0, 1.2 * z**0.5))
-            if node_id in nodes:
-                size = max(30, (base + 40) * z)
-                ec, lw = "#2c3e50", min(4, 3 * z**0.5)
-            nx.draw_networkx_nodes(
-                sub,
-                pos,
-                ax=self.ax,
-                nodelist=[n for n in nodes if n != node_id]
-                if node_id in nodes
-                else nodes,
-                node_color=color,
-                node_size=max(20, base * z),
-                alpha=0.9,
-                edgecolors="#fff",
-                linewidths=min(3.0, 1.2 * z**0.5),
-            )
-            if node_id in nodes:
-                nx.draw_networkx_nodes(
-                    sub,
-                    pos,
-                    ax=self.ax,
-                    nodelist=[node_id],
-                    node_color=color,
-                    node_size=size,
-                    alpha=1.0,
-                    edgecolors=ec,
-                    linewidths=lw,
-                )
-
-        self.canvas.draw_idle()
 
     def _show_node_detail(self, node_id: str):
         """增强详情面板"""

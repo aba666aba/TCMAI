@@ -16,7 +16,7 @@
 
 import logging
 import re
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 from core.tcm_config import (
     SYMPTOM_ALIAS_MAP,
@@ -192,9 +192,7 @@ class IntelligentSearch:
     # 第二步：证型推理 → 方剂推荐
     # ================================================================
 
-    def infer_formulas_from_symptoms(
-        self, symptoms: list[str]
-    ) -> list[dict[str, Any]]:
+    def infer_formulas_from_symptoms(self, symptoms: list[str]) -> list[dict[str, Any]]:
         """根据症状推断证型并推荐方剂
 
         Args:
@@ -212,14 +210,16 @@ class IntelligentSearch:
                 key = (ref["formula"], ref["syndrome"])
                 if key not in seen_formula_syndrome:
                     seen_formula_syndrome.add(key)
-                    results.append({
-                        "symptom": symptom,
-                        "syndrome": ref["syndrome"],
-                        "formula": ref["formula"],
-                        "description": ref["description"],
-                        "match_type": "证型推理",
-                        "score": 0.85,  # 证型推理的基础置信度
-                    })
+                    results.append(
+                        {
+                            "symptom": symptom,
+                            "syndrome": ref["syndrome"],
+                            "formula": ref["formula"],
+                            "description": ref["description"],
+                            "match_type": "证型推理",
+                            "score": 0.85,  # 证型推理的基础置信度
+                        }
+                    )
 
         return results
 
@@ -319,41 +319,43 @@ class IntelligentSearch:
         results_expanded = self._search_with_expansion(expanded["expansion_terms"])
 
         # 策略 3: 用标准化症状搜索
-        results_symptom = self._search_with_symptoms(
-            expanded["standardized_symptoms"]
-        )
+        results_symptom = self._search_with_symptoms(expanded["standardized_symptoms"])
 
         # 策略 4: 用证型相关词搜索
         results_syndrome = self._search_with_syndrome_terms(
             expanded["inferred_syndromes"]
         )
 
-        return self._merge_raw_results([
-            ("原文直接", results_direct, 1.0),
-            ("同义词扩展", results_expanded, 0.9),
-            ("症状搜索", results_symptom, 0.85),
-            ("证型搜索", results_syndrome, 0.8),
-        ])
+        return self._merge_raw_results(
+            [
+                ("原文直接", results_direct, 1.0),
+                ("同义词扩展", results_expanded, 0.9),
+                ("症状搜索", results_symptom, 0.85),
+                ("证型搜索", results_syndrome, 0.8),
+            ]
+        )
 
     def _kb_search(self, query: str) -> dict[str, Any]:
         """调用底层知识库搜索"""
         if self.kb is None:
             return {
-                "herbs": [], "formulas": [],
-                "patent_medicines": [], "folk_remedies": [],
+                "herbs": [],
+                "formulas": [],
+                "patent_medicines": [],
+                "folk_remedies": [],
             }
         try:
             return self.kb.search(query)
         except Exception as exc:
             logger.warning("知识库搜索失败: %s", exc)
             return {
-                "herbs": [], "formulas": [],
-                "patent_medicines": [], "folk_remedies": [],
+                "herbs": [],
+                "formulas": [],
+                "patent_medicines": [],
+                "folk_remedies": [],
             }
 
-    def _search_with_expansion(
-        self, terms: list[str]
-    ) -> dict[str, list[dict]]:
+    def _search_with_expansion(self, terms: list[str]) -> dict[str, list[dict]]:
         """用多个扩展词分别搜索，合并结果"""
         merged: dict[str, dict[int, dict]] = {
             "herbs": {},
@@ -372,18 +374,17 @@ class IntelligentSearch:
 
         # 转换回列表
         return {
-            category: list(items.values())[:15]
-            for category, items in merged.items()
+            category: list(items.values())[:15] for category, items in merged.items()
         }
 
-    def _search_with_symptoms(
-        self, symptoms: list[str]
-    ) -> dict[str, list[dict]]:
+    def _search_with_symptoms(self, symptoms: list[str]) -> dict[str, list[dict]]:
         """用标准症状搜索功效和主治"""
         if not symptoms or self.kb is None:
             return {
-                "herbs": [], "formulas": [],
-                "patent_medicines": [], "folk_remedies": [],
+                "herbs": [],
+                "formulas": [],
+                "patent_medicines": [],
+                "folk_remedies": [],
             }
 
         merged: dict[str, dict[int, dict]] = {
@@ -402,8 +403,7 @@ class IntelligentSearch:
                         merged[category][item_id] = item
 
         return {
-            category: list(items.values())[:15]
-            for category, items in merged.items()
+            category: list(items.values())[:15] for category, items in merged.items()
         }
 
     def _search_with_syndrome_terms(
@@ -412,8 +412,10 @@ class IntelligentSearch:
         """用证型相关词搜索"""
         if not syndrome_terms or self.kb is None:
             return {
-                "herbs": [], "formulas": [],
-                "patent_medicines": [], "folk_remedies": [],
+                "herbs": [],
+                "formulas": [],
+                "patent_medicines": [],
+                "folk_remedies": [],
             }
 
         merged: dict[str, dict[int, dict]] = {
@@ -432,8 +434,7 @@ class IntelligentSearch:
                         merged[category][item_id] = item
 
         return {
-            category: list(items.values())[:15]
-            for category, items in merged.items()
+            category: list(items.values())[:15] for category, items in merged.items()
         }
 
     # ================================================================
@@ -458,10 +459,7 @@ class IntelligentSearch:
                     if item_id not in merged[category]:
                         merged[category][item_id] = item
 
-        return {
-            category: list(items.values())
-            for category, items in merged.items()
-        }
+        return {category: list(items.values()) for category, items in merged.items()}
 
     def _fuse_and_rank(
         self,
@@ -486,15 +484,17 @@ class IntelligentSearch:
             fname = ref["formula"]
             if fname not in seen_names:
                 seen_names.add(fname)
-                recommended_formulas.append({
-                    "name": fname,
-                    "syndrome": ref["syndrome"],
-                    "symptom": ref["symptom"],
-                    "description": ref["description"],
-                    "match_type": ref["match_type"],
-                    "score": ref["score"],
-                    "in_db": fname in db_formula_names,
-                })
+                recommended_formulas.append(
+                    {
+                        "name": fname,
+                        "syndrome": ref["syndrome"],
+                        "symptom": ref["symptom"],
+                        "description": ref["description"],
+                        "match_type": ref["match_type"],
+                        "score": ref["score"],
+                        "in_db": fname in db_formula_names,
+                    }
+                )
 
         result: dict[str, Any] = {
             "query": query,
@@ -623,7 +623,7 @@ class IntelligentSearch:
                 if partial in alias:
                     suggestions.add(standard)
 
-        sorted_suggestions = sorted(suggestions, key=lambda x: (
-            0 if x.startswith(partial) else 1, x
-        ))
+        sorted_suggestions = sorted(
+            suggestions, key=lambda x: (0 if x.startswith(partial) else 1, x)
+        )
         return sorted_suggestions[:max_results]
