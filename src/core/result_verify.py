@@ -10,7 +10,7 @@
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)

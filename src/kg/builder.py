@@ -9,7 +9,7 @@ import logging
 import sqlite3
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import networkx as nx
 

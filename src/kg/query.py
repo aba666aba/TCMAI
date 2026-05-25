@@ -9,7 +9,7 @@ TCM 知识图谱查询接口
 """
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
 import networkx as nx
 

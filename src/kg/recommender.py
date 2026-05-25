@@ -10,7 +10,7 @@ KG 增强推荐器
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 

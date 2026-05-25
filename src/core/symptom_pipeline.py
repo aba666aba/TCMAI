@@ -9,7 +9,7 @@
 """
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
 from core.symptom_analysis import SymptomAnalyzer
 from core.tcm_config import (

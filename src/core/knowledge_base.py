@@ -3,7 +3,7 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 

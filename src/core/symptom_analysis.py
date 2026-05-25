@@ -10,7 +10,7 @@
 """
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 from dataclasses import dataclass
 
 from core.tcm_config import (
