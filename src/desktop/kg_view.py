@@ -152,15 +152,17 @@ class KnowledgeGraphView(ttk.Frame):
         self._current_subgraph = None
         self._selected_node = None
         self._expand_history = []  # 展开历史栈
-        self._all_node_ids = []     # 当前子图节点列表（用于pick event映射）
-        self._artist_to_node = {}   # matplotlib artist → 节点ID映射
+        self._all_node_ids = []     # 当前子图节点列表
         # 缩放相关
         self._base_x_range = None      # 基准 x 范围（用于计算缩放因子）
         self._current_zoom = 1.0       # 当前缩放因子
-        # 缓存绘制对象（用于缩放增量更新，避免全量重绘）
-        self._cached_scatters = []     # [(scatter, ntype, base_size), ...]
-        self._cached_texts = []        # [text_artist, ...]
-        self._cached_edges = []        # [linecollection, ...]
+        # 快速 Canvas 渲染（替代 matplotlib，极致性能）
+        self._tk_canvas = None          # tkinter Canvas 控件
+        self._canvas_items = {}         # {node_id: {"oval": id, "text": id}}
+        self._edge_items = []           # [line_id, ...]
+        self._canvas_bg = None
+        # Canvas 交互状态
+        self._drag_start = None         # 拖拽平移起始点
         # 右侧知识面板
         self.knowledge_text = None
         # 异步加载相关
@@ -227,26 +229,19 @@ class KnowledgeGraphView(ttk.Frame):
         else:
             canvas_parent = self
 
-        # matplotlib 画布
-        canvas_frame = tk.Frame(canvas_parent, bg="#ffffff")
-        canvas_frame.pack(fill="both", expand=True)
+        # ── 快速 Tkinter Canvas 渲染 ──
+        self._tk_canvas = tk.Canvas(
+            canvas_parent, bg="#fcfcfc", highlightthickness=0, cursor="arrow"
+        )
+        self._tk_canvas.pack(fill="both", expand=True)
 
-        self.fig = Figure(figsize=(10, 7), dpi=80, facecolor="#fcfcfc")
-        self.ax = self.fig.add_subplot(111)
-        self.ax.set_facecolor("#fcfcfc")
-        self.fig.subplots_adjust(left=0.02, right=0.98, top=0.92, bottom=0.02)
-
-        self.canvas = FigureCanvasTkAgg(self.fig, master=canvas_frame)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
-
-        if self.standalone:
-            self.nav_toolbar = NavigationToolbar2Tk(self.canvas, canvas_frame)
-            self.nav_toolbar.update()
-        self.canvas.mpl_connect("pick_event", self._on_pick)
-        self.canvas.mpl_connect("button_press_event", self._on_click)
-        self.canvas.mpl_connect("scroll_event", self._on_mouse_wheel)
-        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
-        self._motion_node_id = None  # 当前悬停节点
+        # 交互事件
+        self._tk_canvas.bind("<ButtonPress-1>", self._cv_on_press)
+        self._tk_canvas.bind("<B1-Motion>", self._cv_on_drag)
+        self._tk_canvas.bind("<ButtonRelease-1>", self._cv_on_release)
+        self._tk_canvas.bind("<MouseWheel>", self._cv_on_wheel)
+        self._tk_canvas.bind("<Motion>", self._cv_on_motion)
+        self._tk_canvas.bind("<Button-3>", self._cv_on_right_click)
 
         # 右键菜单
         self._context_menu = tk.Menu(self, tearoff=0)
@@ -499,16 +494,23 @@ class KnowledgeGraphView(ttk.Frame):
         self._show_subgraph_given_nodes(center, all_nodes)
 
     def _show_placeholder(self):
-        """显示初始提示（降级方案）"""
-        self.ax.clear()
-        self.ax.text(0.5, 0.5, "正在加载知识图谱...\n\n"
-                                "请稍候",
-                     transform=self.ax.transAxes, ha="center", va="center",
-                     fontsize=14, color="#999")
-        self.ax.set_xlim(0, 1)
-        self.ax.set_ylim(0, 1)
-        self.ax.axis("off")
-        self.canvas.draw_idle()
+        """显示初始提示"""
+        if self._tk_canvas:
+            self._tk_canvas.delete("all")
+            cw = self._tk_canvas.winfo_width() or 600
+            ch = self._tk_canvas.winfo_height() or 400
+            self._tk_canvas.create_text(cw/2, ch/2-20,
+                text="正在加载知识图谱...\n请稍候",
+                font=("Microsoft YaHei UI", 16), fill="#999", justify="center")
+        else:
+            self.ax.clear()
+            self.ax.text(0.5, 0.5, "正在加载知识图谱...\n\n请稍候",
+                         transform=self.ax.transAxes, ha="center", va="center",
+                         fontsize=14, color="#999")
+            self.ax.set_xlim(0, 1)
+            self.ax.set_ylim(0, 1)
+            self.ax.axis("off")
+            self.canvas.draw_idle()
 
     def _do_search(self):
         """执行图谱搜索"""
@@ -805,12 +807,160 @@ class KnowledgeGraphView(ttk.Frame):
 
         self._current_subgraph = sub
         self._all_node_ids = list(sub.nodes)
-        self._draw_subgraph(sub, pos, center)
-        # 记录基准 x 范围（用于缩放同步）
-        x_lo, x_hi = self.ax.get_xlim()
-        self._base_x_range = x_hi - x_lo
+
+        # 使用快速 Canvas 渲染（如果有 tk_canvas）
+        if self._tk_canvas is not None:
+            self._draw_canvas(sub, pos, center)
+        else:
+            self._draw_subgraph(sub, pos, center)
         self._current_zoom = 1.0
         self._show_node_detail(center)
+
+    # ── 快速 Canvas 渲染（Tkinter Canvas，硬件加速，丝滑缩放平移） ──
+
+    def _draw_canvas(self, sub, pos, center_node=None):
+        """用 Tkinter Canvas 绘制图谱（替代 matplotlib）"""
+        c = self._tk_canvas
+        c.delete("all")
+        self._canvas_items = {}
+        self._edge_items = []
+        g = self.graph
+
+        # 计算数据→画布映射
+        xs = [pos[n][0] for n in sub.nodes]
+        ys = [pos[n][1] for n in sub.nodes]
+        if not xs:
+            return
+        pad_x = max((max(xs) - min(xs)) * 0.3, 1)
+        pad_y = max((max(ys) - min(ys)) * 0.3, 1)
+        x_min, x_max = min(xs) - pad_x, max(xs) + pad_x
+        y_min, y_max = min(ys) - pad_y, max(ys) + pad_y
+        cw = c.winfo_width() or 600
+        ch = c.winfo_height() or 400
+        scale_x = cw / (x_max - x_min) if x_max > x_min else 1
+        scale_y = ch / (y_max - y_min) if y_max > y_min else 1
+        s = min(scale_x, scale_y) * 0.85
+        cx, cy = cw / 2, ch / 2
+        mx, my = (x_min + x_max) / 2, (y_min + y_max) / 2
+
+        def to_canvas(x, y):
+            return (cx + (x - mx) * s, cy + (y - my) * s)
+
+        # 保存变换参数供 zoom/pan 使用
+        self._cv_s = s
+        self._cv_cx, self._cv_cy = cx, cy
+        self._cv_mx, self._cv_my = mx, my
+        self._cv_pos = pos  # 原始数据坐标
+        self._cv_zoom = 1.0
+
+        # 画边
+        for u, v, data in sub.edges(data=True):
+            etype = data.get("type", "")
+            ecolor = EDGE_COLORS.get(etype, "#ccc")
+            x1, y1 = to_canvas(pos[u][0], pos[u][1])
+            x2, y2 = to_canvas(pos[v][0], pos[v][1])
+            lid = c.create_line(x1, y1, x2, y2, fill=ecolor, width=1, tags=("edge",))
+            self._edge_items.append(lid)
+
+        # 画节点
+        NODE_COLORS_HEX = {
+            "Symptom": "#e74c3c", "Syndrome": "#9b59b6", "Herb": "#27ae60",
+            "Formula": "#2980b9", "PatentMedicine": "#f39c12", "FolkRemedy": "#95a5a6",
+            "Category": "#1abc9c", "Meridian": "#e67e22", "Nature": "#e91e63", "Flavor": "#00bcd4",
+        }
+        NODE_RADIUS = {"Syndrome": 18, "Formula": 15, "Symptom": 13, "Herb": 11}
+        for n in sub.nodes:
+            ntype = g.nodes[n].get("type", "Unknown")
+            name = g.nodes[n].get("name", "")
+            x, y = to_canvas(pos[n][0], pos[n][1])
+            r = NODE_RADIUS.get(ntype, 10)
+            color = NODE_COLORS_HEX.get(ntype, "#bdc3c7")
+            # 节点圆
+            oid = c.create_oval(
+                x - r, y - r, x + r, y + r,
+                fill=color, outline="#fff", width=2,
+                tags=(f"node_{n}", "node")
+            )
+            # 标签
+            label = name if len(name) <= 6 else name[:5] + "…"
+            fs = max(7, min(13, int(11 * r / 12)))
+            tid = c.create_text(x, y + r + fs + 2, text=label,
+                                font=("Microsoft YaHei UI", fs),
+                                fill="#333", anchor="n",
+                                tags=(f"label_{n}", "label"))
+            self._canvas_items[n] = {"oval": oid, "text": tid, "r": r, "color": color}
+
+        # 高亮中心
+        if center_node and center_node in self._canvas_items:
+            ci = self._canvas_items[center_node]
+            c.itemconfig(ci["oval"], width=3, outline="#2c3e50")
+
+        # 保存 node_id → tag 映射（用于命中测试）
+        self._cv_node_tags = {f"node_{n}": n for n in sub.nodes}
+
+        # 更新详情面板
+        self._set_detail(f"📊 共 {sub.number_of_nodes()} 节点 / {sub.number_of_edges()} 条边\n"
+                         f"💡 拖拽平移 · 滚轮缩放 · 点击节点查看详情")
+
+    def _cv_get_node(self, x, y):
+        """命中测试：Canvas 坐标 → 节点 ID"""
+        overlap = self._tk_canvas.find_overlapping(x - 5, y - 5, x + 5, y + 5)
+        for item in overlap:
+            tags = self._tk_canvas.gettags(item)
+            for t in tags:
+                if t.startswith("node_"):
+                    return t[5:]
+        return None
+
+    def _cv_on_press(self, e):
+        self._cv_drag_start = (e.x, e.y)
+        node = self._cv_get_node(e.x, e.y)
+        if node:
+            self._selected_node = node
+            # 显示1跳子图
+            self._show_subgraph(node)
+
+    def _cv_on_drag(self, e):
+        if self._cv_drag_start:
+            dx = e.x - self._cv_drag_start[0]
+            dy = e.y - self._cv_drag_start[1]
+            self._tk_canvas.move("all", dx, dy)
+            self._cv_drag_start = (e.x, e.y)
+
+    def _cv_on_release(self, e):
+        self._cv_drag_start = None
+
+    def _cv_on_wheel(self, e):
+        """滚轮缩放（基于 Canvas.scale，单操作 O(1)）"""
+        factor = 1.1 if e.delta > 0 else 0.9
+        self._tk_canvas.scale("all", e.x, e.y, factor, factor)
+        # 同步调整标签字体（scale 不会缩放字体）
+        for n, ci in self._canvas_items.items():
+            old_fs = self._tk_canvas.itemcget(ci["text"], "font")
+            try:
+                sz = int(old_fs.split()[-1])
+                new_sz = max(6, min(18, int(sz * factor)))
+                self._tk_canvas.itemconfig(ci["text"],
+                    font=("Microsoft YaHei UI", new_sz))
+            except Exception:
+                pass
+
+    def _cv_on_motion(self, e):
+        """悬停高亮"""
+        node = self._cv_get_node(e.x, e.y)
+        if node and node != getattr(self, '_cv_hover', None):
+            self._cv_hover = node
+            self._tk_canvas.config(cursor="hand2")
+        elif not node and getattr(self, '_cv_hover', None):
+            self._cv_hover = None
+            self._tk_canvas.config(cursor="")
+
+    def _cv_on_right_click(self, e):
+        node = self._cv_get_node(e.x, e.y)
+        if node:
+            self._selected_node = node
+            self._show_node_detail(node)
+            self._context_menu.tk_popup(e.x_root, e.y_root)
 
     def _draw_subgraph(self, sub, pos, center_node=None, zoom_factor=1.0):
         """绘制子图（包含边过滤）
