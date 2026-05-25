@@ -691,10 +691,21 @@ class DesktopApp:
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
 
+        import difflib
         for record in self.service.list_history():
             haystack = f"{record.get('query', '')} {record.get('answer', '')}".lower()
-            if search and search not in haystack:
-                continue
+            if search:
+                # 精确子串匹配
+                if search in haystack:
+                    pass
+                # 模糊匹配：搜索词字符都在记录中且顺序一致
+                elif all(c in haystack for c in search):
+                    # 字符集匹配通过，再用评分过滤
+                    score = difflib.SequenceMatcher(None, search, haystack).ratio()
+                    if score < 0.2:
+                        continue
+                else:
+                    continue
             preview = record.get("query", "").replace("\n", " ")
             if len(preview) > 34:
                 preview = preview[:34] + "..."
@@ -754,7 +765,7 @@ class DesktopApp:
             return
         if not messagebox.askyesno(
             "确认导出",
-            "导出内容会保持当前脱敏状态，并包含最近 500 条历史记录。是否继续？",
+            "即将导出最近 500 条历史记录。是否继续？",
         ):
             return
 
