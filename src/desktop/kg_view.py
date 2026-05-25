@@ -954,10 +954,6 @@ class KnowledgeGraphView(ttk.Frame):
             "Formula": "#2980b9", "PatentMedicine": "#f39c12", "FolkRemedy": "#95a5a6",
             "Category": "#1abc9c", "Meridian": "#e67e22", "Nature": "#e91e63", "Flavor": "#00bcd4",
         }
-        NODE_LIGHT = {
-            "Symptom": "#f1948a", "Syndrome": "#c39bd3", "Herb": "#82e0aa",
-            "Formula": "#85c1e9", "PatentMedicine": "#f8c471",
-        }
         NODE_RADIUS = {"Syndrome": 20, "Formula": 17, "Symptom": 14, "Herb": 12}
         for n in sub.nodes:
             ntype = g.nodes[n].get("type", "Unknown")
@@ -966,20 +962,13 @@ class KnowledgeGraphView(ttk.Frame):
             r = NODE_RADIUS.get(ntype, 10)
             color = NODE_COLORS_HEX.get(ntype, "#bdc3c7")
 
-            # 阴影（偏移 2px，Tkinter 不支持 alpha，用浅灰模拟）
-            c.create_oval(x - r + 2, y - r + 2, x + r + 2, y + r + 2,
-                          fill="#d0d0d0", outline="", tags=("shadow",))
+            # 阴影（偏移 3px）
+            c.create_oval(x - r + 3, y - r + 3, x + r + 3, y + r + 3,
+                          fill="#a0a0a0", outline="", tags=("shadow",))
 
             # 底色圆
             c.create_oval(x - r, y - r, x + r, y + r,
                           fill=color, outline="#ffffff", width=2,
-                          tags=(f"node_{n}", "node"))
-
-            # 高光
-            hl_r = r * 0.5
-            c.create_oval(x - r + 2, y - r + 2,
-                          x - r + 2 + hl_r * 2, y - r + 2 + hl_r * 2,
-                          fill="#e8e8e8", outline="",
                           tags=(f"node_{n}", "node"))
 
             # 标签背景
