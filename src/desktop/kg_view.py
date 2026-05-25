@@ -324,7 +324,7 @@ class KnowledgeGraphView(ttk.Frame):
             var = tk.BooleanVar(value=True)
             self._edge_vars[etype] = var
             cb = tk.Checkbutton(bar, text=elabel, variable=var,
-                                bg="#f5f5f5",
+                                bg="#f5f5f5", command=self._redraw_current,
                                 font=("Microsoft YaHei UI", 8))
             cb.pack(side="left", padx=2)
 
@@ -354,7 +354,7 @@ class KnowledgeGraphView(ttk.Frame):
             var = tk.BooleanVar(value=True)
             self.type_vars[tname] = var
             cb = tk.Checkbutton(filter_frame, text=tlabel, variable=var,
-                                bg="#f0f0f0",
+                                bg="#f0f0f0", command=self._redraw_current,
                                 font=("Microsoft YaHei UI", 9))
             cb.pack(side="left", padx=(4, 0))
 
