@@ -1,426 +1,236 @@
+# -*- coding: utf-8 -*-
+"""
+中医药智能问答系统 — 桌面主窗口（CustomTkinter 版）
+"""
+
 import json
 import logging
 import queue
-import sys
 import threading
-import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
 from typing import Any, Optional
 
-from core.symptom_pipeline import SymptomPipeline
+import customtkinter as ctk
+
 from desktop.service import TCMDesktopService
+
+logger = logging.getLogger(__name__)
 
 # 知识图谱可视化（可选依赖）
 try:
-    from desktop.kg_view import KnowledgeGraphView
+    from desktop.kg_view import KnowledgeGraphView  # noqa: F401
 
     HAS_KG = True
 except ImportError as exc:
     logger.warning("知识图谱模块加载失败: %s", exc)
     HAS_KG = False
 
-logger = logging.getLogger(__name__)
-
 
 class DesktopApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: ctk.CTk) -> None:
         self.root = root
         self.service = TCMDesktopService()
-        self.result_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+        self.result_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.selected_history_id: Optional[int] = None
         self.query_in_flight = False
-        self.palette = {
-            "bg": "#f2efe8",
-            "card": "#fcfaf7",
-            "deep": "#1a3a2b",
-            "primary": "#256a4b",
-            "primary_hover": "#1d573c",
-            "primary_light": "#409b6e",
-            "accent": "#c8953e",
-            "text": "#2b3d33",
-            "muted": "#7a8e80",
-            "warning_bg": "#fef6e9",
-            "warning_fg": "#7a5a16",
-            "warning_border": "#f0dca0",
-            "border": "#d4ddd6",
-            "tag_bg": "#e9f2ed",
-            "tag_hover": "#256a4b",
-            "input_bg": "#fefefe",
-            "shadow": "#dfdcd5",
-        }
+
         from core.tcm_config import UI_QUICK_SYMPTOMS
 
         self.symptom_options = list(UI_QUICK_SYMPTOMS)[:5]
-
         self._configure_root()
-        self._build_style()
         self._build_layout()
         self._load_history()
         self._poll_queue()
 
+    # ── 字体常量（整体放大） ──
+    FONT = ("Microsoft YaHei UI", 17)
+    FONT_SMALL = ("Microsoft YaHei UI", 15)
+    FONT_XS = ("Microsoft YaHei UI", 14)
+    FONT_TITLE = ("Microsoft YaHei UI", 24, "bold")
+    FONT_SECTION = ("Microsoft YaHei UI", 19, "bold")
+    FONT_HERO_SUB = ("Microsoft YaHei UI", 17)
+
+    # ── 窗口配置 ──
     def _configure_root(self) -> None:
         self.root.title("中医药智能问答系统")
         self.root.minsize(1080, 720)
-        self.root.configure(bg=self.palette["bg"])
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        # 窗口创建后延迟应用深色标题栏
-        if sys.platform == "win32":
-            self.root.after_idle(self._set_dark_titlebar)
 
-    def _set_dark_titlebar(self) -> None:
-        """通过 DWM API 设置深色标题栏"""
-        try:
-            import ctypes
-
-            dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
-
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-            DWMWA_CAPTION_COLOR = 35
-
-            hwnd = ctypes.windll.user32.GetAncestor(
-                self.root.winfo_id(),
-                2,  # GA_ROOT
-            )
-            if not hwnd:
-                return
-
-            dark = ctypes.c_int(1)
-            dwmapi.DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(dark),
-                ctypes.sizeof(dark),
-            )
-
-            # 标题栏颜色 BGR(深绿): 0x002B3A1A = RGB 0x1A3A2B
-            color = ctypes.c_int(0x002B3A1A)
-            try:
-                dwmapi.DwmSetWindowAttribute(
-                    hwnd, DWMWA_CAPTION_COLOR, ctypes.byref(color), ctypes.sizeof(color)
-                )
-            except Exception as exc:
-                logger.warning(
-                    "设置 DWM 标题栏颜色失败(可能不支持的 Windows 版本): %s", exc
-                )
-        except Exception as exc:
-            logger.warning("设置深色标题栏失败: %s", exc)
-
-    def _build_style(self) -> None:
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError as exc:
-            logger.warning("设置 ttk 主题'clam'失败，使用默认主题: %s", exc)
-
-        style.configure(".", font=("Microsoft YaHei UI", 10))
-        style.configure("App.TFrame", background=self.palette["bg"])
-        style.configure("Card.TFrame", background=self.palette["card"])
-        style.configure("Hero.TFrame", background=self.palette["deep"])
-
-        # Hero 标题
-        style.configure(
-            "Title.TLabel",
-            background=self.palette["deep"],
-            foreground="#ffffff",
-            font=("Microsoft YaHei UI", 20, "bold"),
-        )
-        style.configure(
-            "Subtitle.TLabel",
-            background=self.palette["deep"],
-            foreground="#c8ddd2",
-            font=("Microsoft YaHei UI", 10),
-        )
-        # 装饰性副标题
-        style.configure(
-            "Accent.TLabel",
-            background=self.palette["deep"],
-            foreground=self.palette["accent"],
-            font=("Microsoft YaHei UI", 9),
-        )
-        # 卡片区标题
-        style.configure(
-            "SectionTitle.TLabel",
-            background=self.palette["card"],
-            foreground=self.palette["primary"],
-            font=("Microsoft YaHei UI", 15, "bold"),
-        )
-        style.configure(
-            "SectionSubtitle.TLabel",
-            background=self.palette["card"],
-            foreground=self.palette["muted"],
-            font=("Microsoft YaHei UI", 10),
-        )
-        style.configure(
-            "Body.TLabel",
-            background=self.palette["card"],
-            foreground=self.palette["text"],
-        )
-        style.configure(
-            "Muted.TLabel",
-            background=self.palette["card"],
-            foreground=self.palette["muted"],
-            font=("Microsoft YaHei UI", 9),
-        )
-        # 主按钮
-        style.configure(
-            "Primary.TButton",
-            background=self.palette["primary"],
-            foreground="#ffffff",
-            padding=(22, 11),
-            borderwidth=0,
-            font=("Microsoft YaHei UI", 11, "bold"),
-        )
-        style.map(
-            "Primary.TButton",
-            background=[
-                ("active", self.palette["primary_hover"]),
-                ("disabled", "#96b8ab"),
-            ],
-        )
-        # 次要按钮
-        style.configure(
-            "Secondary.TButton",
-            background="#e8efe9",
-            foreground=self.palette["primary"],
-            padding=(14, 9),
-            borderwidth=0,
-            font=("Microsoft YaHei UI", 10),
-        )
-        style.map("Secondary.TButton", background=[("active", "#d4e4da")])
-        # 表格
-        style.configure(
-            "Treeview",
-            font=("Microsoft YaHei UI", 10),
-            rowheight=36,
-            background="#ffffff",
-            fieldbackground="#ffffff",
-            foreground=self.palette["text"],
-        )
-        style.configure(
-            "Treeview.Heading",
-            font=("Microsoft YaHei UI", 10, "bold"),
-            background="#e8efe9",
-            foreground=self.palette["primary"],
-        )
-        # Notebook 标签
-        style.configure(
-            "TNotebook",
-            background=self.palette["bg"],
-            borderwidth=0,
-        )
-        style.configure(
-            "TNotebook.Tab",
-            background="#e0e8e2",
-            foreground=self.palette["text"],
-            padding=(20, 10),
-            font=("Microsoft YaHei UI", 10),
-            borderwidth=0,
-        )
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", self.palette["card"])],
-            foreground=[("selected", self.palette["primary"])],
-            padding=[("selected", (22, 12))],
-            font=[("selected", ("Microsoft YaHei UI", 10, "bold"))],
-        )
-        # 滚动条
-        style.configure(
-            "Vertical.TScrollbar",
-            background="#dce3dd",
-            arrowcolor=self.palette["muted"],
-            troughcolor=self.palette["bg"],
-            borderwidth=0,
-        )
-
+    # ── 整体布局 ──
     def _build_layout(self) -> None:
-        container = ttk.Frame(self.root, style="App.TFrame", padding=(20, 16))
-        container.pack(fill="both", expand=True)
+        # 外层容器
+        container = ctk.CTkFrame(self.root, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=20, pady=(16, 16))
 
         # ── Hero 区域 ──
-        hero = ttk.Frame(container, style="Hero.TFrame", padding=(28, 20))
-        hero.pack(fill="x")
+        hero = ctk.CTkFrame(container, fg_color=("#1a3a2b", "#1e2e24"), corner_radius=8)
+        hero.pack(fill="x", pady=(0, 0))
+
         # 装饰顶线
-        tk.Frame(hero, bg=self.palette["accent"], height=3).pack(fill="x", pady=(0, 12))
-        ttk.Label(hero, text="中医药智能问答系统", style="Title.TLabel").pack(
-            anchor="w"
+        ctk.CTkFrame(hero, fg_color="#c8953e", height=3, corner_radius=0).pack(
+            fill="x", pady=(0, 12)
         )
-        ttk.Label(
+        ctk.CTkLabel(
+            hero,
+            text="中医药智能问答系统",
+            font=self.FONT_TITLE,
+            text_color="#ffffff",
+        ).pack(anchor="w", padx=20, pady=(8, 0))
+        ctk.CTkLabel(
             hero,
             text="基于深度学习的中医药知识推荐 · 支持症状辨证与方剂推荐",
-            style="Subtitle.TLabel",
-        ).pack(anchor="w", pady=(4, 0))
+            font=self.FONT_HERO_SUB,
+            text_color=("#c8ddd2", "#8ab09a"),
+        ).pack(anchor="w", padx=20, pady=(4, 16))
 
-        # ── 阴影装饰（Hero 底部投影效果）──
-        shadow_bar = tk.Frame(container, bg=self.palette["shadow"], height=1)
-        shadow_bar.pack(fill="x", pady=(0, 0))
+        # ── 标签页 ──
+        self._notebook = ctk.CTkTabview(container, corner_radius=6)
+        self._notebook.pack(fill="both", expand=True, pady=(14, 0))
 
-        # ── Notebook ──
-        notebook = ttk.Notebook(container)
-        notebook.pack(fill="both", expand=True, pady=(14, 0))
+        self._notebook.add("首页")
+        self._notebook.add("知识图谱")
+        self._notebook.add("历史记录")
+        self._notebook.add("关于")
 
-        self.home_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
-        self.kg_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
-        self.history_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
-        self.about_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
-        notebook.add(self.home_tab, text="首页")
-        notebook.add(self.kg_tab, text="知识图谱")
-        notebook.add(self.history_tab, text="历史记录")
-        notebook.add(self.about_tab, text="关于")
+        self.home_tab = self._notebook.tab("首页")
+        self.kg_tab = self._notebook.tab("知识图谱")
+        self.history_tab = self._notebook.tab("历史记录")
+        self.about_tab = self._notebook.tab("关于")
 
         self._build_home_tab()
         self._build_kg_tab()
         self._build_history_tab()
         self._build_about_tab()
 
+    # ═══════════════════════════════════════════
+    # 首页
+    # ═══════════════════════════════════════════
     def _build_home_tab(self) -> None:
-        """上下布局：搜索栏 + 推荐结果 + 搜索后显示知识图谱"""
-        container = tk.Frame(self.home_tab, bg=self.palette["bg"])
+        container = ctk.CTkFrame(self.home_tab, fg_color="transparent")
         container.pack(fill="both", expand=True)
 
-        # ── 搜索区域（顶部固定） ──
-        search_area = tk.Frame(
-            container,
-            bg=self.palette["card"],
-            padx=20,
-            pady=14,
-            highlightthickness=1,
-            highlightbackground=self.palette["border"],
-        )
+        # ── 搜索卡片 ──
+        search_area = ctk.CTkFrame(container, corner_radius=8)
         search_area.pack(fill="x", pady=(0, 6))
 
-        tk.Frame(search_area, bg=self.palette["accent"], height=2).pack(
-            fill="x", pady=(0, 8)
+        ctk.CTkFrame(search_area, fg_color="#c8953e", height=2, corner_radius=0).pack(
+            fill="x", pady=(0, 10)
         )
 
-        input_row = tk.Frame(search_area, bg=self.palette["card"])
-        input_row.pack(fill="x")
+        input_row = ctk.CTkFrame(search_area, fg_color="transparent")
+        input_row.pack(fill="x", padx=16)
 
-        self.query_input = tk.Text(
+        self.query_input = ctk.CTkTextbox(
             input_row,
-            height=1,
+            height=36,
+            font=self.FONT,
             wrap="word",
-            font=("Microsoft YaHei UI", 12),
-            relief="solid",
-            bd=1,
-            background=self.palette["input_bg"],
-            foreground=self.palette["text"],
-            insertbackground=self.palette["primary"],
-            highlightthickness=0,
-            padx=12,
-            pady=4,
+            border_width=1,
         )
         self.query_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.query_input.bind(
+            "<Return>", lambda e: self._submit_query() or "break"
+        )
 
-        self.clear_button = ttk.Button(
+        self.clear_button = ctk.CTkButton(
             input_row,
             text="清空",
-            style="Primary.TButton",
-            width=6,
+            width=80,
+            font=self.FONT_SMALL,
             command=self._clear_query,
         )
         self.clear_button.pack(side="right")
 
-        self.submit_button = ttk.Button(
+        self.submit_button = ctk.CTkButton(
             input_row,
             text="搜索",
-            style="Primary.TButton",
-            width=6,
+            width=80,
+            font=self.FONT_SMALL,
             command=self._submit_query,
         )
         self.submit_button.pack(side="right", padx=(6, 0))
 
-        # 快捷标签
-        tags_row = tk.Frame(search_area, bg=self.palette["card"])
-        tags_row.pack(fill="x", pady=(6, 0))
-        tk.Label(
+        # ── 快捷标签 ──
+        tags_row = ctk.CTkFrame(search_area, fg_color="transparent")
+        tags_row.pack(fill="x", padx=16, pady=(6, 10))
+        ctk.CTkLabel(
             tags_row,
-            text="快捷: ",
-            bg=self.palette["card"],
-            fg=self.palette["muted"],
-            font=("Microsoft YaHei UI", 9),
-        ).pack(side="left")
+            text="快捷:",
+            font=self.FONT_XS,
+            text_color=("gray50", "gray60"),
+        ).pack(side="left", padx=(0, 4))
         for symptom in self.symptom_options:
-            btn = tk.Button(
+            btn = ctk.CTkButton(
                 tags_row,
                 text=symptom,
-                relief="flat",
-                bd=0,
-                bg=self.palette["tag_bg"],
-                fg=self.palette["primary"],
-                activebackground=self.palette["tag_hover"],
-                activeforeground="#ffffff",
-                cursor="hand2",
-                font=("Microsoft YaHei UI", 9),
-                padx=10,
-                pady=3,
+                font=self.FONT_XS,
+                width=60,
+                height=26,
+                fg_color=("#e9f2ed", "#2a3d32"),
+                text_color=("#256a4b", "#6fbe92"),
+                hover_color=("#256a4b", "#1d573c"),
                 command=lambda v=symptom: self._append_symptom(v),
             )
             btn.pack(side="left", padx=2)
 
-        # 状态行 + 进度条
-        status_line = tk.Frame(search_area, bg=self.palette["card"])
-        status_line.pack(fill="x", pady=(4, 0))
-        self.status_var = tk.StringVar(value="输入症状，搜索中医药知识")
-        tk.Label(
+        # ── 状态 + 进度 ──
+        status_line = ctk.CTkFrame(search_area, fg_color="transparent")
+        status_line.pack(fill="x", padx=16, pady=(0, 10))
+        self.status_var = ctk.StringVar(value="输入症状，搜索中医药知识")
+        ctk.CTkLabel(
             status_line,
             textvariable=self.status_var,
-            bg=self.palette["card"],
-            fg=self.palette["primary"],
-            font=("Microsoft YaHei UI", 10, "bold"),
+            font=self.FONT_SMALL,
+            text_color=("#256a4b", "#5ca882"),
         ).pack(side="left")
-        self.progress = ttk.Progressbar(
+        self.progress = ctk.CTkProgressBar(
             status_line,
+            width=140,
             mode="indeterminate",
-            length=140,
-            style="green.Horizontal.TProgressbar",
         )
         self.progress.pack(side="right")
+        self.progress.set(0)
 
-        # ── 结果区域（子标签页：推荐结果 + 知识图谱） ──
-        self._home_notebook = ttk.Notebook(container)
+        # ── 子标签页：推荐结果 + 知识图谱 ──
+        self._home_notebook = ctk.CTkTabview(container, corner_radius=6)
         self._home_notebook.pack(fill="both", expand=True, pady=(4, 0))
+        # 缩小子标签页字体
+        self._home_notebook._segmented_button.configure(
+            font=self.FONT_SMALL
+        )
 
-        # ── 标签1：推荐结果 ──
-        result_tab = ttk.Frame(self._home_notebook, style="App.TFrame", padding=4)
-        self._home_notebook.add(result_tab, text="推荐结果")
+        self._home_notebook.add("推荐结果")
+        self._home_notebook.add("知识图谱")
 
-        top_panel = ttk.Frame(result_tab, style="Card.TFrame", padding=10)
-        top_panel.pack(fill="both", expand=True)
+        # ── 推荐结果 ──
+        result_tab = self._home_notebook.tab("推荐结果")
+        top_panel = ctk.CTkFrame(result_tab, corner_radius=8)
+        top_panel.pack(fill="both", expand=True, padx=4, pady=4)
 
-        tk.Frame(top_panel, bg=self.palette["primary"], height=2).pack(
+        ctk.CTkFrame(top_panel, fg_color=("#256a4b", "#2d7a4f"), height=2, corner_radius=0).pack(
             fill="x", pady=(0, 8)
         )
-        tk.Label(
+        ctk.CTkLabel(
             top_panel,
             text="推荐结果",
-            bg=self.palette["card"],
-            fg=self.palette["primary"],
-            font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(anchor="w")
+            font=self.FONT_SECTION,
+            text_color=("#256a4b", "#5ca882"),
+        ).pack(anchor="w", padx=6)
 
-        self.answer_text = tk.Text(
+        self.answer_text = ctk.CTkTextbox(
             top_panel,
             wrap="word",
-            font=("Microsoft YaHei UI", 11),
-            relief="flat",
-            bd=0,
-            background=self.palette["card"],
-            foreground=self.palette["text"],
-            padx=6,
-            pady=6,
-            height=10,
-            state="disabled",
-            highlightthickness=0,
+            font=self.FONT,
+            border_width=0,
+            activate_scrollbars=True,
         )
-        self.answer_text.pack(fill="both", expand=True)
+        self.answer_text.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        self.answer_text.configure(state="disabled")
 
-        # ── 标签2：知识图谱 ──
-        kg_tab = ttk.Frame(self._home_notebook, style="App.TFrame", padding=4)
-        self._home_notebook.add(kg_tab, text="知识图谱")
-
-        self._home_kg_frame = tk.Frame(kg_tab, bg=self.palette["bg"])
+        # ── 知识图谱子标签 ──
+        kg_tab_inner = self._home_notebook.tab("知识图谱")
+        self._home_kg_frame = ctk.CTkFrame(kg_tab_inner, fg_color="transparent")
         self._home_kg_frame.pack(fill="both", expand=True)
 
         self._home_kg_view = None
@@ -437,46 +247,48 @@ class DesktopApp:
                 import traceback
 
                 traceback.print_exc()
-                tk.Label(
-                    self._home_kg_frame, text=f"知识图谱加载失败: {exc}", fg="#c00"
+                ctk.CTkLabel(
+                    self._home_kg_frame,
+                    text=f"知识图谱加载失败: {exc}",
+                    text_color="#e74c3c",
                 ).pack(expand=True)
 
-        # ── 免责声明（底部） ──
-        disclaimer_frame = tk.Frame(
+        # ── 免责声明 ──
+        disclaimer_frame = ctk.CTkFrame(
             container,
-            bg=self.palette["warning_bg"],
-            highlightthickness=1,
-            highlightbackground=self.palette["warning_border"],
+            fg_color=("#fef6e9", "#2a2520"),
+            border_width=1,
+            border_color=("#f0dca0", "#4a3f2a"),
+            corner_radius=6,
         )
         disclaimer_frame.pack(fill="x", pady=(4, 0))
-        tk.Label(
+        ctk.CTkLabel(
             disclaimer_frame,
             text="⚕ 免责声明",
-            bg=self.palette["warning_bg"],
-            fg=self.palette["warning_fg"],
-            font=("Microsoft YaHei UI", 9, "bold"),
-        ).pack(anchor="w", padx=14, pady=(4, 1))
-        self.disclaimer_var = tk.StringVar(
+            font=("Microsoft YaHei UI", 11, "bold"),
+            text_color=("#7a5a16", "#c8a050"),
+        ).pack(anchor="w", padx=14, pady=(6, 1))
+        self.disclaimer_var = ctk.StringVar(
             value="本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。如有健康问题，请咨询专业医疗机构或执业医师。"
         )
-        tk.Label(
+        ctk.CTkLabel(
             disclaimer_frame,
             textvariable=self.disclaimer_var,
             justify="left",
-            wraplength=1200,
-            bg=self.palette["warning_bg"],
-            fg=self.palette["warning_fg"],
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w", padx=14, pady=(0, 4))
+            font=self.FONT_XS,
+            text_color=("#7a5a16", "#c8a050"),
+        ).pack(anchor="w", padx=14, pady=(0, 6))
 
+    # ═══════════════════════════════════════════
+    # 知识图谱标签页
+    # ═══════════════════════════════════════════
     def _build_kg_tab(self) -> None:
-        """独立知识图谱标签页"""
         if not HAS_KG:
-            tk.Label(
+            ctk.CTkLabel(
                 self.kg_tab,
                 text="知识图谱模块不可用",
-                fg="#888",
-                font=("Microsoft YaHei UI", 12),
+                text_color=("gray50", "gray60"),
+                font=self.FONT,
             ).pack(expand=True)
             return
 
@@ -485,147 +297,181 @@ class DesktopApp:
 
             self._kg_tab_view = KnowledgeGraphView(self.kg_tab, standalone=True)
             self._kg_tab_view.pack(fill="both", expand=True)
-            # 延迟加载，避免阻塞主界面初始化
             self.root.after(300, self._delayed_kg_overview)
         except Exception as exc:
             import traceback
 
             traceback.print_exc()
-            tk.Label(
+            ctk.CTkLabel(
                 self.kg_tab,
                 text=f"知识图谱加载失败: {exc}",
-                fg="#c00",
-                font=("Microsoft YaHei UI", 12),
+                text_color="#e74c3c",
+                font=self.FONT,
             ).pack(expand=True)
 
     def _delayed_kg_overview(self):
-        """延迟加载 KG 概览图"""
         try:
             if hasattr(self, "_kg_tab_view") and self._kg_tab_view is not None:
                 self._kg_tab_view._show_overview_graph()
         except Exception as exc:
             logger.exception("知识图谱概览加载失败")
-            tk.Label(self.kg_tab, text=f"知识图谱概览生成失败: {exc}", fg="#c00").pack(
-                expand=True
-            )
+            ctk.CTkLabel(
+                self.kg_tab,
+                text=f"知识图谱概览生成失败: {exc}",
+                text_color="#e74c3c",
+            ).pack(expand=True)
 
+    # ═══════════════════════════════════════════
+    # 历史记录标签页
+    # ═══════════════════════════════════════════
     def _build_history_tab(self) -> None:
-        wrapper = ttk.Frame(self.history_tab, style="App.TFrame")
+        wrapper = ctk.CTkFrame(self.history_tab, fg_color="transparent")
         wrapper.pack(fill="both", expand=True)
 
-        toolbar = ttk.Frame(wrapper, style="Card.TFrame", padding=16)
-        toolbar.pack(fill="x")
-        # 卡片内阴影顶线
-        tk.Frame(toolbar, bg=self.palette["primary"], height=2).pack(
+        # ── 工具栏 ──
+        toolbar = ctk.CTkFrame(wrapper, corner_radius=8)
+        toolbar.pack(fill="x", padx=4, pady=(4, 0))
+
+        ctk.CTkFrame(toolbar, fg_color=("#256a4b", "#2d7a4f"), height=2, corner_radius=0).pack(
             fill="x", pady=(0, 12)
         )
-        ttk.Label(toolbar, text="查询历史", style="SectionTitle.TLabel").pack(
-            side="left"
+
+        title_label = ctk.CTkLabel(
+            toolbar, text="查询历史", font=self.FONT_SECTION
         )
-        self.history_search_var = tk.StringVar()
-        entry = ttk.Entry(
+        title_label.pack(side="left", padx=12)
+
+        # 搜索框 + 标签
+        self.history_search_var = ctk.StringVar()
+        search_entry = ctk.CTkEntry(
             toolbar,
             textvariable=self.history_search_var,
-            width=36,
-            font=("Microsoft YaHei UI", 10),
+            width=200,
+            font=self.FONT_XS,
+            placeholder_text="搜索历史记录…",
         )
-        entry.pack(side="right", padx=(8, 0))
-        entry.bind("<KeyRelease>", lambda _event: self._load_history())
-        ttk.Button(
+        search_entry.pack(side="right", padx=(4, 6))
+        search_entry.bind("<KeyRelease>", lambda _event: self._load_history())
+        ctk.CTkLabel(toolbar, text="搜索：", font=self.FONT_XS).pack(side="right")
+
+        ctk.CTkButton(
             toolbar,
             text="导出全部",
-            style="Secondary.TButton",
+            font=self.FONT_XS,
             command=self._export_history,
-        ).pack(side="right", padx=(8, 0))
-        ttk.Button(
+        ).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(
             toolbar,
             text="清空历史",
-            style="Secondary.TButton",
+            font=self.FONT_XS,
             command=self._clear_history,
-        ).pack(side="right", padx=(8, 0))
-        ttk.Button(
-            toolbar, text="刷新", style="Secondary.TButton", command=self._load_history
-        ).pack(side="right", padx=(8, 0))
+        ).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(
+            toolbar,
+            text="刷新",
+            font=self.FONT_XS,
+            command=self._load_history,
+        ).pack(side="right", padx=(4, 0))
 
-        content = ttk.Panedwindow(wrapper, orient="horizontal")
-        content.pack(fill="both", expand=True, pady=(14, 0))
-        list_frame = ttk.Frame(content, style="Card.TFrame", padding=16)
-        detail_frame = ttk.Frame(content, style="Card.TFrame", padding=16)
-        content.add(list_frame, weight=3)
-        content.add(detail_frame, weight=2)
+        # ── 内容区：左右分栏（手动布局替代 Panedwindow） ──
+        content = ctk.CTkFrame(wrapper, fg_color="transparent")
+        content.pack(fill="both", expand=True, pady=(10, 4), padx=4)
 
-        # 列表装饰顶线
-        tk.Frame(list_frame, bg=self.palette["primary"], height=2).pack(
-            fill="x", pady=(0, 12)
+        # 左侧：列表
+        list_frame = ctk.CTkFrame(content, corner_radius=8)
+        list_frame.pack(side="left", fill="both", expand=True, padx=(0, 4))
+
+        ctk.CTkFrame(list_frame, fg_color=("#256a4b", "#2d7a4f"), height=2, corner_radius=0).pack(
+            fill="x", pady=(0, 10)
         )
-        ttk.Label(list_frame, text="记录列表", style="SectionTitle.TLabel").pack(
-            anchor="w"
-        )
+        ctk.CTkLabel(
+            list_frame, text="记录列表", font=self.FONT_SECTION
+        ).pack(anchor="w", padx=10)
 
-        tree_frame = ttk.Frame(list_frame, style="Card.TFrame")
-        tree_frame.pack(fill="both", expand=True, pady=(8, 0))
+        tree_frame = ctk.CTkFrame(list_frame, fg_color="transparent")
+        tree_frame.pack(fill="both", expand=True, padx=6, pady=(6, 6))
 
         tree_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
         tree_scrollbar.pack(side="right", fill="y")
 
+        style = ttk.Style(tree_frame)
+        style.configure("History.Treeview", font=("Microsoft YaHei UI", 16), rowheight=38)
+        style.configure("History.Treeview.Heading", font=("Microsoft YaHei UI", 15, "bold"))
         self.history_tree = ttk.Treeview(
             tree_frame,
             columns=("timestamp", "query"),
             show="headings",
             selectmode="browse",
             yscrollcommand=tree_scrollbar.set,
+            style="History.Treeview",
         )
         tree_scrollbar.config(command=self.history_tree.yview)
         self.history_tree.heading("timestamp", text="时间")
         self.history_tree.heading("query", text="问题")
         self.history_tree.column("timestamp", width=170, anchor="w")
-        self.history_tree.column("query", width=510, anchor="w")
+        self.history_tree.column("query", width=350, anchor="w")
         self.history_tree.pack(fill="both", expand=True)
         self.history_tree.bind("<<TreeviewSelect>>", self._on_history_select)
 
-        # 详情装饰顶线
-        tk.Frame(detail_frame, bg=self.palette["primary"], height=2).pack(
-            fill="x", pady=(0, 12)
+        # 右侧：详情
+        detail_frame = ctk.CTkFrame(content, corner_radius=8)
+        detail_frame.pack(side="right", fill="both", expand=False, padx=(4, 0))
+        # 设定固定宽度比例（约40%）
+        detail_frame.configure(width=360)
+        detail_frame.pack_propagate(False)
+
+        ctk.CTkFrame(detail_frame, fg_color=("#256a4b", "#2d7a4f"), height=2, corner_radius=0).pack(
+            fill="x", pady=(0, 10)
         )
 
-        actions = ttk.Frame(detail_frame, style="Card.TFrame")
-        actions.pack(fill="x")
-        ttk.Label(actions, text="记录详情", style="SectionTitle.TLabel").pack(
-            side="left"
-        )
-        ttk.Button(
+        actions = ctk.CTkFrame(detail_frame, fg_color="transparent")
+        actions.pack(fill="x", padx=8)
+        ctk.CTkLabel(
+            actions, text="记录详情", font=self.FONT_SECTION
+        ).pack(side="left")
+        ctk.CTkButton(
             actions,
-            text="删除当前记录",
-            style="Secondary.TButton",
+            text="删除",
+            font=self.FONT_XS,
+            width=60,
             command=self._delete_selected_history,
         ).pack(side="right")
 
-        self.history_detail = ScrolledText(
+        self.history_detail = ctk.CTkTextbox(
             detail_frame,
             wrap="word",
-            font=("Microsoft YaHei UI", 10),
-            relief="flat",
-            bd=0,
+            font=self.FONT_SMALL,
+            border_width=1,
         )
-        self.history_detail.pack(fill="both", expand=True, pady=(12, 0))
-        self._configure_output_text(self.history_detail)
-        self._set_text(
-            self.history_detail,
+        self.history_detail.pack(fill="both", expand=True, padx=8, pady=(8, 8))
+        self.history_detail.configure(state="normal")
+        self.history_detail.insert(
+            "1.0",
             "选择左侧一条记录后，这里会显示完整问题、回答、症状和时间。",
         )
+        self.history_detail.configure(state="disabled")
 
+    # ═══════════════════════════════════════════
+    # 关于标签页
+    # ═══════════════════════════════════════════
     def _build_about_tab(self) -> None:
-        frame = ttk.Frame(self.about_tab, style="Card.TFrame", padding=28)
-        frame.pack(fill="both", expand=True)
+        # 外层滚动区
+        about_frame = ctk.CTkScrollableFrame(self.about_tab, corner_radius=8)
+        about_frame.pack(fill="both", expand=True, padx=8, pady=8)
 
-        # 卡片内阴影顶线
-        tk.Frame(frame, bg=self.palette["primary"], height=2).pack(
+        ctk.CTkFrame(about_frame, fg_color=("#256a4b", "#2d7a4f"), height=2, corner_radius=0).pack(
             fill="x", pady=(0, 16)
         )
-
-        ttk.Label(frame, text="关于系统", style="SectionTitle.TLabel").pack(anchor="w")
-        ttk.Label(
-            frame, text="中医药智能问答系统", style="SectionSubtitle.TLabel"
+        ctk.CTkLabel(
+            about_frame,
+            text="关于系统",
+            font=self.FONT_SECTION,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            about_frame,
+            text="中医药智能问答系统",
+            font=("Microsoft YaHei UI", 11),
+            text_color=("gray50", "gray60"),
         ).pack(anchor="w", pady=(2, 18))
 
         sections = [
@@ -647,48 +493,29 @@ class DesktopApp:
             ),
         ]
         for title, body in sections:
-            card = tk.Frame(
-                frame,
-                bg="#f7faf7",
-                highlightthickness=1,
-                highlightbackground=self.palette["border"],
-                padx=16,
-                pady=14,
+            card = ctk.CTkFrame(
+                about_frame,
+                corner_radius=8,
+                border_width=1,
             )
-            card.pack(fill="x", pady=(0, 10))
-            tk.Label(
+            card.pack(fill="x", pady=(0, 12))
+            ctk.CTkLabel(
                 card,
                 text=title,
-                bg="#f7faf7",
-                fg=self.palette["primary"],
-                font=("Microsoft YaHei UI", 12, "bold"),
-            ).pack(anchor="w", padx=14, pady=(12, 6))
-            tk.Label(
+                font=("Microsoft YaHei UI", 14, "bold"),
+                text_color=("#256a4b", "#5ca882"),
+            ).pack(anchor="w", padx=18, pady=(14, 6))
+            ctk.CTkLabel(
                 card,
                 text=body,
                 justify="left",
-                wraplength=1000,
-                bg="#f7faf7",
-                fg=self.palette["text"],
-                font=("Microsoft YaHei UI", 10),
-            ).pack(anchor="w", padx=14, pady=(0, 12))
+                font=self.FONT_SMALL,
+            ).pack(anchor="w", padx=18, pady=(0, 14))
 
-    def _configure_output_text(self, widget: tk.Text) -> None:
-        widget.configure(
-            background="#fcfcfc",
-            foreground=self.palette["text"],
-            insertbackground=self.palette["primary"],
-            highlightthickness=1,
-            highlightbackground=self.palette["border"],
-            highlightcolor=self.palette["primary_light"],
-            padx=14,
-            pady=12,
-            state="disabled",
-            relief="flat",
-            borderwidth=0,
-        )
-
-    def _set_text(self, widget: tk.Text, value: str) -> None:
+    # ═══════════════════════════════════════════
+    # 工具方法
+    # ═══════════════════════════════════════════
+    def _set_text(self, widget: ctk.CTkTextbox, value: str) -> None:
         widget.configure(state="normal")
         widget.delete("1.0", "end")
         widget.insert("1.0", value.strip() if value else "")
@@ -705,6 +532,9 @@ class DesktopApp:
         self.query_input.delete("1.0", "end")
         self.status_var.set("输入已清空")
 
+    # ═══════════════════════════════════════════
+    # 查询逻辑
+    # ═══════════════════════════════════════════
     def _submit_query(self) -> None:
         query = self.query_input.get("1.0", "end").strip()
         if self.query_in_flight:
@@ -721,8 +551,8 @@ class DesktopApp:
             return
 
         self.query_in_flight = True
-        self.submit_button.state(["disabled"])
-        self.progress.start(10)
+        self.submit_button.configure(state="disabled")
+        self.progress.start()
         self.status_var.set("正在分析您的问题，请稍候...")
         self._set_text(self.answer_text, "")
 
@@ -733,14 +563,13 @@ class DesktopApp:
         try:
             from desktop.service import detect_symptoms_nlu
 
-            # NLU 优先，失败降级关键词
             detected = detect_symptoms_nlu(query)
             logger.info("检测到症状: %s", detected)
             result = self.service.query(query, detected)
             self.result_queue.put(("success", result))
         except RuntimeError as exc:
-            logger.exception("AI 模型不可用")
-            self.result_queue.put(("error", f"AI 模型不可用：{exc}"))
+            logger.exception("NLU 或 AI 模型错误")
+            self.result_queue.put(("error", f"模型错误：{exc}"))
         except Exception as exc:
             logger.exception("桌面端查询失败")
             self.result_queue.put(("error", str(exc)))
@@ -751,13 +580,13 @@ class DesktopApp:
                 status, payload = self.result_queue.get_nowait()
                 self._finish_query(status, payload)
         except queue.Empty:
-            pass  # 队列为空是正常的轮询状态，无需处理
+            pass
         self.root.after(120, self._poll_queue)
 
     def _finish_query(self, status: str, payload: Any) -> None:
         self.progress.stop()
         self.query_in_flight = False
-        self.submit_button.state(["!disabled"])
+        self.submit_button.configure(state="normal")
         if status == "error":
             self.status_var.set("AI 查询失败")
             messagebox.showerror("AI 查询失败", str(payload))
@@ -774,11 +603,11 @@ class DesktopApp:
         self._set_text(self.answer_text, answer)
         self._load_history()
 
-        # ── 切换到推荐结果标签页 ──
+        # 切换到推荐结果标签页
         if hasattr(self, "_home_notebook"):
-            self._home_notebook.select(0)  # 0 = 推荐结果
+            self._home_notebook.set("推荐结果")
 
-        # ── 搜索后更新知识图谱标签页 ──
+        # 搜索后更新知识图谱
         if self._home_kg_view is not None:
             try:
                 knowledge = data.get("knowledge", {})
@@ -802,6 +631,9 @@ class DesktopApp:
                 logger.exception("首页知识图谱展示失败")
                 self.status_var.set(f"⚠ 知识图谱加载失败: {exc}")
 
+    # ═══════════════════════════════════════════
+    # 历史记录管理
+    # ═══════════════════════════════════════════
     def _load_history(self) -> None:
         search = (
             self.history_search_var.get().strip().lower()
@@ -816,12 +648,9 @@ class DesktopApp:
         for record in self.service.list_history():
             haystack = f"{record.get('query', '')} {record.get('answer', '')}".lower()
             if search:
-                # 精确子串匹配
                 if search in haystack:
                     pass
-                # 模糊匹配：搜索词字符都在记录中且顺序一致
                 elif all(c in haystack for c in search):
-                    # 字符集匹配通过，再用评分过滤
                     score = difflib.SequenceMatcher(None, search, haystack).ratio()
                     if score < 0.2:
                         continue
@@ -890,7 +719,7 @@ class DesktopApp:
             return
         if not messagebox.askyesno(
             "确认导出",
-            "即将导出最近 500 条历史记录。是否继续？",
+            "即将导出最近 100 条历史记录。是否继续？",
         ):
             return
 
@@ -932,7 +761,22 @@ class DesktopApp:
 
 
 def run_desktop_app() -> None:
-    root = tk.Tk()
+    """启动桌面应用（含 Splash 动画）"""
+    # 全局 CTk 配置 — 在创建任何窗口前设置
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("green")
+    ctk.set_widget_scaling(1.25)  # 整体缩放 25%
+
+    root = ctk.CTk()
+    root.state("zoomed")
+
+    # 先显示启动画面，再构建主界面（覆盖初始化耗时）
+    from desktop.splash import SplashScreen
+    splash = SplashScreen(parent=root)
+    root.update()
+
     DesktopApp(root)
-    root.state("zoomed")  # 窗口最大化
+    root.update()
+
+    splash.animate_and_close(duration=3.0)
     root.mainloop()

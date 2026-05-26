@@ -10,15 +10,15 @@
 """
 
 import logging
-from typing import Dict, Optional
 from dataclasses import dataclass
+from typing import Optional
 
 from core.tcm_config import (
+    CONTRAINDICATION_RULES,
     SYMPTOM_ALIAS_MAP,
     SYMPTOM_CATEGORIES,
     SYMPTOM_INFO,
     SYNDROME_DEFINITIONS,
-    CONTRAINDICATION_RULES,
 )
 
 logger = logging.getLogger(__name__)
@@ -209,7 +209,7 @@ class SymptomAnalyzer:
 
         return suggestions
 
-    def get_symptom_info(self, symptom_name: str) -> Optional[Dict]:
+    def get_symptom_info(self, symptom_name: str) -> Optional[dict]:
         """获取症状信息（从统一配置读取）"""
         info = SYMPTOM_INFO.get(symptom_name)
         if info:

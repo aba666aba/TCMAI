@@ -25,9 +25,7 @@
            │                ├─ TCMNet 模型预测(症状→药材/方剂/证型)
            │                ├─ KG 推理(symptom_to_recommendation + recommend_by_symptoms)
            │                └─ 加权融合(model_weight * 模型分 + kg_weight * KG分 + boost)
-           └─ 快速模式(备) → generate_fallback_answer() → 输出
-                              └─ detect_symptoms() → 症状分析
-                              └─ search_herbs/formulas → 知识检索
+           └─ 输出（方剂 + 药材 + 禁忌筛查 + 知识图谱）
 ```
 
 完整训练和推理管线：
@@ -37,7 +35,7 @@ DB → data_pipeline(500K样本)→ TCMNet训练 → 模型推理 → KG融合 �
 extended_config(228症状/30证型)    kg_cache.pkl(知识图谱)
 ```
 
-快速模式走规则引擎（src/core/fallback.py），AI模式走深度学习（tcm_recommender/recommend.py）+ KG融合（src/kg/recommender.py）。
+AI模式走深度学习（tcm_recommender/recommend.py）+ KG融合（src/kg/recommender.py）。
 桌面服务层在 src/desktop/service.py 中协调调用流程。
 
 ## 数据库表结构 (data/tcm_knowledge.db)
@@ -62,14 +60,13 @@ pip install torch==2.6.0+cu124 numpy tqdm pytest ruff --index-url https://downlo
 ```
 E:\Tom\TCMAI/
 ├── src/
-│   ├── core/                     # 症状分析、知识库、降级回答、脱敏、合规校验
+│   ├── core/                     # 症状分析、知识库、脱敏、合规校验
 │   │   ├── symptom_analysis.py   #   症状标准化+证型推断+禁忌检查（9证型）
 │   │   ├── symptom_pipeline.py   #   统一处理管线
 │   │   ├── knowledge_base.py     #   SQLite 查询
-│   │   ├── fallback.py           #   规则引擎降级回答
 │   │   ├── result_verify.py      #   合规校验+溯源
 │   │   ├── data_desensitize.py   #   脱敏（含中医药白名单保护）
-│   │   ├── tcm_config.py         #   桌面端配置（33症状/9证型/15内置药材/14方剂）
+│   │   ├── tcm_config.py         #   桌面端配置（症状/证型/禁忌/同义词映射）
 │   │   └── intelligent_search.py #   智能搜索引擎（Neo4j + 图谱查询）
 │   ├── desktop/
 │   │   ├── app.py                #   tkinter GUI
@@ -105,8 +102,6 @@ E:\Tom\TCMAI/
 ## 启动方式
 
 - 主入口：双击 `知识图谱中药方生成系统.pyw`（无控制台窗口）
-- 快速模式（规则引擎）：双击 `scripts\快速启动.bat`
-- AI 模式：GUI 中选择"回答模式→AI"
 - 调试入口（无 Splash）：`python src/main.py`
 - 打包 exe：双击 `打包exe.bat`
 

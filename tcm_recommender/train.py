@@ -13,8 +13,8 @@ import logging
 import os
 import sys
 import time
-from pathlib import Path
 from typing import Optional
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -26,8 +26,8 @@ from tqdm import tqdm
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tcm_recommender.data_pipeline import TCMDataPipeline
-from tcm_recommender.model import TCMNet, create_model
+from tcm_recommender.data_pipeline import TCMDataPipeline  # noqa: E402
+from tcm_recommender.model import TCMNet, create_model  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -120,11 +120,11 @@ def build_herb_features(pipeline: TCMDataPipeline) -> dict[str, torch.Tensor]:
     # ── 类别索引 ──
     # 收集所有类别名
     all_categories = sorted(
-        set(
+        {
             pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]].get("category", "")
             or "未知"
             for mi in range(1, nh + 1)
-        )
+        }
     )
     cat_to_idx = {c: i + 1 for i, c in enumerate(all_categories)}
     cat_idx = torch.zeros(nh, dtype=torch.long)
@@ -259,7 +259,7 @@ class Trainer:
         """
         pos_mask = labels > 0.5  # 正样本
         neg_mask = labels < -0.5  # 负样本（先前被忽略，现已修复）
-        unknown_mask = ~pos_mask & ~neg_mask  # 0 = 未标注，忽略
+        ~pos_mask & ~neg_mask  # 0 = 未标注，忽略
 
         has_pos = pos_mask.any()
         has_neg = neg_mask.any()
@@ -545,7 +545,7 @@ class Trainer:
                 "history": self.history,
                 "config": {
                     "d_model": self.model.d_model,
-                    "num_layers": len([m for m in self.model.symptom_encoder.layers]),
+                    "num_layers": len(list(self.model.symptom_encoder.layers)),
                     "version": "v2",
                 },
             },

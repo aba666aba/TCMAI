@@ -100,7 +100,6 @@ E:\Tom\TCMAI/
 │   ├── tcm_config.py               #   配置中心（症状/证型/禁忌）
 │   ├── symptom_pipeline.py         #   症状处理管线
 │   ├── symptom_analysis.py         #   症状分析器
-│   ├── fallback.py                 #   降级回答引擎
 │   ├── knowledge_base.py           #   SQLite 查询
 │   └── intelligent_search.py       #   智能搜索引擎
 │

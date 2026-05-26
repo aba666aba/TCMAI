@@ -14,6 +14,17 @@ from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
 from core.tcm_config import generate_health_tips
 
+
+# ── 统一根目录解析 ──
+def _get_project_root() -> Path:
+    """获取项目根目录：TCMAI_ROOT > frozen > __file__ 降级链"""
+    tcm_root = os.environ.get("TCMAI_ROOT")
+    if tcm_root:
+        return Path(tcm_root)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[2]
+
 # NLU 引擎（延迟导入，避免启动时加载大模型）
 _nlu_engine: Optional[Any] = None
 
@@ -21,30 +32,22 @@ _nlu_engine: Optional[Any] = None
 def _get_nlu_engine():
     global _nlu_engine
     if _nlu_engine is None:
-        try:
-            from nlu import NLUEngine
+        from nlu import NLUEngine
 
-            _nlu_engine = NLUEngine(device="cuda", use_4bit=True)
-            _nlu_engine.load()
-            logger.info("NLU 引擎已就绪")
-        except Exception as exc:
-            logger.warning("NLU 引擎加载失败，使用关键词匹配降级: %s", exc)
-            _nlu_engine = False
-    return _nlu_engine if _nlu_engine is not False else None
+        _nlu_engine = NLUEngine(device="cuda", use_4bit=True)
+        _nlu_engine.load()
+        logger.info("NLU 引擎已就绪")
+    return _nlu_engine
 
 
 def detect_symptoms_nlu(text: str) -> list[str]:
-    """NLU 优先检测症状，失败降级到关键词匹配
-    （如果输入是证型名如"肾虚"，自动展开为对应症状集）
-    """
+    """仅使用 NLU 引擎提取症状，失败则抛出异常"""
     # ── 证型→症状展开（用户可能直接输入"肾虚""脾虚"等） ──
     expanded = list(text)
     try:
         from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
 
         for syn_name, syn_info in EXTENDED_SYNDROME_DEFINITIONS.items():
-            # 精确匹配或包含匹配：如"肾虚"匹配"肾阳虚""肾阴虚"等
-            # 多种匹配：精确/包含/前缀/字符集包含（肾虚→肾阳虚/肾阴虚）
             text_in_syn = text in syn_name
             syn_in_text = syn_name in text
             startswith = syn_name.startswith(text) or text.startswith(syn_name)
@@ -61,21 +64,15 @@ def detect_symptoms_nlu(text: str) -> list[str]:
         pass
     enhanced_text = "".join(expanded)
 
-    # ── NLU 提取 ──
-    try:
-        engine = _get_nlu_engine()
-        if engine:
-            result = engine.extract_symptoms(enhanced_text)
-            if result:
-                logger.info("NLU 提取症状: %s", result)
-                return result
-    except Exception as exc:
-        logger.warning("NLU 提取失败，降级: %s", exc)
-
-    # ── 降级：关键词匹配 ──
-    from core.symptom_pipeline import SymptomPipeline
-
-    return SymptomPipeline().detect(enhanced_text)
+    # ── NLU 提取（无降级）──
+    engine = _get_nlu_engine()
+    if not engine:
+        raise RuntimeError("NLU 引擎不可用，无法提取症状")
+    result = engine.extract_symptoms(enhanced_text)
+    if not result:
+        raise RuntimeError("NLU 引擎未提取到任何症状")
+    logger.info("NLU 提取症状: %s", result)
+    return result
 
 
 logger = logging.getLogger(__name__)
@@ -149,7 +146,7 @@ class TCMDesktopService:
         self._recommender_available = False
 
     def _resolve_history_file(self) -> Path:
-        root = Path(os.environ.get("TCMAI_ROOT", Path(__file__).resolve().parents[2]))
+        root = _get_project_root()
         data_dir = (root / "data").resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
         return data_dir / "history.json"
@@ -190,7 +187,7 @@ class TCMDesktopService:
             "symptoms": [str(s)[:64] for s in symptoms[:20]],
             "answer": str(item.get("answer", ""))[:4000],
             "timestamp": str(item.get("timestamp", ""))[:32],
-            "mode": "ai" if item.get("mode") == "ai" else "fast",
+            "mode": "ai" if item.get("mode") == "ai" else "ai",
         }
 
     def _normalize_history(self, data: Any) -> list[dict[str, Any]]:
@@ -215,7 +212,7 @@ class TCMDesktopService:
             return []
         try:
             with self._acquire_file_lock():
-                with open(self.history_file, "r", encoding="utf-8") as handle:
+                with open(self.history_file, encoding="utf-8") as handle:
                     data = json.load(handle)
             return self._normalize_history(data)
         except json.JSONDecodeError:
@@ -259,19 +256,13 @@ class TCMDesktopService:
 
         self._recommender_load_attempted = True
         try:
-            from tcm_recommender.recommend import TCMRecommender
             import torch
 
-            db_path = os.path.join(
-                os.environ.get("TCMAI_ROOT", str(Path(__file__).resolve().parents[2])),
-                "data",
-                "tcm_knowledge.db",
-            )
-            model_path = os.path.join(
-                os.environ.get("TCMAI_ROOT", str(Path(__file__).resolve().parents[2])),
-                "tcm_recommender",
-                "best_model.pth",
-            )
+            from tcm_recommender.recommend import TCMRecommender
+
+            root = str(_get_project_root())
+            db_path = os.path.join(root, "data", "tcm_knowledge.db")
+            model_path = os.path.join(root, "tcm_recommender", "best_model.pth")
             if not os.path.exists(db_path) or not os.path.exists(model_path):
                 logger.warning("推荐模型或数据库文件不存在，AI 模式不可用")
                 return None
@@ -405,13 +396,13 @@ class TCMDesktopService:
                     continue
                 raise RuntimeError(
                     "AI 模型推理超时，请稍后重试。若持续超时，请检查 GPU/CPU 负载。"
-                )
+                ) from None
             except Exception as exc:
                 logger.error("推荐模型推理失败(%s): %s", type(exc).__name__, exc)
                 if attempt == 0:
                     logger.info("重试推荐模型推理…")
                     continue
-                raise RuntimeError(f"AI 模型推理失败：{exc}")
+                raise RuntimeError(f"AI 模型推理失败：{exc}") from exc
 
         if answer is None:
             raise RuntimeError("AI 模型未返回结果，请稍后重试。")
@@ -525,7 +516,7 @@ class TCMDesktopService:
         )
 
     def export_history(self) -> list[dict[str, Any]]:
-        return self.list_history()
+        return self.list_history()[:100]
 
     def delete_history_item(self, item_id: int) -> bool:
         with self.history_lock:

@@ -18,12 +18,12 @@
   8. 输出 HDF5/NPZ 格式的高效训练数据
 """
 
+from typing import Optional
+
 import logging
 import sqlite3
 import sys
-from collections import defaultdict
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -951,9 +951,9 @@ class TCMDataPipeline:
         """证型驱动：为每个证型生成症状子集变体"""
         symptoms, herbs, formulas, syndromes, weights = [], [], [], [], []
         ns, nh = self.num_symptoms, self.num_herbs
-        syn_names = list(self.syndromes.keys())
+        list(self.syndromes.keys())
 
-        for syn_idx, (syn_name, syn_info) in enumerate(self.syndromes.items(), 1):
+        for syn_idx, (_syn_name, syn_info) in enumerate(self.syndromes.items(), 1):
             syn_symptom_names = syn_info.get("symptoms", [])
             syn_herb_names = syn_info.get("recommend_herbs", [])
             syn_formula_names = syn_info.get("recommend_formulas", [])
@@ -1033,7 +1033,7 @@ class TCMDataPipeline:
             [],
             [],
         )
-        ns, nh, nf = self.num_symptoms, self.num_herbs, self.num_formulas
+        ns, nh, _nf = self.num_symptoms, self.num_herbs, self.num_formulas
 
         for hid, herb in self.herbs.items():
             h_model_idx = self.herb_db_id_to_model_idx.get(hid)
@@ -1173,7 +1173,7 @@ class TCMDataPipeline:
 
             if herb_scores.max() > 0:
                 # 要求药材至少匹配2个症状，且得分 ≥ 0.5*max
-                min_hits = min(2, len(chosen))
+                min(2, len(chosen))
                 threshold = herb_scores.max() * 0.5
                 # 得分满足条件的候选药材
                 candidates = np.where((herb_scores >= threshold) & (herb_scores > 0))[0]
@@ -1240,7 +1240,7 @@ class TCMDataPipeline:
             for hi in neg_chosen:
                 hl[hi] = -1.0  # 负标签
 
-            syn_label = self._infer_syndrome_from_symptoms(set(chosen))
+            self._infer_syndrome_from_symptoms(set(chosen))
 
             syms.append(chosen)
             herbs.append(hl)
@@ -1253,7 +1253,7 @@ class TCMDataPipeline:
     def _infer_syndrome_from_symptoms(self, symptom_set: set[int]) -> int:
         """从症状集合推断最匹配证型（软分配：始终选匹配率最高的证型）"""
         best_id, best_score = 0, 0.0
-        for syn_idx, (syn_name, syn_info) in enumerate(self.syndromes.items(), 1):
+        for syn_idx, (_syn_name, syn_info) in enumerate(self.syndromes.items(), 1):
             required = syn_info.get("symptoms", [])
             if not required:
                 continue
@@ -1378,11 +1378,11 @@ class TCMDataPipeline:
 
         # 类别索引
         all_categories = sorted(
-            set(
+            {
                 self.herbs[self.model_idx_to_herb_db_id[mi]].get("category", "")
                 or "未知"
                 for mi in range(1, nh + 1)
-            )
+            }
         )
         cat_to_idx = {c: i + 1 for i, c in enumerate(all_categories)}
         cat_idx = np.zeros(nh, dtype=np.int32)

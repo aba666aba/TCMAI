@@ -15,10 +15,11 @@
   ContrastiveLoss (InfoNCE)
 """
 
+from typing import Optional
+
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -135,7 +136,7 @@ class SymptomEncoder(nn.Module):
         nn.init.constant_(self.embedding.weight[0], 0)
 
     def forward(self, symptom_ids: torch.Tensor,
-                mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+                mask: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             symptom_ids: [B, L], 1-based, 0=padding
@@ -351,7 +352,7 @@ class TCMNet(nn.Module):
     def forward(self, symptom_ids: torch.Tensor, symptom_mask: torch.Tensor,
                 herb_char: torch.Tensor, herb_cat: torch.Tensor,
                 herb_nat: torch.Tensor, herb_flv: torch.Tensor,
-                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Returns:
             syndrome_logits: [B, num_syndromes]
@@ -411,9 +412,9 @@ class TCMNet(nn.Module):
 
         return {
             "syndromes": list(zip(syn_probs.argsort(descending=True).tolist(),
-                                  syn_probs.sort(descending=True).values.tolist())),
-            "herbs": list(zip(h_topk.indices.tolist(), h_topk.values.tolist())),
-            "formulas": list(zip(f_topk.indices.tolist(), f_topk.values.tolist())),
+                                  syn_probs.sort(descending=True).values.tolist(), strict=False)),
+            "herbs": list(zip(h_topk.indices.tolist(), h_topk.values.tolist(), strict=False)),
+            "formulas": list(zip(f_topk.indices.tolist(), f_topk.values.tolist(), strict=False)),
         }
 
 

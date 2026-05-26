@@ -3,7 +3,7 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,7 @@ class KnowledgeBase:
 
         return results
 
-    def get_herb_detail(self, herb_id: int) -> Optional[Dict]:
+    def get_herb_detail(self, herb_id: int) -> Optional[dict]:
         with self._lock:
             if not self.conn:
                 return None
@@ -189,7 +189,7 @@ class KnowledgeBase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_formula_detail(self, formula_id: int) -> Optional[Dict]:
+    def get_formula_detail(self, formula_id: int) -> Optional[dict]:
         with self._lock:
             if not self.conn:
                 return None
@@ -205,7 +205,7 @@ class KnowledgeBase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_patent_medicine_detail(self, medicine_id: int) -> Optional[Dict]:
+    def get_patent_medicine_detail(self, medicine_id: int) -> Optional[dict]:
         with self._lock:
             if not self.conn:
                 return None
@@ -360,7 +360,7 @@ class KnowledgeBase:
                 "formulas": kb_result.get("formulas", []),
                 "patent_medicines": kb_result.get("patent_medicines", []),
                 "folk_remedies": kb_result.get("folk_remedies", []),
-                "search_summary": f"搜索异常，降级到普通模式",
+                "search_summary": "搜索异常，降级到普通模式",
             }
 
     def get_symptom_suggestions(self, partial: str, max_results: int = 8) -> list[str]:

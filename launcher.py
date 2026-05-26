@@ -9,25 +9,23 @@ from pathlib import Path
 
 
 if getattr(sys, "frozen", False):
-    ROOT_DIR = Path(sys.executable).parent
-    # PyInstaller 依赖包目录
-    internal_path = ROOT_DIR / "_internal"
+    APP_ROOT = Path(sys.executable).parent
+    internal_path = APP_ROOT / "_internal"
     if internal_path.exists():
         sys.path.insert(0, str(internal_path))
-    # 项目源码目录（打包时放置在根目录）
-    src_path = ROOT_DIR / "src"
-    if src_path.exists():
-        sys.path.insert(0, str(src_path))
+    # PyInstaller onedir 模式下，所有 datas 在 _internal/ 下
+    ROOT_DIR = internal_path
 else:
-    ROOT_DIR = Path(__file__).resolve().parent
+    APP_ROOT = ROOT_DIR = Path(__file__).resolve().parent
     sys.path.insert(0, str(ROOT_DIR / "src"))
 
 os.environ["TCMAI_ROOT"] = str(ROOT_DIR)
 
-# 日志配置
+# 日志配置 — 使用 APP_ROOT（frozen）或 ROOT_DIR（开发）
+_log_root = APP_ROOT if getattr(sys, "frozen", False) else ROOT_DIR
 _log_level = getattr(logging, os.environ.get("TCMAI_LOG_LEVEL", "INFO").upper(), logging.INFO)
 _log_format = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-_log_dir = ROOT_DIR / "data" / "logs"
+_log_dir = _log_root / "data" / "logs"
 _log_dir.mkdir(parents=True, exist_ok=True)
 _file_handler = logging.handlers.RotatingFileHandler(
     _log_dir / "tcmai.log",
@@ -44,26 +42,29 @@ _logger = logging.getLogger("launcher")
 
 def main() -> None:
     try:
+        import customtkinter as ctk
+
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("green")
+        ctk.set_widget_scaling(1.25)
+
         from desktop.splash import SplashScreen
         from desktop.runtime import hide_console_window, show_error_dialog
-        import tkinter as tk
 
         hide_console_window()
         _logger.info("中医药智能问答系统启动")
 
-        # ── 先创建主窗口（隐藏），再盖启动动画 ──
+        # ── 先显示启动画面，再构建主界面 ──
         from desktop.app import DesktopApp
-        root = tk.Tk()
-        root.withdraw()
-        app = DesktopApp(root)
+        root = ctk.CTk()
         root.state("zoomed")
-
-        # ── 启动动画（覆盖在主窗口之上）──
         splash = SplashScreen(parent=root)
-        splash.animate_and_close(duration=1.2)
+        root.update()
 
-        # ── 进入主循环 ──
-        root.deiconify()
+        app = DesktopApp(root)
+        root.update()
+
+        splash.animate_and_close(duration=3.0)
         root.mainloop()
 
     except Exception as exc:
@@ -87,3 +88,6 @@ def main() -> None:
 #     def _send(self, message): ...
 #     def _poll_progress(self): ...
 
+
+if __name__ == "__main__":
+    main()

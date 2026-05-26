@@ -1,12 +1,10 @@
 # 中医药智能问答系统 — 依赖清单
 # 安装：pip install -r requirements.txt
 #
-# 桌面核心功能使用 Python 标准库（tkinter/sqlite3/json 等）构建，
-# 零外部依赖即可运行快速模式。
-# AI 深度学习推荐和开发工具为可选安装项。
+# 桌面核心功能使用 Python 标准库（tkinter/sqlite3/json 等）构建。
+# AI 深度学习推荐为必选依赖。
 
-# ── AI 深度学习推荐（可选） ──
-# 不安装不影响快速模式（基于规则）的正常使用
+# ── AI 深度学习推荐 ──
 torch>=2.0.0
 numpy>=1.24.0
 tqdm>=4.65.0

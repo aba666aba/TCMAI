@@ -6,17 +6,33 @@ TCM 知识图谱构建器
 """
 
 import logging
+import os
 import sqlite3
-import re
+import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
 import networkx as nx
 
 logger = logging.getLogger(__name__)
 
-# 项目路径
-_PROJECT = Path(__file__).resolve().parents[2]
+# 项目路径（惰性计算，兼容 PyInstaller frozen 模式）
+_PROJECT: Optional[Path] = None
+
+
+def _get_project_root() -> Path:
+    """运行时获取项目根目录，兼容开发 / frozen / TCMAI_ROOT 三种场景。"""
+    global _PROJECT
+    if _PROJECT is not None:
+        return _PROJECT
+    tcm_root = os.environ.get("TCMAI_ROOT")
+    if tcm_root:
+        _PROJECT = Path(tcm_root)
+    elif getattr(sys, "frozen", False):
+        _PROJECT = Path(sys.executable).parent
+    else:
+        _PROJECT = Path(__file__).resolve().parents[2]
+    return _PROJECT
 
 
 class TCMKnowledgeGraph:
@@ -52,7 +68,7 @@ class TCMKnowledgeGraph:
 
     def __init__(self, db_path: Optional[str] = None):
         self.graph = nx.MultiDiGraph()
-        self.db_path = db_path or str(_PROJECT / "data" / "tcm_knowledge.db")
+        self.db_path = db_path or str(_get_project_root() / "data" / "tcm_knowledge.db")
         self._db = sqlite3.connect(self.db_path)
 
         # 计数
@@ -82,8 +98,8 @@ class TCMKnowledgeGraph:
         # 构建一次pipeline，各方法共享
         import sys
 
-        sys.path.insert(0, str(_PROJECT / "src"))
-        sys.path.insert(0, str(_PROJECT))
+        sys.path.insert(0, str(_get_project_root() / "src"))
+        sys.path.insert(0, str(_get_project_root()))
         from tcm_recommender.data_pipeline import TCMDataPipeline
 
         pipeline = TCMDataPipeline(self.db_path)
@@ -110,8 +126,8 @@ class TCMKnowledgeGraph:
         """添加症状和证型节点（不含推荐边）"""
         import sys
 
-        sys.path.insert(0, str(_PROJECT / "src"))
-        sys.path.insert(0, str(_PROJECT))
+        sys.path.insert(0, str(_get_project_root() / "src"))
+        sys.path.insert(0, str(_get_project_root()))
         from tcm_recommender.extended_config import (
             EXTENDED_SYMPTOM_LIST,
             EXTENDED_SYNDROME_DEFINITIONS,
@@ -153,8 +169,8 @@ class TCMKnowledgeGraph:
         """在所有节点就绪后添加证型推荐边"""
         import sys
 
-        sys.path.insert(0, str(_PROJECT / "src"))
-        sys.path.insert(0, str(_PROJECT))
+        sys.path.insert(0, str(_get_project_root() / "src"))
+        sys.path.insert(0, str(_get_project_root()))
         from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
 
         for syn_name, syn_def in EXTENDED_SYNDROME_DEFINITIONS.items():
@@ -465,7 +481,7 @@ class TCMKnowledgeGraph:
         """解析方剂组成，构建药材→方剂边"""
 
         edge_count = 0
-        for fid, formula in pipeline.formulas.items():
+        for _fid, formula in pipeline.formulas.items():
             fml_name = formula["name"]
             fnid = f"formula:{fml_name}"
             if not self.graph.has_node(fnid):
@@ -493,7 +509,7 @@ class TCMKnowledgeGraph:
         """添加十八反十九畏 和 毒性"""
         import sys
 
-        sys.path.insert(0, str(_PROJECT / "src"))
+        sys.path.insert(0, str(_get_project_root() / "src"))
         from core.tcm_config import INCOMPATIBLE_HERBS, TOXIC_HERBS
 
         # 相反相畏（十八反 + 十九畏）
@@ -613,6 +629,7 @@ class TCMKnowledgeGraph:
             nx.write_graphml(self.graph, path)
         elif fmt == "json":
             import json
+
             from networkx.readwrite import json_graph
 
             data = json_graph.node_link_data(self.graph)

@@ -10,8 +10,8 @@
 
 import logging
 import re
-from typing import Any, Dict, Optional
 from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 class ResultVerifier:
     """
     结果校验器
-    
+
     负责对 AI 生成的回答进行校验、溯源和合规处理
     """
-    
+
     def __init__(self):
         """初始化校验器"""
         # 合规提示模板
@@ -31,7 +31,7 @@ class ResultVerifier:
             "如有健康问题，请咨询专业医疗机构或执业医师。",
             "中医药使用需辨证施治，个体差异较大，请谨慎参考。"
         ]
-        
+
         # 敏感词列表（需要过滤或提示的内容）
         # 使用更精确的上下文匹配模式，只匹配绝对化断言语境
         self.sensitive_patterns = [
@@ -41,7 +41,7 @@ class ResultVerifier:
             r'无效退款',
             r'绝对.{0,3}(?:有效|安全|无副作用|无害)',
         ]
-        
+
         # 需要溯源的关键词
         self.source_keywords = [
             '本草纲目',
@@ -49,32 +49,32 @@ class ResultVerifier:
             '伤寒论',
             '金匮要略',
         ]
-    
+
     def verify(self, answer: str, knowledge: dict = None) -> dict[str, Any]:
         """
         校验回答
-        
+
         Args:
             answer: AI 生成的回答
             knowledge: 相关知识信息
-            
+
         Returns:
             校验后的结果
         """
         logger.info("开始校验回答")
-        
+
         # 内容过滤
         filtered_answer = self._filter_content(answer)
-        
+
         # 溯源处理
         sourced_answer = self._add_source(filtered_answer, knowledge)
-        
+
         # 生成合规提示
         disclaimer = self._generate_disclaimer()
-        
+
         # 提取相关知识
         extracted_knowledge = self._extract_knowledge(knowledge)
-        
+
         result = {
             'answer': sourced_answer,
             'knowledge': extracted_knowledge,
@@ -82,22 +82,22 @@ class ResultVerifier:
             'verified_at': datetime.now().isoformat(),
             'has_warning': self._check_warning(sourced_answer)
         }
-        
+
         logger.info("回答校验完成")
         return result
-    
+
     def _filter_content(self, content: str) -> str:
         """
         过滤不当内容
-        
+
         Args:
             content: 原始内容
-            
+
         Returns:
             过滤后的内容
         """
         filtered = content
-        
+
         for pattern in self.sensitive_patterns:
             filtered = re.sub(
                 pattern,
@@ -105,76 +105,76 @@ class ResultVerifier:
                 filtered,
                 flags=re.IGNORECASE,
             )
-        
+
         return filtered
-    
-    def _add_source(self, answer: str, knowledge: Dict = None) -> str:
+
+    def _add_source(self, answer: str, knowledge: dict = None) -> str:
         """
         添加溯源信息
-        
+
         Args:
             answer: 回答内容
             knowledge: 知识库信息
-            
+
         Returns:
             添加溯源后的回答
         """
         if not knowledge:
             return answer
-        
+
         sourced_answer = answer
-        
+
         # 检查是否引用了典籍
         for keyword in self.source_keywords:
             if keyword in answer:
                 sourced_answer += f"\n\n【典籍来源】{keyword}"
                 break
-        
+
         return sourced_answer
-    
+
     def _generate_disclaimer(self) -> str:
         """
         生成合规提示
-        
+
         Returns:
             合规提示文本
         """
         return " ".join(self.disclaimer_templates)
-    
-    def _extract_knowledge(self, knowledge: Dict = None) -> str:
+
+    def _extract_knowledge(self, knowledge: dict = None) -> str:
         """
         提取相关知识
-        
+
         Args:
             knowledge: 知识库信息
-            
+
         Returns:
             格式化后的知识文本
         """
         if not knowledge:
             return "暂无相关知识"
-        
+
         parts = []
-        
+
         # 提取药材信息
         if 'herbs' in knowledge and knowledge['herbs']:
             herb_names = [h.get('name', '') for h in knowledge['herbs'][:3]]
             parts.append(f"相关药材：{', '.join(herb_names)}")
-        
+
         # 提取方剂信息
         if 'formulas' in knowledge and knowledge['formulas']:
             formula_names = [f.get('name', '') for f in knowledge['formulas'][:3]]
             parts.append(f"相关方剂：{', '.join(formula_names)}")
-        
+
         return "; ".join(parts) if parts else "暂无相关知识"
-    
+
     def _check_warning(self, content: str) -> bool:
         """
         检查是否需要特别警告
-        
+
         Args:
             content: 内容
-            
+
         Returns:
             是否需要警告
         """
@@ -185,33 +185,33 @@ class ResultVerifier:
             '慎用',
             '禁用',
         ]
-        
+
         for keyword in warning_keywords:
             if keyword in content:
                 return True
-        
+
         return False
-    
+
     def add_compliance_note(self, content: str) -> str:
         """
         添加合规标注
-        
+
         Args:
             content: 原始内容
-            
+
         Returns:
             添加合规标注后的内容
         """
         note = "\n\n---\n**合规提示**：以上内容基于中医药知识库生成，仅供参考学习。"
         return content + note
-    
+
     def validate_answer_completeness(self, answer: str) -> dict[str, Any]:
         """
         验证回答完整性
-        
+
         Args:
             answer: 回答内容
-            
+
         Returns:
             验证结果
         """
@@ -220,15 +220,15 @@ class ResultVerifier:
             'missing_parts': [],
             'suggestions': []
         }
-        
+
         # 检查是否过短
         if len(answer) < 50:
             result['is_complete'] = False
             result['missing_parts'].append('回答内容过短')
             result['suggestions'].append('建议补充详细说明')
-        
+
         # 检查是否有结论
         if not any(word in answer for word in ['建议', '可以', '应该', '推荐']):
             result['suggestions'].append('可添加具体建议')
-        
+
         return result

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (C) 2026 中医药智能问答系统
 """
 中医药数据库大规模补充脚本
@@ -17,7 +16,6 @@
 
 import sqlite3
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "tcm_knowledge.db"
@@ -3806,7 +3804,6 @@ def count_herbs(data_sections):
 
 def expand(verbose=True):
     """主执行函数"""
-    import sqlite3
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
 

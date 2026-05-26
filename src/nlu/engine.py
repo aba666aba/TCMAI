@@ -2,15 +2,28 @@
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# 本地模型路径（项目目录内）
-_DEFAULT_MODEL_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "models", "nlu", "qwen"
-)
+# 本地模型路径 — 惰性计算以适配 PyInstaller 打包环境
+_DEFAULT_MODEL_PATH: Optional[str] = None
+
+
+def _resolve_default_model_path() -> str:
+    """运行时解析默认模型路径，兼容开发 / frozen / 已设置 TCMAI_ROOT 三种场景。"""
+    tcm_root = os.environ.get("TCMAI_ROOT")
+    if tcm_root:
+        return os.path.join(tcm_root, "models", "nlu", "qwen")
+    if getattr(sys, "frozen", False):
+        return str(Path(sys.executable).parent / "models" / "nlu" / "qwen")
+    # 开发模式：从 src/nlu/engine.py 向上 3 层到项目根
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "models", "nlu", "qwen"
+    )
 
 # ── 系统提示词 ──
 _SYSTEM_PROMPT = """你是一位中医药症状提取专家。你的任务是从患者的病情描述中**完整地提取所有症状**，并映射到标准症状名称。
@@ -44,15 +57,14 @@ _SYSTEM_PROMPT = """你是一位中医药症状提取专家。你的任务是从
 class NLUEngine:
     """自然语言理解引擎，用 LLM 提取结构化症状"""
 
-    def __init__(self, model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
-                 model_path: Optional[str] = None,
+    def __init__(self, model_path: Optional[str] = None,
                  device: str = "cuda", use_4bit: bool = True):
-        self.model_name = model_name
-        # 优先使用传入路径，否则用本地缓存
-        self.model_path = model_path or _DEFAULT_MODEL_PATH
+        # 仅使用本地模型路径，不提供网络回退
+        self.model_path = model_path or _resolve_default_model_path()
         self.device = device
         self.use_4bit = use_4bit
-        self._pipe = None
+        self._model = None
+        self._tokenizer = None
         self._symptom_list_text = ""
 
     def _build_symptom_list_text(self) -> str:
@@ -67,23 +79,21 @@ class NLUEngine:
             return "胃痛、头痛、发热、咳嗽、失眠、乏力、腹痛、腹泻"
 
     def load(self):
-        if self._pipe is not None:
+        if self._model is not None:
             return
 
         model_source = self.model_path
         if not os.path.exists(model_source):
-            logger.warning("本地模型路径不存在: %s，回退到模型名加载", model_source)
-            model_source = self.model_name
+            raise FileNotFoundError(
+                f"本地 NLU 模型不存在: {model_source}\n"
+                f"请确保 Qwen2.5 模型已放置在正确位置。"
+            )
 
         logger.info("加载 NLU 模型: %s (device=%s, 4bit=%s)",
                      model_source, self.device, self.use_4bit)
 
         try:
-            from transformers import (
-                AutoModelForCausalLM,
-                AutoTokenizer,
-                pipeline as hf_pipeline,
-            )
+            from transformers import AutoModelForCausalLM, AutoTokenizer
 
             kwargs = {"trust_remote_code": True}
             if self.use_4bit and self.device == "cuda":
@@ -102,20 +112,18 @@ class NLUEngine:
             else:
                 kwargs["device_map"] = "cpu"
 
-            tokenizer = AutoTokenizer.from_pretrained(
+            self._tokenizer = AutoTokenizer.from_pretrained(
                 model_source, trust_remote_code=True
             )
-            model = AutoModelForCausalLM.from_pretrained(model_source, **kwargs)
-            model.eval()
-
-            self._pipe = hf_pipeline(
-                "text-generation",
-                model=model,
-                tokenizer=tokenizer,
-                max_new_tokens=256,
-                temperature=0.1,
-                do_sample=False,
+            self._model = AutoModelForCausalLM.from_pretrained(
+                model_source, **kwargs
             )
+            self._model.eval()
+
+            # 为 generate() 设置 pad_token
+            if self._tokenizer.pad_token is None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
+
             logger.info("NLU 模型加载完成")
 
         except Exception as exc:
@@ -124,13 +132,13 @@ class NLUEngine:
             raise
 
     def extract_symptoms(self, text: str) -> list[str]:
-        if self._pipe is None:
+        if self._model is None:
             logger.warning("NLU 模型未加载，尝试加载...")
             try:
                 self.load()
             except Exception as exc:
                 logger.error("NLU 模型加载失败，无法提取症状: %s", exc)
-                return []
+                raise RuntimeError(f"NLU 模型加载失败: {exc}") from exc
 
         symptom_list = self._build_symptom_list_text()
         prompt = _SYSTEM_PROMPT.format(症状列表=symptom_list)
@@ -140,8 +148,31 @@ class NLUEngine:
         ]
 
         try:
-            response = self._pipe(messages)
-            raw_output = response[0]["generated_text"][-1]["content"]
+            import torch
+
+            # 应用 chat template → tokenize
+            input_text = self._tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            inputs = self._tokenizer(
+                input_text, return_tensors="pt", truncation=True, max_length=2048
+            )
+            inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                output_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                    temperature=0.1,
+                    do_sample=False,
+                    pad_token_id=self._tokenizer.pad_token_id,
+                    eos_token_id=self._tokenizer.eos_token_id,
+                )
+
+            # 解码（跳过输入部分）
+            input_len = inputs["input_ids"].shape[1]
+            generated = output_ids[0, input_len:]
+            raw_output = self._tokenizer.decode(generated, skip_special_tokens=True)
             logger.info("NLU 原始输出: %s", raw_output[:200])
 
             symptoms = self._parse_json_output(raw_output)
@@ -149,7 +180,7 @@ class NLUEngine:
 
         except Exception as exc:
             logger.error("NLU 推理失败: %s", exc)
-            return []
+            raise RuntimeError(f"NLU 推理失败: {exc}") from exc
 
     def _parse_json_output(self, raw: str) -> list[str]:
         raw = raw.strip()
@@ -173,19 +204,18 @@ class NLUEngine:
         return symptoms
 
     def unload(self):
-        if self._pipe is not None:
-            del self._pipe
-            self._pipe = None
-            import gc
+        self._model = None
+        self._tokenizer = None
+        import gc
 
-            gc.collect()
-            try:
-                import torch
+        gc.collect()
+        try:
+            import torch
 
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-            logger.info("NLU 模型已卸载")
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        logger.info("NLU 模型已卸载")
 
 
 # 全局单例

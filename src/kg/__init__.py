@@ -14,5 +14,5 @@ TCM 中医药知识图谱模块
   toxic(有毒), co_occurs_with(共现)
 """
 
-from .builder import TCMKnowledgeGraph
-from .query import KnowledgeGraphQuery
+from .builder import TCMKnowledgeGraph  # noqa: F401
+from .query import KnowledgeGraphQuery  # noqa: F401

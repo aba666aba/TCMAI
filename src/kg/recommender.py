@@ -8,11 +8,8 @@ KG 增强推荐器
 """
 
 import logging
-import os
 from pathlib import Path
-from typing import Dict, Optional, Tuple
-
-import torch
+from typing import Optional
 
 _PROJECT = Path(__file__).resolve().parents[2]
 
@@ -22,7 +19,7 @@ logger = logging.getLogger(__name__)
 class KGEnhancedRecommender:
     """KG 增强推荐器（包装 TCMRecommender + 知识图谱）"""
 
-    def __init__(self, model_recommender, kg_query, kg_config: Optional[Dict] = None):
+    def __init__(self, model_recommender, kg_query, kg_config: Optional[dict] = None):
         """
         Args:
             model_recommender: TCMRecommender 实例
@@ -44,7 +41,7 @@ class KGEnhancedRecommender:
 
     def recommend(
         self, symptom_text: str, top_k_herb: int = 10, top_k_formula: int = 5
-    ) -> Dict:
+    ) -> dict:
         """
         KG 增强推荐
 
@@ -121,7 +118,7 @@ class KGEnhancedRecommender:
         # 收集证型路径上的推荐药材/方剂
         path_herbs = {}
         path_formulas = {}
-        n_syn = len(syn_analysis.get("matched_syndromes", []))
+        len(syn_analysis.get("matched_syndromes", []))
         for syn in syn_analysis.get("matched_syndromes", []):
             syn_name = syn["name"]
             match_ratio = syn["matched_symptom_count"] / max(len(symptoms), 1)
@@ -178,8 +175,8 @@ class KGEnhancedRecommender:
     # ═══════════════════════════════════════════
 
     def _fusion(
-        self, model_result: Dict, kg_result: Dict, top_k_herb: int, top_k_formula: int
-    ) -> Dict:
+        self, model_result: dict, kg_result: dict, top_k_herb: int, top_k_formula: int
+    ) -> dict:
         """融合模型预测 + KG推理结果"""
 
         # ── 药材融合 ──
@@ -393,7 +390,7 @@ class KGEnhancedRecommender:
     # 工具
     # ═══════════════════════════════════════════
 
-    def _error_result(self, message: str, symptom_text: str) -> Dict:
+    def _error_result(self, message: str, symptom_text: str) -> dict:
         return {
             "error": message,
             "symptoms": [symptom_text],
@@ -404,7 +401,7 @@ class KGEnhancedRecommender:
             "safety": {"warnings": []},
         }
 
-    def format_output(self, result: Dict) -> str:
+    def format_output(self, result: dict) -> str:
         """格式化输出（含推理路径）"""
         if "error" in result:
             return f"错误：{result['error']}"
@@ -465,11 +462,11 @@ class KGEnhancedRecommender:
             saf = result["safety"]
             kgw = saf.get("kg_warnings", [])
             if kgw:
-                lines.append(f"\n🔒 安全提示：")
+                lines.append("\n🔒 安全提示：")
                 for w in kgw:
                     lines.append(f"  {w}")
             if saf.get("warnings"):
-                lines.append(f"\n📝 用药注意：")
+                lines.append("\n📝 用药注意：")
                 for w in saf["warnings"]:
                     lines.append(f"  {w}")
 

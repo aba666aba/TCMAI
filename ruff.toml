@@ -29,9 +29,6 @@ exclude = [
     ".qwen",
 ]
 
-# 行长度限制
-line-length = 100
-
 [format]
 # 使用 ruff 格式化器
 quote-style = "double"

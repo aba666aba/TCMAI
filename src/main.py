@@ -4,7 +4,6 @@ import os
 import sys
 from pathlib import Path
 
-
 TCMAI_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(TCMAI_ROOT, "src"))
 os.environ["TCMAI_ROOT"] = TCMAI_ROOT
@@ -37,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     try:
-        from desktop.runtime import hide_console_window, show_error_dialog
         from desktop.app import run_desktop_app
+        from desktop.runtime import hide_console_window, show_error_dialog
 
         hide_console_window()
         run_desktop_app()

@@ -1,8 +1,7 @@
-import logging
 import ctypes
+import logging
 import sys
 from ctypes import wintypes
-
 
 logger = logging.getLogger(__name__)
 

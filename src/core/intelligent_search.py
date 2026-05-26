@@ -16,19 +16,16 @@
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from core.tcm_config import (
-    SYMPTOM_ALIAS_MAP,
-    SYMPTOM_ALIAS_REVERSE_MAP,
-    SYMPTOM_TO_FORMULA_MAP,
-    TCM_SYNONYM_MAP,
     FORMULA_ALIAS_MAP,
     HERB_ALIAS_MAP,
-    SYNDROME_DEFINITIONS,
+    SYMPTOM_ALIAS_MAP,
+    SYMPTOM_ALIAS_REVERSE_MAP,
     SYMPTOM_LIST,
-    FALLBACK_HERBS,
-    FALLBACK_FORMULAS,
+    SYMPTOM_TO_FORMULA_MAP,
+    TCM_SYNONYM_MAP,
 )
 
 logger = logging.getLogger(__name__)
@@ -249,7 +246,7 @@ class IntelligentSearch:
                     )
 
         # 评分：每个匹配症状 +0.3，最多 1.0
-        for syn, data in syndrome_scores.items():
+        for _syn, data in syndrome_scores.items():
             n_symptoms = len(data["matched_symptoms"])
             data["score"] = min(1.0, 0.4 + n_symptoms * 0.3)
 
@@ -474,7 +471,7 @@ class IntelligentSearch:
         # --- 标注方剂匹配来源 ---
         db_formulas = multi_results.get("formulas", [])
         db_formula_names = {f["name"] for f in db_formulas}
-        db_herb_names = {h["name"] for h in multi_results.get("herbs", [])}
+        {h["name"] for h in multi_results.get("herbs", [])}
 
         # 来自证型推理的方剂（补充到结果中）
         recommended_formulas: list[dict[str, Any]] = []
@@ -607,17 +604,22 @@ class IntelligentSearch:
         return result
 
     def get_formula_suggestions(self, partial: str, max_results: int = 8) -> list[str]:
-        """根据输入提供方剂建议"""
+        """根据输入提供方剂建议（查询知识库 + 别名匹配）"""
         if not partial or len(partial) < 1:
             return []
 
         partial = partial.strip()
         suggestions: set[str] = set()
 
-        for formula in FALLBACK_FORMULAS:
-            if partial in formula["name"]:
-                suggestions.add(formula["name"])
+        # 查询数据库中的方剂名
+        if self.kb and self.kb.is_available:
+            results = self.kb.search(partial)
+            for formula in results.get("formulas", []):
+                if isinstance(formula, dict) and "name" in formula:
+                    if partial in formula["name"]:
+                        suggestions.add(formula["name"])
 
+        # 别名匹配
         for standard, aliases in FORMULA_ALIAS_MAP.items():
             for alias in aliases:
                 if partial in alias:

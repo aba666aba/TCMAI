@@ -4,16 +4,14 @@
 """
 统一症状处理管线
 
-合并 fallback.detect_symptoms() 和 SymptomAnalyzer 的功能，
 提供单一入口：症状检测 → 标准化 → 证型推断 → 禁忌检查。
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Optional
 
 from core.symptom_analysis import SymptomAnalyzer
 from core.tcm_config import (
-    FALLBACK_SYMPTOMS,
     SYMPTOM_KEYWORDS,
     SYNDROME_DEFINITIONS,
 )
@@ -93,14 +91,10 @@ class SymptomPipeline:
 
         return result
 
-    def get_symptom_info(self, symptom_name: str) -> Optional[Dict]:
+    def get_symptom_info(self, symptom_name: str) -> Optional[dict]:
         """获取症状详细信息"""
         return self.analyzer.get_symptom_info(symptom_name)
 
-    def get_fallback_symptom_info(self, symptom_name: str) -> Optional[Dict]:
-        """获取降级症状信息（含推荐方剂）"""
-        return FALLBACK_SYMPTOMS.get(symptom_name)
-
-    def get_syndrome_info(self, syndrome_name: str) -> Optional[Dict]:
+    def get_syndrome_info(self, syndrome_name: str) -> Optional[dict]:
         """获取证型信息"""
         return SYNDROME_DEFINITIONS.get(syndrome_name)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
@@ -8,13 +7,12 @@
 根据症状推荐药材和方剂，并进行安全校验。
 """
 
-import os
-import sys
+import argparse
 import json
 import logging
-import argparse
+import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
 
@@ -25,13 +23,14 @@ else:
     PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tcm_recommender.model import TCMNet, create_model
-from tcm_recommender.train import build_herb_features
 from tcm_recommender.data_pipeline import TCMDataPipeline
 from tcm_recommender.extended_config import (
     EXTENDED_SYMPTOM_LIST,
     EXTENDED_SYNDROME_DEFINITIONS,
+    SYMPTOM_ALIAS_MAP,
 )
+from tcm_recommender.model import create_model
+from tcm_recommender.train import build_herb_features
 
 # 配置日志
 logging.basicConfig(
@@ -119,6 +118,11 @@ class TCMRecommender:
         unknown_symptoms = []
 
         for symp in symptoms:
+            # 1. 尝试别名映射（NLU 输出→标准症状）
+            mapped = SYMPTOM_ALIAS_MAP.get(symp)
+            if mapped is not None:
+                symp = mapped
+            # 2. 精确匹配标准词表
             if symp in self.symptom_to_id:
                 symptom_ids.append(self.symptom_to_id[symp])
                 valid_symptoms.append(symp)
@@ -259,42 +263,42 @@ class TCMRecommender:
             )
             row = cur.fetchone()
             if row and row[0]:
-                warnings.append("%s: %s" % (h, row[0][:100]))
+                warnings.append(f"{h}: {row[0][:100]}")
 
         conn.close()
         return {"warnings": warnings}
 
-    def format_output(self, result: Dict) -> str:
+    def format_output(self, result: dict) -> str:
         """格式化输出"""
         if "error" in result:
-            return "错误：%s" % result["error"]
+            return "错误：{}".format(result["error"])
 
         lines = []
         lines.append("=" * 60)
         lines.append("  中医药智能推荐结果")
         lines.append("=" * 60)
-        lines.append("\n症状：%s" % ", ".join(result["symptoms"]))
+        lines.append("\n症状：{}".format(", ".join(result["symptoms"])))
 
         if result.get("syndrome"):
             s = result["syndrome"]
             lines.append(
-                "\n证型：%s (概率: %.1f%%)" % (s["name"], s["confidence"] * 100)
+                "\n证型：{} (概率: {:.1f}%)".format(s["name"], s["confidence"] * 100)
             )
 
         lines.append("\n推荐药材:")
         for i, h in enumerate(result["herbs"], 1):
-            lines.append("  %d. %s (概率: %.1f%%)" % (i, h["name"], h["score"] * 100))
+            lines.append(f"  {i}. {h['name']} (概率: {h['score'] * 100:.1f}%)")
 
         lines.append("\n推荐方剂:")
         for i, f in enumerate(result["formulas"], 1):
-            lines.append("  %d. %s (概率: %.1f%%)" % (i, f["name"], f["score"] * 100))
+            lines.append(f"  {i}. {f['name']} (概率: {f['score'] * 100:.1f}%)")
 
         lines.append("\n安全校验:")
         herb_names = [h["name"] for h in result["herbs"][:10]]
         safety = self.check_safety(herb_names)
         if safety["warnings"]:
             for w in safety["warnings"]:
-                lines.append("  %s" % w)
+                lines.append(f"  {w}")
         else:
             lines.append("  未发现明显配伍禁忌")
 

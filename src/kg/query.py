@@ -9,7 +9,7 @@ TCM 知识图谱查询接口
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Optional
 
 import networkx as nx
 
@@ -42,7 +42,7 @@ class KnowledgeGraphQuery:
                 results.append(nid)
         return results
 
-    def get_node_info(self, node_id: str) -> Optional[Dict]:
+    def get_node_info(self, node_id: str) -> Optional[dict]:
         """获取节点详细信息"""
         if not self.graph.has_node(node_id):
             return None
@@ -73,7 +73,7 @@ class KnowledgeGraphQuery:
     # 推理查询
     # ═══════════════════════════════════════════
 
-    def symptom_to_recommendation(self, symptom_name: str, top_k: int = 10) -> Dict:
+    def symptom_to_recommendation(self, symptom_name: str, top_k: int = 10) -> dict:
         """
         症状→推荐（核心推理链路）
 
@@ -167,7 +167,7 @@ class KnowledgeGraphQuery:
 
         return result
 
-    def herb_profile(self, herb_name: str) -> Dict:
+    def herb_profile(self, herb_name: str) -> dict:
         """药材完整画像"""
         hnid = f"herb:{herb_name}"
         if not self.graph.has_node(hnid):
