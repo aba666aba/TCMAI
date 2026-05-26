@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 中医药智能问答系统 — 桌面主窗口（CustomTkinter 版）
 """
@@ -9,7 +8,7 @@ import queue
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Optional
+from typing import Any
 
 import customtkinter as ctk
 
@@ -32,7 +31,7 @@ class DesktopApp:
         self.root = root
         self.service = TCMDesktopService()
         self.result_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
-        self.selected_history_id: Optional[int] = None
+        self.selected_history_id: int | None = None
         self.query_in_flight = False
 
         from core.tcm_config import UI_QUICK_SYMPTOMS

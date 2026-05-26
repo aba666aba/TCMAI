@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Optional
+from typing import Any
 
 from core.knowledge_base import KnowledgeBase
 from core.result_verify import ResultVerifier
@@ -26,15 +26,17 @@ def _get_project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 # NLU 引擎（延迟导入，避免启动时加载大模型）
-_nlu_engine: Optional[Any] = None
+_nlu_engine: Any | None = None
 
 
 def _get_nlu_engine():
     global _nlu_engine
     if _nlu_engine is None:
-        from nlu import NLUEngine
+        import torch
 
-        _nlu_engine = NLUEngine(device="cuda", use_4bit=True)
+        from nlu import NLUEngine
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _nlu_engine = NLUEngine(device=device, use_4bit=(device == "cuda"))
         _nlu_engine.load()
         logger.info("NLU 引擎已就绪")
     return _nlu_engine
@@ -286,7 +288,7 @@ class TCMDesktopService:
         query_text: str,
         symptoms: list[str],
         result: dict[str, Any],
-        safety: Optional[dict[str, Any]] = None,
+        safety: dict[str, Any] | None = None,
     ) -> str:
         """将推荐模型的结构化结果格式化为自然语言回答"""
         parts = []
@@ -461,7 +463,7 @@ class TCMDesktopService:
         result = recommender.recommend(symptom_ids, top_k_herb=10, top_k_formula=5)
 
         # 安全校验
-        safety_result: Optional[dict[str, Any]] = None
+        safety_result: dict[str, Any] | None = None
         try:
             herb_names = [h["name"] for h in result.get("herbs", [])[:10]]
             safety_result = recommender.check_safety(herb_names)

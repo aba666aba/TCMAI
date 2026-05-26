@@ -11,7 +11,6 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from core.tcm_config import (
     CONTRAINDICATION_RULES,
@@ -209,7 +208,7 @@ class SymptomAnalyzer:
 
         return suggestions
 
-    def get_symptom_info(self, symptom_name: str) -> Optional[dict]:
+    def get_symptom_info(self, symptom_name: str) -> dict | None:
         """获取症状信息（从统一配置读取）"""
         info = SYMPTOM_INFO.get(symptom_name)
         if info:

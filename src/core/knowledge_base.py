@@ -3,7 +3,7 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class KnowledgeBase:
                 db_path = base_path / "data" / "tcm_knowledge.db"
 
         self.db_path = str(db_path)
-        self.conn: Optional[sqlite3.Connection] = None
+        self.conn: sqlite3.Connection | None = None
         self.is_available = False
         self._lock = threading.RLock()
         self._connect()
@@ -173,7 +173,7 @@ class KnowledgeBase:
 
         return results
 
-    def get_herb_detail(self, herb_id: int) -> Optional[dict]:
+    def get_herb_detail(self, herb_id: int) -> dict | None:
         with self._lock:
             if not self.conn:
                 return None
@@ -189,7 +189,7 @@ class KnowledgeBase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_formula_detail(self, formula_id: int) -> Optional[dict]:
+    def get_formula_detail(self, formula_id: int) -> dict | None:
         with self._lock:
             if not self.conn:
                 return None
@@ -205,7 +205,7 @@ class KnowledgeBase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_patent_medicine_detail(self, medicine_id: int) -> Optional[dict]:
+    def get_patent_medicine_detail(self, medicine_id: int) -> dict | None:
         with self._lock:
             if not self.conn:
                 return None

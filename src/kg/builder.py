@@ -10,14 +10,13 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Optional
 
 import networkx as nx
 
 logger = logging.getLogger(__name__)
 
 # 项目路径（惰性计算，兼容 PyInstaller frozen 模式）
-_PROJECT: Optional[Path] = None
+_PROJECT: Path | None = None
 
 
 def _get_project_root() -> Path:
@@ -66,7 +65,7 @@ class TCMKnowledgeGraph:
     CO_OCCURS = "co_occurs_with"  # 药材↔药材
     TREATS = "treats"  # 方剂→症状（从主治）
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         self.graph = nx.MultiDiGraph()
         self.db_path = db_path or str(_get_project_root() / "data" / "tcm_knowledge.db")
         self._db = sqlite3.connect(self.db_path)

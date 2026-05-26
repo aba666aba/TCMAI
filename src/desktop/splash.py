@@ -3,7 +3,6 @@ TCMAI 启动动画 — 深色背景缩放隐去，系统名称淡出
 """
 
 import logging
-from typing import Optional
 
 import customtkinter as ctk
 
@@ -30,7 +29,7 @@ class SplashScreen:
     # 两段式动画：文字先消失，背景再淡化
     PHASE1_END = 0.55  # 前 55%：文字融入背景
 
-    def __init__(self, parent: Optional[ctk.CTk] = None):
+    def __init__(self, parent: ctk.CTk | None = None):
         if parent is None:
             self.root = ctk.CTk()
         else:

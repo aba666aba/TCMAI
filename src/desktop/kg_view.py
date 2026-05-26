@@ -8,8 +8,6 @@
 import logging
 import threading
 import tkinter as tk
-from tkinter import ttk
-from typing import Optional
 
 import customtkinter as ctk
 import networkx as nx
@@ -628,7 +626,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
         center = matches[0]
         self._show_subgraph(center, matches[:10])
 
-    def _show_subgraph(self, center_node: str, extra_nodes: Optional[list[str]] = None):
+    def _show_subgraph(self, center_node: str, extra_nodes: list[str] | None = None):
         g = self.graph
         if g is None:
             self._load_graph()
@@ -1232,9 +1230,9 @@ class KnowledgeGraphView(ctk.CTkFrame):
     def show_query_result(
         self,
         symptoms: list[str],
-        syndrome_name: Optional[str] = None,
-        herbs: Optional[list[str]] = None,
-        formulas: Optional[list[str]] = None,
+        syndrome_name: str | None = None,
+        herbs: list[str] | None = None,
+        formulas: list[str] | None = None,
     ):
         if self.graph is None:
             self._load_graph_async(

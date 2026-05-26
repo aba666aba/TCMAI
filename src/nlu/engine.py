@@ -4,12 +4,11 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # 本地模型路径 — 惰性计算以适配 PyInstaller 打包环境
-_DEFAULT_MODEL_PATH: Optional[str] = None
+_DEFAULT_MODEL_PATH: str | None = None
 
 
 def _resolve_default_model_path() -> str:
@@ -57,12 +56,15 @@ _SYSTEM_PROMPT = """你是一位中医药症状提取专家。你的任务是从
 class NLUEngine:
     """自然语言理解引擎，用 LLM 提取结构化症状"""
 
-    def __init__(self, model_path: Optional[str] = None,
-                 device: str = "cuda", use_4bit: bool = True):
+    def __init__(self, model_path: str | None = None,
+                 device: str | None = None, use_4bit: bool = True):
         # 仅使用本地模型路径，不提供网络回退
         self.model_path = model_path or _resolve_default_model_path()
+        if device is None:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
-        self.use_4bit = use_4bit
+        self.use_4bit = use_4bit and (self.device == "cuda")
         self._model = None
         self._tokenizer = None
         self._symptom_list_text = ""
@@ -219,7 +221,7 @@ class NLUEngine:
 
 
 # 全局单例
-_engine: Optional[NLUEngine] = None
+_engine: NLUEngine | None = None
 
 
 def get_engine() -> NLUEngine:

@@ -9,7 +9,6 @@ TCM 知识图谱查询接口
 """
 
 import logging
-from typing import Optional
 
 import networkx as nx
 
@@ -27,7 +26,7 @@ class KnowledgeGraphQuery:
     # ═══════════════════════════════════════════
 
     def find_nodes(
-        self, name: Optional[str] = None, node_type: Optional[str] = None
+        self, name: str | None = None, node_type: str | None = None
     ) -> list[str]:
         """按名称和类型查找节点"""
         results = []
@@ -42,7 +41,7 @@ class KnowledgeGraphQuery:
                 results.append(nid)
         return results
 
-    def get_node_info(self, node_id: str) -> Optional[dict]:
+    def get_node_info(self, node_id: str) -> dict | None:
         """获取节点详细信息"""
         if not self.graph.has_node(node_id):
             return None
@@ -55,7 +54,7 @@ class KnowledgeGraphQuery:
     # ═══════════════════════════════════════════
 
     def get_neighbors(
-        self, node_id: str, edge_type: Optional[str] = None
+        self, node_id: str, edge_type: str | None = None
     ) -> list[tuple[str, str, dict]]:
         """获取邻接节点（含边信息）"""
         results = []
@@ -231,7 +230,7 @@ class KnowledgeGraphQuery:
 
         return profile
 
-    def shortest_path(self, node_a: str, node_b: str) -> Optional[list[str]]:
+    def shortest_path(self, node_a: str, node_b: str) -> list[str] | None:
         """最短路径（基于无权图）"""
         if not self.graph.has_node(node_a) or not self.graph.has_node(node_b):
             return None

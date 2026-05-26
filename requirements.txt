@@ -2,12 +2,21 @@
 # 安装：pip install -r requirements.txt
 #
 # 桌面核心功能使用 Python 标准库（tkinter/sqlite3/json 等）构建。
-# AI 深度学习推荐为必选依赖。
 
-# ── AI 深度学习推荐 ──
+# ── 核心运行时 ──
 torch>=2.0.0
+transformers>=4.40.0
+accelerate>=1.0.0
 numpy>=1.24.0
+scipy>=1.10.0
+Pillow>=10.0.0
 tqdm>=4.65.0
+customtkinter>=5.2.0
+networkx>=3.0
+modelscope>=1.30.0
+
+# ── 推荐系统量化（可选） ──
+bitsandbytes>=0.43.0
 
 # ── 开发工具（可选） ──
 pytest>=7.0.0

@@ -8,7 +8,6 @@
 """
 
 import logging
-from typing import Optional
 
 from core.symptom_analysis import SymptomAnalyzer
 from core.tcm_config import (
@@ -41,7 +40,7 @@ class SymptomPipeline:
         """分析症状列表：标准化 → 证型推断 → 禁忌检查"""
         return self.analyzer.analyze(symptoms)
 
-    def process(self, query: str, symptoms: Optional[list[str]] = None) -> dict:
+    def process(self, query: str, symptoms: list[str] | None = None) -> dict:
         """完整处理管线：检测 + 分析
 
         Returns:
@@ -91,10 +90,10 @@ class SymptomPipeline:
 
         return result
 
-    def get_symptom_info(self, symptom_name: str) -> Optional[dict]:
+    def get_symptom_info(self, symptom_name: str) -> dict | None:
         """获取症状详细信息"""
         return self.analyzer.get_symptom_info(symptom_name)
 
-    def get_syndrome_info(self, syndrome_name: str) -> Optional[dict]:
+    def get_syndrome_info(self, syndrome_name: str) -> dict | None:
         """获取证型信息"""
         return SYNDROME_DEFINITIONS.get(syndrome_name)

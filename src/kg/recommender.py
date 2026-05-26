@@ -9,7 +9,6 @@ KG 增强推荐器
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 _PROJECT = Path(__file__).resolve().parents[2]
 
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 class KGEnhancedRecommender:
     """KG 增强推荐器（包装 TCMRecommender + 知识图谱）"""
 
-    def __init__(self, model_recommender, kg_query, kg_config: Optional[dict] = None):
+    def __init__(self, model_recommender, kg_query, kg_config: dict | None = None):
         """
         Args:
             model_recommender: TCMRecommender 实例
