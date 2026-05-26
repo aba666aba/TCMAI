@@ -75,19 +75,5 @@ def main() -> None:
             pass
 
 
-# ──────────────────────────────────────────────
-# _BgLoader 暂注释——跳过启动画面后不再使用
-# 保留代码以备后续恢复
-# ──────────────────────────────────────────────
-# class _BgLoader:
-#     MIN_DISPLAY = 9.0
-#     def __init__(self, splash, logger): ...
-#     def start(self): ...
-#     def _bg_work(self): ...
-#     def _send_stage(self, index): ...
-#     def _send(self, message): ...
-#     def _poll_progress(self): ...
-
-
 if __name__ == "__main__":
     main()

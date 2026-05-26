@@ -48,12 +48,16 @@ folk_remedies: id, disease, remedy, ingredients, method, source
 ## 环境搭建
 
 ```bash
-conda create -n tcmai python=3.10 -y
-conda activate tcmai
-pip install torch==2.6.0+cu124 numpy tqdm pytest ruff --index-url https://download.pytorch.org/whl/cu124
+# 使用项目内建 venv（推荐）
+venv\Scripts\python.exe launcher.py
+
+# 或从零搭建
+python -m venv venv
+venv\Scripts\python.exe -m pip install -r requirements.txt
+venv\Scripts\python.exe -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
 ```
 
-验证：`python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"`
+验证：`venv\Scripts\python.exe -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"`
 
 ## 目录结构
 
@@ -61,25 +65,25 @@ pip install torch==2.6.0+cu124 numpy tqdm pytest ruff --index-url https://downlo
 E:\Tom\TCMAI/
 ├── src/
 │   ├── core/                     # 症状分析、知识库、脱敏、合规校验
-│   │   ├── symptom_analysis.py   #   症状标准化+证型推断+禁忌检查（9证型）
+│   │   ├── symptom_analysis.py   #   症状标准化+证型推断+禁忌检查
 │   │   ├── symptom_pipeline.py   #   统一处理管线
 │   │   ├── knowledge_base.py     #   SQLite 查询
 │   │   ├── result_verify.py      #   合规校验+溯源
 │   │   ├── data_desensitize.py   #   脱敏（含中医药白名单保护）
 │   │   ├── tcm_config.py         #   桌面端配置（症状/证型/禁忌/同义词映射）
-│   │   └── intelligent_search.py #   智能搜索引擎（Neo4j + 图谱查询）
-│   ├── desktop/
-│   │   ├── app.py                #   tkinter GUI
-│   │   ├── service.py            #   业务服务层
-│   │   ├── splash.py             #   全屏启动画面（深绿+金色主题）
-│   │   ├── kg_view.py            #   知识图谱可视化（matplotlib+networkx）
+│   │   └── intelligent_search.py #   智能搜索引擎（多策略融合）
+│   ├── desktop/                  # ★ CustomTkinter 桌面应用
+│   │   ├── app.py                #   CustomTkinter GUI（深色主题）
+│   │   ├── service.py            #   业务服务层（历史/NLU/推荐）
+│   │   ├── splash.py             #   两段式启动动画（文字先隐→窗口淡出）
+│   │   ├── kg_view.py            #   知识图谱可视化（tkinter Canvas）
 │   │   └── runtime.py            #   运行时工具（控制台隐藏/错误弹窗）
 │   └── kg/                       # 知识图谱构建与查询（核心推理管道）
 │       ├── builder.py            #   TCMKnowledgeGraph 构建器（12种关系边）
-│       ├── query.py              #   KnowledgeGraphQuery 查询（症状→证型→药材/方剂推荐）
+│       ├── query.py              #   KnowledgeGraphQuery 查询
 │       └── recommender.py        #   KG增强推荐器（模型+KG双通道融合+安全检测）
 ├── src/nlu/                      # NLU 自然语言理解引擎
-│   ├── engine.py                 #   Qwen2.5-1.5B 4-bit 加载与推理
+│   ├── engine.py                 #   Qwen2.5-0.5B 4-bit 加载与推理（自动CUDA/CPU）
 │   └── __init__.py
 ├── tcm_recommender/
 │   ├── model.py                  #   TCMNet: Transformer+双塔+交叉注意力
@@ -90,34 +94,34 @@ E:\Tom\TCMAI/
 │   ├── extended_config.py        #   228症状/30证型定义（AI端数据源）
 │   └── best_model.pth            #   最佳模型权重（41.6MB，d_model=384）
 ├── data/
-│   ├── tcm_knowledge.db          #   2961药材/717方剂/228症状/30证型
+│   ├── tcm_knowledge.db          #   2961药材/717方剂/229症状/30证型
 │   ├── kg_cache.pkl              #   知识图谱缓存（pickle序列化）
-│   └── train_data.npz            #   500K+样本, 228症状, 2961药材, 30证型（待生成）
+│   └── train_data.npz            #   500K+样本, 229症状, 2961药材, 30证型（待生成）
+├── venv/                         # 项目内建虚拟环境（Python 3.12.10）
 ├── docs/                         # 软著材料（操作手册/设计说明书/源代码）
-├── 知识图谱中药方生成系统.pyw     # 启动入口（from launcher import main）
-├── launcher.py                   # 核心启动器（Splash+后台加载+主窗口）
+├── 启动中医药智能问答系统.pyw     # 双击启动入口（自动重定向到 venv）
+├── launcher.py                   # 核心启动器（Splash+主窗口初始化）
 └── tcmai.spec                    # PyInstaller 打包配置
 ```
 
 ## 启动方式
 
-- 主入口：双击 `知识图谱中药方生成系统.pyw`（无控制台窗口）
-- 调试入口（无 Splash）：`python src/main.py`
-- 打包 exe：双击 `打包exe.bat`
+- 主入口：双击 `启动中医药智能问答系统.pyw`（自动检测 venv，无控制台窗口）
+- 调试入口：`venv\Scripts\python.exe launcher.py`
+- 打包 exe：`python -m PyInstaller --clean tcmai.spec`
 
 ### 启动流程
 
 ```
-知识图谱中药方生成系统.pyw → launcher.main()
-  ├── 隐藏控制台 → 创建 Splash（全屏置顶 Toplevel）
-  ├── 后台初始化主窗口（DesktopApp，被 Splash 覆盖）
-  ├── _BgLoader 线程：加载知识图谱 + 推理管线
-  ├── Splash 自动关闭 → 主窗口露出
+启动中医药智能问答系统.pyw → 检测当前是否在 venv → 若否则重定向到 venv\Scripts\pythonw.exe
+  → launcher.main()
+  ├── 配置 CTk（深色主题 green + widget_scaling 1.25）
+  ├── 隐藏控制台 → 创建 Splash（全屏置顶 Toplevel，先于 DesktopApp 显示）
+  ├── root.update() → 刷新 Splash 显示
+  ├── DesktopApp(root) → 构建主界面（含知识图谱加载）
+  ├── Splash 两段式淡出动画（3s：文字融入背景→窗口淡出）
   └── root.mainloop()
 ```
-
-Splash 使用 `Toplevel(parent=root)` 覆盖层 + `-topmost` 全屏置顶，
-主窗口提前创建在后台，加载完成后 Splash 销毁直接露出。
 
 ## TCMNet 模型架构 (model.py)
 
@@ -411,9 +415,9 @@ git add <files> && git commit -m "message" && git push origin main
 
 | # | 问题 | 建议 |
 |---|------|------|
-| 19 | `tcm_config.SYMPTOM_LIST`（~65 种）与 `extended_config.EXTENDED_SYMPTOM_LIST`（228 种）定义不同步 | 将症状/证型定义统一用 YAML/JSON 外部配置管理 |
+| 19 | `tcm_config.SYMPTOM_LIST`（~65 种）与 `extended_config.EXTENDED_SYMPTOM_LIST`（229 种）定义不同步 | 将症状/证型定义统一用 YAML/JSON 外部配置管理 |
 | 20 | `models/nlu/qwen` 路径硬编码在 `nlu/engine.py` | 改为环境变量 `TCMAI_NLU_PATH` + 默认值 |
-| 21 | NLU 引擎 `device="cuda"` 硬编码，CPU 环境加载失败 | 改为 `device="cuda" if torch.cuda.is_available() else "cpu"` |
+| 21 | ~~NLU 引擎 `device="cuda"` 硬编码~~ ✅ 已修复（自动检测 CUDA/CPU） | — |
 | 23 | 知识图谱查询 `herb_profile()` 遍历全图所有症状节点 | 改为通过边索引直接定位关联节点 |
-| 24 | `requirements.txt` 缺少 `transformers` 和 `bitsandbytes` | 同步更新以匹配 `pyproject.toml` |
-| 25 | `pyproject.toml` 无 `[project.dependencies]` 基础段 | 补全基础依赖声明 |
+| 24 | ~~`requirements.txt` 缺少 `transformers` 和 `bitsandbytes`~~ ✅ 已修复 | — |
+| 25 | ~~`pyproject.toml` 无 `[project.dependencies]` 基础段~~ ✅ 已有声明 | — |
