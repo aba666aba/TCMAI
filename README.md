@@ -138,6 +138,9 @@ E:\Tom\TCMAI/
 ├── 📁 venv/                        # ★ 项目内建虚拟环境
 │   └── Scripts/python.exe          #   Python 3.12.10
 │
+├── 📁 python/                      # ★ 便携 Python 3.12.10（绿色自包含）
+│   └── python.exe                  #   解压即用，拷到任意机器可运行
+│
 └── 📁 build/ dist/                 # PyInstaller 打包产出
 ```
 
@@ -352,6 +355,22 @@ E:\Tom\TCMAI/
 venv\Scripts\python.exe launcher.py
 ```
 
+### 💚 绿色便携部署（U 盘即插即用）
+
+整个项目目录内置了 Python 3.12.10（`python/`），拷到任意 Windows 机器即可运行：
+
+```bash
+# 1. 将整个 TCMAI 目录拷贝到目标电脑（U 盘 / 硬盘任意位置）
+# 2. 双击启动
+双击「启动中医药智能问答系统.pyw」
+
+# 或命令行启动
+venv\Scripts\python.exe launcher.py
+```
+
+> **首次启动时**：启动器自动检测 `pyvenv.cfg` 的 `home` 路径是否匹配当前位置，
+> 若不匹配则自动修正并重启，整个过程约 0.5 秒，无需用户干预。
+
 ### 📦 从零搭建
 
 ```bash
@@ -464,6 +483,9 @@ dist/TCMAI_Desktop/
 
 ### 2026-05-27
 
+- **绿色便携部署**：Python 3.12.10 嵌入项目 `python/` 目录，`venv` 指向本地路径
+- **自修复路径**：`launcher.py` 新增 `_fix_venv_home()`，拷到任意位置自动修正 `pyvenv.cfg`
+- **强退按钮**：启动画面右下角增加「强制中止」按钮，防止卡死无法退出
 - **UI 现代化**：CustomTkinter 深色主题，字体整体放大 +2px，widget_scaling 1.25
 - **启动画面**：两段式动画（文字融入背景 → 窗口淡出），60 帧丝滑
 - **知识图谱**：单击显示详情 / 双击展开邻域，修复全节点冒泡 bug
@@ -471,6 +493,7 @@ dist/TCMAI_Desktop/
 - **NLU 引擎**：自动检测 CUDA/CPU，无 GPU 时自动回退
 - **离线环境**：项目内建 `venv/`，双击 .pyw 自动使用
 - **依赖补全**：requirements.txt 补充 accelerate/scipy/Pillow/networkx/modelscope
+- **代码清理**：移除 3 个未使用的 import，优化 `_fix_venv_home` 文件读取
 - **代码风格**：ruff 自动修复 42 处代码风格问题
 - **远程推送**：推送到 GitHub main 分支
 

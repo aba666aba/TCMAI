@@ -94,46 +94,58 @@
 从项目仓库下载完整源代码到本地。项目目录结构如下：
 
   tcmai/
-  ├── launcher.pyw             # 桌面启动器（入口文件）
-  ├── launcher.py              # 启动模块
-  ├── pyproject.toml           # 项目配置文件
-  ├── requirements.txt         # 依赖清单（含 AI 和开发工具）
-  ├── LICENSE                  # 开源许可协议
-  ├── scripts/
-  │   ├── 快速启动.bat         # 快速启动脚本
-  │   ├── import_knowledge.py  # 知识库导入脚本
-  │   └── ...
+  ├── launcher.py                  # 核心启动器（Splash+主窗口初始化）
+  ├── launcher.pyw                 # 无控制台窗口启动入口
+  ├── pyproject.toml               # 项目配置文件
+  ├── requirements.txt             # 依赖清单（含 AI 和开发工具）
+  ├── LICENSE                      # 开源许可协议
   │
-  ├── src/                     # 源码目录
-  │   ├── main.py              # 命令行入口
-  │   ├── core/                # 核心业务逻辑模块
-  │   │   ├── __init__.py
-  │   │   ├── tcm_config.py    # 统一配置中心
-  │   │   ├── symptom_pipeline.py  # 症状处理管线
-  │   │   ├── symptom_analysis.py  # 症状分析器
-  │   │   ├── fallback.py      # 降级回答引擎
-  │   │   ├── knowledge_base.py    # 知识库查询
-  │   │   ├── result_verify.py # 结果校验
-  │   │   └── data_desensitize.py  # 数据脱敏
-  │   └── desktop/
-  │       ├── __init__.py
-  │       ├── app.py           # 桌面主界面
-  │       └── service.py       # 桌面业务服务
-  ├── tcm_recommender/         # 深度学习推荐模块
-  │   ├── __init__.py
-  │   ├── model.py             # TCMNet 模型定义
-  │   ├── train.py             # 训练脚本
-  │   ├── recommend.py         # 推理接口
-  │   ├── data_pipeline.py     # 数据生成管线
-  │   └── data_expansion.py    # 数据库扩展
+  ├── python/                      # 便携 Python 3.12.10（绿色自包含）
+  ├── venv/                        # 虚拟环境（依赖全部安装完成）
+  │
+  ├── src/                         # 源码目录
+  │   ├── core/                    # 核心业务逻辑模块
+  │   │   ├── tcm_config.py        #   统一配置中心
+  │   │   ├── symptom_pipeline.py  #   症状处理管线
+  │   │   ├── symptom_analysis.py  #   症状分析器
+  │   │   ├── knowledge_base.py    #   知识库查询
+  │   │   ├── intelligent_search.py #  多策略智能搜索引擎
+  │   │   ├── result_verify.py     #   结果校验
+  │   │   └── data_desensitize.py  #   数据脱敏
+  │   ├── desktop/                 # 桌面应用层（CustomTkinter）
+  │   │   ├── app.py               #   主窗口 UI（深色主题）
+  │   │   ├── service.py           #   桌面业务服务
+  │   │   ├── kg_view.py           #   交互式知识图谱可视化
+  │   │   ├── splash.py            #   两段式启动动画
+  │   │   └── runtime.py           #   运行时工具
+  │   ├── nlu/                     # NLU 自然语言理解引擎
+  │   │   └── engine.py            #   Qwen2.5 加载与推理
+  │   └── kg/                      # 知识图谱
+  │       ├── builder.py           #   图谱构建器
+  │       ├── query.py             #   图谱查询接口
+  │       └── recommender.py       #   KG+模型融合推荐
+  ├── tcm_recommender/             # 深度学习推荐模块
+  │   ├── model.py                 #   TCMNet 模型定义
+  │   ├── train.py                 #   训练脚本
+  │   ├── recommend.py             #   推理接口
+  │   ├── data_pipeline.py         #   数据生成管线
+  │   └── data_expansion.py        #   数据库扩展
+  ├── models/nlu/qwen/             # Qwen2.5 离线模型文件
   ├── data/
-  │   ├── tcm_knowledge.db     # SQLite 知识库
-  │   └── train_data.npz       # 训练数据
-  └── docs/                    # 文档目录
+  │   ├── tcm_knowledge.db         #   SQLite 知识库
+  │   └── train_data.npz           #   训练数据
+  └── docs/                        # 文档目录
 
 2.2 安装 Python 运行环境
 
-本软件需要 Python 3.9 及以上版本。若尚未安装：
+本软件需要 Python 3.9 及以上版本。
+
+方式一：使用项目内建 Python（推荐，绿色便携）
+
+项目目录已内置 `python/` 和 `venv/`，无需额外安装 Python 环境。
+直接按照 2.4 节启动即可。首次启动时系统会自动修正路径配置。
+
+方式二：自行安装 Python
 
 （1）访问 Python 官方网站 https://www.python.org/downloads/
 （2）下载 Python 3.9 或更高版本的 Windows 安装包
@@ -153,18 +165,21 @@
 
 2.4 启动软件
 
-启动方式一：直接双击快速启动脚本
-  双击项目目录中 `scripts\快速启动.bat` 文件即可启动软件。
+启动方式一：直接双击无控制台窗口入口
+  双击项目目录中的 `启动中医药智能问答系统.pyw` 文件即可启动软件。
 
 启动方式二：命令行启动
   打开命令行，进入项目目录，执行：
-  python launcher.py
+  venv\Scripts\python.exe launcher.py
 
-启动方式三：无控制台窗口启动
-  双击 launcher.pyw 文件，启动时不显示命令行窗口。
+启动方式三：启动菜单快捷方式（已打包安装版）
+  从开始菜单中找到"中医药智能问答系统"快捷方式并点击。
 
-启动后，系统将显示主窗口界面。若 AI 模式所需依赖未安装，
-或模型文件不存在，系统将自动使用快速模式运行。
+> 注：首次启动或拷贝到新位置后，系统会自动检测并修正 `venv\pyvenv.cfg`
+> 中的 Python 路径配置，修正后自动重启，整个过程约 0.5 秒。
+
+启动后，系统将显示启动动画（深色背景、品牌名称），随后进入主窗口界面。
+若 AI 模式所需依赖未安装，或模型文件不存在，系统将自动使用快速模式运行。
 
 ================================================================================
 3. 用户界面介绍

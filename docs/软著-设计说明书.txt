@@ -118,21 +118,27 @@
 2. 模块划分与功能
 ================================================================================
 
-2.1 启动器模块（launcher.py / launcher.pyw）
+2.1 启动器模块（launcher.py / 启动中医药智能问答系统.pyw）
 
 文件位置：项目根目录
 功能说明：
   （1）检测运行环境（开发模式 / PyInstaller 打包模式）
   （2）设置系统路径和环境变量
-  （3）初始化日志系统（控制台输出 + 文件轮转）
-  （4）隐藏控制台窗口（launcher.pyw 模式）
-  （5）启动桌面应用
+  （3）便携部署路径修正（`_fix_venv_home()` 自动检测并修正 `pyvenv.cfg`）
+  （4）初始化日志系统（控制台输出 + 文件轮转）
+  （5）显示启动动画，构建主界面
 
-关键类/函数：
+关键函数：
+  _fix_venv_home() - 自动检测 pyvenv.cfg 的 home 路径
+    - 适用于绿色便携部署场景（U盘即插即用）
+    - 检测当前目录与 pyvenv.cfg 的 home 是否匹配
+    - 不匹配时自动修正并重启进程
   main() - 入口函数
     - 设置 TCMAI_ROOT 环境变量
     - 初始化 RotatingFileHandler 日志（5MB x 3）
-    - 调用 desktop.app.run_desktop_app()
+    - 显示 Splash 启动动画（两段式淡出）
+    - 构建 DesktopApp 主界面
+    - 启动 mainloop
 
 2.2 统一配置中心模块（src/core/tcm_config.py）
 

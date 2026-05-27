@@ -47,15 +47,28 @@ folk_remedies: id, disease, remedy, ingredients, method, source
 
 ## 环境搭建
 
-```bash
-# 使用项目内建 venv（推荐）
-venv\Scripts\python.exe launcher.py
+### 使用项目内建 Python + venv（推荐）
 
-# 或从零搭建
-python -m venv venv
-venv\Scripts\python.exe -m pip install -r requirements.txt
+项目已内置 Python 3.12.10（`python/`）和虚拟环境（`venv/`），直接启动即可：
+
+```bash
+venv\Scripts\python.exe launcher.py
+```
+
+如需从零重建（例如拷贝到其他机器后首次运行会自动修复路径，手动重建方式如下）：
+
+```bash
+# 1. 重建虚拟环境
+python\python.exe -m venv venv            # 完整安装版
+# 或（embeddable 版本不含 venv 模块）
+python\Scripts\virtualenv.exe --python python\python.exe venv
+
+# 2. 安装依赖
+venv\Scripts\python.exe -m pip install -r requirements.txt --no-cache-dir
 venv\Scripts\python.exe -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
 ```
+
+### 从零搭建（标准方式）
 
 验证：`venv\Scripts\python.exe -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"`
 
@@ -98,6 +111,7 @@ E:\Tom\TCMAI/
 │   ├── kg_cache.pkl              #   知识图谱缓存（pickle序列化）
 │   └── train_data.npz            #   500K+样本, 229症状, 2961药材, 30证型（待生成）
 ├── venv/                         # 项目内建虚拟环境（Python 3.12.10）
+├── python/                       # ★ 便携 Python 3.12.10（绿色自包含，拷到任意机器即可）
 ├── docs/                         # 软著材料（操作手册/设计说明书/源代码）
 ├── 启动中医药智能问答系统.pyw     # 双击启动入口（自动重定向到 venv）
 ├── launcher.py                   # 核心启动器（Splash+主窗口初始化）
@@ -114,6 +128,13 @@ E:\Tom\TCMAI/
 
 ```
 启动中医药智能问答系统.pyw → 检测当前是否在 venv → 若否则重定向到 venv\Scripts\pythonw.exe
+  → launcher 模块级初始化
+  ├── 设置 APP_ROOT / ROOT_DIR（根据 frozen 或 开发模式）
+  ├── 设置 sys.path + os.environ["TCMAI_ROOT"]
+  ├── _fix_venv_home() — 便携部署：检测 pyvenv.cfg 的 home 是否匹配当前目录
+  │   ├── 已匹配 → 继续
+  │   └── 不匹配 → 自动修正 home → 重启 Python 进程 → 新 home 生效
+  ├── 配置日志（文件轮转 + 控制台输出）
   → launcher.main()
   ├── 配置 CTk（深色主题 green + widget_scaling 1.25）
   ├── 隐藏控制台 → 创建 Splash（全屏置顶 Toplevel，先于 DesktopApp 显示）
