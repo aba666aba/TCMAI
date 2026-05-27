@@ -1,11 +1,8 @@
 import logging
 import logging.handlers
 import os
-import queue
 import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
 
@@ -41,15 +38,13 @@ def _fix_venv_home() -> bool:
     if not venv_cfg.exists():
         return False  # 没有 venv 也不处理
     try:
-        text = venv_cfg.read_text("utf-8")
         expected_home = str(python_dir.resolve())
-        for line in text.splitlines():
-            if line.startswith("home = ") and line[6:].strip() == expected_home:
-                return False  # 路径已正确，无需修改
-        # 重写 home 行
-        lines = text.splitlines(keepends=True)
+        lines = venv_cfg.read_text("utf-8").splitlines(keepends=True)
         for i, line in enumerate(lines):
             if line.startswith("home = "):
+                current = line[6:].strip()
+                if current == expected_home:
+                    return False  # 路径已正确
                 lines[i] = f"home = {expected_home}\n"
                 break
         venv_cfg.write_text("".join(lines), "utf-8")
