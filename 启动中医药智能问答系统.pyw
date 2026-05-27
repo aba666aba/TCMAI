@@ -2,32 +2,19 @@
 """
 中医药智能问答系统 — 双击启动入口
 
-自动使用项目 venv 虚拟环境运行。
+使用前请先运行 setup.bat 完成环境配置。
 """
-import subprocess
 import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-VENV_PYTHONW = ROOT / "venv" / "Scripts" / "pythonw.exe"
+sys.path.insert(0, str(ROOT / "src"))
 
-# 如果当前不是 venv 环境，自动重启动
-_expected = ROOT / "venv" / "Scripts"
-_current = Path(sys.executable).parent
-if _current.resolve() != _expected.resolve():
-    if VENV_PYTHONW.exists():
-        script = ROOT / "launcher.py"
-        subprocess.Popen([str(VENV_PYTHONW), str(script)])
-        sys.exit(0)
-
-# ── 以下仅在 venv 环境下执行 ──
 import logging
 import logging.handlers
 import os
 
-sys.path.insert(0, str(ROOT / "src"))
-os.environ["TCMAI_ROOT"] = str(ROOT)
 
 _log_level = getattr(
     logging, os.environ.get("TCMAI_LOG_LEVEL", "INFO").upper(), logging.INFO
@@ -67,7 +54,7 @@ if __name__ == "__main__":
                 "中医药智能问答系统",
                 "系统启动失败：\n"
                 + str(exc)
-                + "\n\n可能原因：\n1. Python 运行环境不完整\n2. tkinter 组件不可用\n3. 依赖未安装",
+                + "\n\n可能原因：\n1. 未运行 setup.bat 配置环境\n2. Python 运行环境不完整\n3. tkinter 组件不可用\n4. 依赖未安装",
             )
         except Exception:
             pass
