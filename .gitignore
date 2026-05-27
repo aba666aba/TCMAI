@@ -1,3 +1,11 @@
+docs/
+scripts/
+开发文档.txt
+test_zip.py
+pyproject.toml
+ruff.toml
+NOTICE
+
 # 打包输出
 dist/
 build/
