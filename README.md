@@ -96,7 +96,7 @@ E:\Tom\TCMAI/
 ├── 🚀 启动中医药智能问答系统.pyw     # 双击启动（自动使用 venv）
 ├── 📦 pyproject.toml               # 项目元数据
 ├── 📜 requirements.txt             # 全量依赖清单
-├── 🔧 tcmai.spec                   # PyInstaller 打包配置
+├── 📦 scripts/打包便携包.bat         # IExpress 便携包构建
 │
 ├── 🧠 src/nlu/                     # ★ NLU 自然语言理解引擎
 │   └── engine.py                   #   Qwen2.5 加载与推理
@@ -141,7 +141,7 @@ E:\Tom\TCMAI/
 ├── 📁 python/                      # ★ 便携 Python 3.12.10（绿色自包含）
 │   └── python.exe                  #   解压即用，拷到任意机器可运行
 │
-└── 📁 build/ dist/                 # PyInstaller 打包产出
+└── 📁 dist/                        # IExpress 便携包输出
 ```
 
 ---
@@ -452,30 +452,36 @@ if 双方一致: fused_score += 0.15 （额外加分）
 
 ## 📦 打包部署
 
-使用 PyInstaller 打包为独立桌面应用：
+使用 Windows 内置 **IExpress** 打包为自解压便携包。
+客户电脑无需安装任何软件，双击 → 选文件夹 → 解压即用。
+
+### 前置条件
 
 ```bash
-# 完整离线打包（约 4.7 GB，含 Qwen2.5 模型）
-python -m PyInstaller --clean tcmai.spec
+# 1. 确保 venv 中已安装所有依赖
+python\python.exe -m pip install -r requirements.txt
+
+# 2. 下载 NLU 模型（可选，第一次运行也会自动检测）
+python\python.exe -m modelscope download Qwen/Qwen2.5-0.5B-Instruct
 ```
 
-输出结构：
-```
-dist/TCMAI_Desktop/
-├── 中医药智能问答系统.exe     # 25 MB 启动器
-├── _internal/
-│   ├── torch/                # PyTorch CPU
-│   ├── transformers/         # HuggingFace
-│   ├── bitsandbytes/         # 量化
-│   ├── data/                 # 数据库与缓存
-│   ├── tcm_recommender/      # 推理模型
-│   └── models/nlu/qwen/      # Qwen2.5 离线模型 (~2.9 GB)
+### 一键打包
+
+双击 `scripts\打包便携包.bat`，或命令行运行：
+
+```bash
+python scripts\build_portable.py
 ```
 
-**安装包**：`dist/中医药智能问答系统_Setup.exe`（约 1.37 GB）
-- 支持安装到指定目录
-- 开始菜单快捷方式
-- 三种卸载方式（再次运行安装包 / 卸载程序 / 开始菜单）
+输出：`dist/中医药智能问答系统_Setup.exe`（约 4.3 GB）
+
+### 客户使用
+
+1. 将 `中医药智能问答系统_Setup.exe` 复制到目标电脑
+2. **双击运行**，选择解压目标文件夹
+3. 等待文件解压完成
+4. 双击 `启动中医药智能问答系统.pyw` 开始使用
+5. 💡 整个目录可拷到 U 盘带走，即插即用
 
 ---
 
