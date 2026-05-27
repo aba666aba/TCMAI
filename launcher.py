@@ -58,6 +58,12 @@ if _fix_venv_home():
     subprocess.run([sys.executable, __file__, *sys.argv[1:]])
     sys.exit(0)
 
+# ── 便携 Python 的 Tcl/Tk 路径（embeddable 不含，手动拷贝） ──
+_tcl_dir = ROOT_DIR / "python" / "tcl"
+if _tcl_dir.exists():
+    os.environ.setdefault("TCL_LIBRARY", str(_tcl_dir / "tcl8.6"))
+    os.environ.setdefault("TK_LIBRARY", str(_tcl_dir / "tk8.6"))
+
 
 # 日志配置 — 使用 APP_ROOT（frozen）或 ROOT_DIR（开发）
 _log_root = APP_ROOT if getattr(sys, "frozen", False) else ROOT_DIR
