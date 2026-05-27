@@ -3,6 +3,7 @@ TCMAI 启动动画 — 深色背景缩放隐去，系统名称淡出
 """
 
 import logging
+import os
 
 import customtkinter as ctk
 
@@ -59,6 +60,21 @@ class SplashScreen:
             text_color="#ffffff",
         )
         self._sub_label.place(relx=0.5, rely=0.55, anchor="center")
+
+        # ── 右下方强制中止按钮（防止卡顿无法退出） ──
+        self._kill_btn = ctk.CTkButton(
+            outer,
+            text="强制中止",
+            font=("Microsoft YaHei UI", 11),
+            width=80,
+            height=26,
+            fg_color="#5c1a1a",
+            hover_color="#8a2626",
+            text_color="#d4a0a0",
+            corner_radius=4,
+            command=lambda: os._exit(1),
+        )
+        self._kill_btn.place(relx=1.0, rely=1.0, anchor="se", x=-20, y=-16)
 
         self.root.update_idletasks()
         self._current_step = self.STEPS

@@ -2,6 +2,7 @@ import logging
 import logging.handlers
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -20,6 +21,48 @@ else:
     sys.path.insert(0, str(ROOT_DIR / "src"))
 
 os.environ["TCMAI_ROOT"] = str(ROOT_DIR)
+
+
+def _fix_venv_home() -> bool:
+    """便携版自动修复 pyvenv.cfg 的 home 路径。
+
+    首次从 U 盘拷到任意位置运行时，pyvenv.cfg 的 home 路径仍是旧的绝对路径。
+    此函数检查并修正 home 为当前目录下的 python/。
+
+    Returns:
+        True 表示已修改 pyvenv.cfg，调用方应重启脚本使新路径生效。
+    """
+    if getattr(sys, "frozen", False):
+        return False  # PyInstaller 打包版无需修正
+    venv_cfg = ROOT_DIR / "venv" / "pyvenv.cfg"
+    python_dir = ROOT_DIR / "python"
+    if not python_dir.exists():
+        return False  # 没有 python/ 目录就不修正（可能是纯开发环境）
+    if not venv_cfg.exists():
+        return False  # 没有 venv 也不处理
+    try:
+        text = venv_cfg.read_text("utf-8")
+        expected_home = str(python_dir.resolve())
+        for line in text.splitlines():
+            if line.startswith("home = ") and line[6:].strip() == expected_home:
+                return False  # 路径已正确，无需修改
+        # 重写 home 行
+        lines = text.splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            if line.startswith("home = "):
+                lines[i] = f"home = {expected_home}\n"
+                break
+        venv_cfg.write_text("".join(lines), "utf-8")
+        return True
+    except OSError:
+        return False  # 只读/权限不足时静默跳过
+
+
+if _fix_venv_home():
+    # pyvenv.cfg 已修正，重启 Python 进程使新 home 生效
+    subprocess.run([sys.executable, __file__, *sys.argv[1:]])
+    sys.exit(0)
+
 
 # 日志配置 — 使用 APP_ROOT（frozen）或 ROOT_DIR（开发）
 _log_root = APP_ROOT if getattr(sys, "frozen", False) else ROOT_DIR
