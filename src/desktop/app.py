@@ -106,7 +106,7 @@ class DesktopApp:
     # 首页
     # ═══════════════════════════════════════════
     def _build_home_tab(self) -> None:
-        container = ctk.CTkFrame(self.home_tab, fg_color="transparent")
+        container = ctk.CTkScrollableFrame(self.home_tab, fg_color="transparent")
         container.pack(fill="both", expand=True)
 
         # ── 搜索卡片 ──
@@ -260,7 +260,7 @@ class DesktopApp:
             border_color=("#f0dca0", "#4a3f2a"),
             corner_radius=6,
         )
-        disclaimer_frame.pack(fill="x", pady=(4, 0))
+        disclaimer_frame.pack(fill="x", pady=(4, 10))
         ctk.CTkLabel(
             disclaimer_frame,
             text="⚕ 免责声明",
