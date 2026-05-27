@@ -8,6 +8,12 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
+# ── Tcl/Tk 运行时路径（便携 Python embeddable 版不含，需手动指定） ──
+_tcl_dir = ROOT_DIR / "python" / "tcl"
+if _tcl_dir.exists():
+    os.environ.setdefault("TCL_LIBRARY", str(_tcl_dir / "tcl8.6"))
+    os.environ.setdefault("TK_LIBRARY", str(_tcl_dir / "tk8.6"))
+
 # ── 日志配置 ──
 _log_root = ROOT_DIR
 _log_level = getattr(logging, os.environ.get("TCMAI_LOG_LEVEL", "INFO").upper(), logging.INFO)
