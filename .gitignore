@@ -1,56 +1,24 @@
-docs/
-scripts/
-开发文档.txt
-test_zip.py
-pyproject.toml
-ruff.toml
-NOTICE
-
-# 打包输出
+﻿__pycache__/
+*.pyc
+*.pyo
+venv/
+python/
+models/nlu/qwen/model.safetensors
+data/logs/
+data/history.json
+data/kg_cache.pkl
+data/tcm_knowledge_graph.*
+data/enhance_data.py
+data/fill_indications.py
 dist/
 build/
 
-# 虚拟环境
-venv/
-
-# Python 缓存
-__pycache__/
-*.pyc
-*.pyo
-
-# 日志
-data/logs/
-data/history.json
-
-# 系统
-.DS_Store
-Thumbs.db
-.idea/
-
-.qwen/
-.claude/
-
-# 模型权重（大文件，单独管理）
-models/
-tcm_recommender/best_model.pth
-
-# 临时训练数据
-data/train_data.npz
-
-# 数据库备份
-data/*backup*.db
-data/*_backup_*.db
-
-# 图谱缓存/测试输出
-data/kg_cache.pkl
-data/kg_test_*.txt
-data/tcm_knowledge_graph.*
+# 运行不需要
+models/nlu/qwen/.mdl
+models/nlu/qwen/.msc
+models/nlu/qwen/.mv
+models/nlu/qwen/LICENSE
+models/nlu/qwen/README.md
 data/font_test.txt
-
-# 临时脚本
-1.txt
-scripts/build_cache.py
-scripts/test_*.py
-scripts/verify_kg.py
-data/enhance_data.py
-data/fill_indications.py
+data/kg_test_full.txt
+tcm_recommender/best_model.pth

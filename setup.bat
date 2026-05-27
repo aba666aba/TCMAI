@@ -91,18 +91,14 @@ echo.
 
 :: ── 4. 创建桌面快捷方式 ──
 echo [4/5] 创建桌面快捷方式...
-set "LAUNCHER=%ROOT%\venv\Scripts\pythonw.exe"
-set "SCRIPT=%ROOT%\launcher.py"
-set "ICON=%ROOT%\python\pythonw.exe"
+set "PYW_ENTRY=%ROOT%\启动中医药智能问答系统.pyw"
 
 powershell -NoProfile -Command ^
     "$ws = New-Object -ComObject WScript.Shell; " ^
     "$desktop = [Environment]::GetFolderPath('Desktop'); " ^
     "$sc = $ws.CreateShortcut($desktop + '\中医药智能问答系统.lnk'); " ^
-    "$sc.TargetPath = '%LAUNCHER%'; " ^
-    "$sc.Arguments = '%SCRIPT%'; " ^
+    "$sc.TargetPath = '%PYW_ENTRY%'; " ^
     "$sc.WorkingDirectory = '%ROOT%'; " ^
-    "if (Test-Path '%ICON%') { $sc.IconLocation = '%ICON%' }; " ^
     "$sc.Description = '中医药智能问答系统'; " ^
     "$sc.Save(); " ^
     "Write-Host ('  已创建桌面快捷方式: ' + $desktop + '\中医药智能问答系统.lnk')"
