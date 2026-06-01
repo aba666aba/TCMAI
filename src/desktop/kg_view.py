@@ -106,6 +106,7 @@ def get_kg(*, force_rebuild: bool = False):
                 logger.warning("缓存加载失败(将重新构建): %s", exc)
 
         from kg.builder import TCMKnowledgeGraph
+        from kg.query import KnowledgeGraphQuery
 
         logger.info("构建知识图谱（首次较慢，后续将使用缓存）...")
         kg = TCMKnowledgeGraph()
@@ -452,7 +453,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
             dot.pack(side="left", padx=(8, 2))
             tk.Label(
                 parent, text=label, bg=bg_color, fg="#e0e0e0",
-                font=("Microsoft YaHei UI", 8),
+                font=("Microsoft YaHei UI", 16),
             ).pack(side="left")
 
     # ═══════════════════════════════════════════

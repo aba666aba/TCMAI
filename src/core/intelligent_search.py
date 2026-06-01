@@ -52,12 +52,53 @@ class IntelligentSearch:
 
     def __init__(self, kb=None):
         self.kb = kb
+        self._cfg = getattr(kb, "knowledge_config", None) if kb else None
         # 预编译别名正则用于快速检测
         self._alias_pattern = self._build_alias_pattern()
 
+    def _get_alias_map(self) -> dict[str, str]:
+        if self._cfg:
+            return self._cfg.get_symptom_alias_map()
+        return SYMPTOM_ALIAS_MAP
+
+    def _get_formula_map(self) -> dict[str, list[dict]]:
+        if self._cfg:
+            return self._cfg.get_symptom_formula_map()
+        return SYMPTOM_TO_FORMULA_MAP
+
+    def _get_synonym_map(self) -> dict[str, list[str]]:
+        if self._cfg:
+            return self._cfg.get_tcm_synonym_map()
+        return TCM_SYNONYM_MAP
+
+    def _get_formula_alias_map(self) -> dict[str, list[str]]:
+        if self._cfg:
+            return self._cfg.get_formula_alias_map()
+        return FORMULA_ALIAS_MAP
+
+    def _get_herb_alias_map(self) -> dict[str, list[str]]:
+        if self._cfg:
+            return self._cfg.get_herb_alias_map()
+        return HERB_ALIAS_MAP
+
+    def _get_symptom_list(self) -> list[str]:
+        if self._cfg:
+            return self._cfg.get_symptom_list()
+        return SYMPTOM_LIST
+
+    def _get_alias_reverse_map(self) -> dict[str, list[str]]:
+        if self._cfg:
+            alias_map = self._cfg.get_symptom_alias_map()
+            rev: dict[str, list[str]] = {}
+            for alias, standard in alias_map.items():
+                rev.setdefault(standard, []).append(alias)
+            return rev
+        return SYMPTOM_ALIAS_REVERSE_MAP
+
     def _build_alias_pattern(self) -> re.Pattern:
         """构建所有口语别名的大正则（用于一次性检测所有症状）"""
-        aliases = sorted(SYMPTOM_ALIAS_MAP.keys(), key=len, reverse=True)
+        alias_map = self._get_alias_map()
+        aliases = sorted(alias_map.keys(), key=len, reverse=True)
         pattern = "|".join(re.escape(a) for a in aliases)
         return re.compile(pattern)
 
@@ -108,19 +149,19 @@ class IntelligentSearch:
 
         # 添加别名反向扩展（标准症状→口语变体→反向再搜索）
         for symptom in all_symptoms:
-            aliases = SYMPTOM_ALIAS_REVERSE_MAP.get(symptom, [])
+            aliases = self._get_alias_reverse_map().get(symptom, [])
             expansion_terms.extend(aliases[:3])  # 取前3个即可
 
         # 添加证型同义词
         expansion_terms.extend(syndrome_terms)
 
         # 添加 TCM_SYNONYM_MAP 中命中的扩展
-        for key, synonyms in TCM_SYNONYM_MAP.items():
+        for key, synonyms in self._get_synonym_map().items():
             if key in query:
                 expansion_terms.extend(synonyms)
 
         # 添加方剂别名扩展
-        for formula_name, aliases in FORMULA_ALIAS_MAP.items():
+        for formula_name, aliases in self._get_formula_alias_map().items():
             if formula_name in query:
                 expansion_terms.extend(aliases)
             for alias in aliases:
@@ -128,7 +169,7 @@ class IntelligentSearch:
                     expansion_terms.append(formula_name)
 
         # 添加药材别名扩展
-        for herb_name, aliases in HERB_ALIAS_MAP.items():
+        for herb_name, aliases in self._get_herb_alias_map().items():
             if herb_name in query:
                 expansion_terms.extend(aliases)
             for alias in aliases:
@@ -151,12 +192,12 @@ class IntelligentSearch:
     def _standardize_symptoms(self, query: str) -> list[str]:
         """将口语化症状映射为标准症状术语"""
         found: set[str] = set()
-        for alias, standard in SYMPTOM_ALIAS_MAP.items():
+        for alias, standard in self._get_alias_map().items():
             if alias in query:
                 found.add(standard)
 
         # 额外检测：直接匹配标准症状列表
-        for symptom in SYMPTOM_LIST:
+        for symptom in self._get_symptom_list():
             if symptom in query:
                 found.add(symptom)
 
@@ -165,7 +206,7 @@ class IntelligentSearch:
     def _detect_standard_symptoms(self, query: str) -> list[str]:
         """检测查询中是否包含标准症状名"""
         found: list[str] = []
-        for symptom in SYMPTOM_LIST:
+        for symptom in self._get_symptom_list():
             if symptom in query and symptom not in found:
                 found.append(symptom)
         return found
@@ -173,7 +214,7 @@ class IntelligentSearch:
     def _expand_syndrome_synonyms(self, query: str) -> list[str]:
         """检测查询中的证型同义表达"""
         found: list[str] = []
-        for key, synonyms in TCM_SYNONYM_MAP.items():
+        for key, synonyms in self._get_synonym_map().items():
             if key in query:
                 found.append(key)
                 found.extend(synonyms)
@@ -202,7 +243,7 @@ class IntelligentSearch:
         seen_formula_syndrome: set[tuple[str, str]] = set()
 
         for symptom in symptoms:
-            formula_refs = SYMPTOM_TO_FORMULA_MAP.get(symptom, [])
+            formula_refs = self._get_formula_map().get(symptom, [])
             for ref in formula_refs:
                 key = (ref["formula"], ref["syndrome"])
                 if key not in seen_formula_syndrome:
@@ -226,7 +267,7 @@ class IntelligentSearch:
         syndrome_scores: dict[str, dict[str, Any]] = {}
 
         for symptom in symptoms:
-            formula_refs = SYMPTOM_TO_FORMULA_MAP.get(symptom, [])
+            formula_refs = self._get_formula_map().get(symptom, [])
             for ref in formula_refs:
                 syn = ref["syndrome"]
                 if syn not in syndrome_scores:
@@ -579,14 +620,14 @@ class IntelligentSearch:
         partial = partial.strip()
         suggestions: list[tuple[str, int]] = []  # (symptom, score)
 
-        for standard in SYMPTOM_LIST:
+        for standard in self._get_symptom_list():
             # 精确子串匹配
             if partial in standard:
                 suggestions.append((standard, 100))
                 continue
 
         # 别名反向匹配
-        for alias, standard in SYMPTOM_ALIAS_MAP.items():
+        for alias, standard in self._get_alias_map().items():
             if partial in alias and standard not in {s[0] for s in suggestions}:
                 suggestions.append((standard, 80))
 
@@ -620,7 +661,7 @@ class IntelligentSearch:
                         suggestions.add(formula["name"])
 
         # 别名匹配
-        for standard, aliases in FORMULA_ALIAS_MAP.items():
+        for standard, aliases in self._get_formula_alias_map().items():
             for alias in aliases:
                 if partial in alias:
                     suggestions.add(standard)

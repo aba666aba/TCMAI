@@ -2,25 +2,28 @@
 """
 中医药智能问答系统 — 双击启动入口
 
-使用前请先运行 setup.bat 完成环境配置。
+直接双击运行即可启动桌面应用。
 """
 import sys
 from pathlib import Path
 
+# ── 设置项目根目录 ──
+# 如果是 PyInstaller 打包的 frozen 环境，根目录应该是 exe 所在的目录
+if getattr(sys, "frozen", False):
+    # sys.executable 是 exe 的路径 (例如 C:\Program Files\TCMAI\TCMAI.exe)
+    ROOT = Path(sys.executable).resolve().parent
+else:
+    ROOT = Path(__file__).resolve().parent
 
-ROOT = Path(__file__).resolve().parent
+# 将根目录下的 src 目录加入 Python 路径
 sys.path.insert(0, str(ROOT / "src"))
 
 import logging
 import logging.handlers
 import os
 
-
-# ── Tcl/Tk 运行时路径（便携 Python embeddable 版不含） ──
-_tcl_dir = ROOT / "python" / "tcl"
-if _tcl_dir.exists():
-    os.environ.setdefault("TCL_LIBRARY", str(_tcl_dir / "tcl8.6"))
-    os.environ.setdefault("TK_LIBRARY", str(_tcl_dir / "tk8.6"))
+# 设置 TCMAI_ROOT 环境变量，供其他模块使用
+os.environ["TCMAI_ROOT"] = str(ROOT)
 
 _log_level = getattr(
     logging, os.environ.get("TCMAI_LOG_LEVEL", "INFO").upper(), logging.INFO
