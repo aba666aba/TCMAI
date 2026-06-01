@@ -41,6 +41,7 @@ class DesktopApp:
         self._build_layout()
         self._load_history()
         self._poll_queue()
+        self._start_nlu_preload()
 
     # ── 字体常量（整体放大） ──
     FONT = ("Microsoft YaHei UI", 17)
@@ -89,16 +90,19 @@ class DesktopApp:
 
         self._notebook.add("首页")
         self._notebook.add("知识图谱")
+        self._notebook.add("知识管理")
         self._notebook.add("历史记录")
         self._notebook.add("关于")
 
         self.home_tab = self._notebook.tab("首页")
         self.kg_tab = self._notebook.tab("知识图谱")
+        self.km_tab = self._notebook.tab("知识管理")
         self.history_tab = self._notebook.tab("历史记录")
         self.about_tab = self._notebook.tab("关于")
 
         self._build_home_tab()
         self._build_kg_tab()
+        self._build_km_tab()
         self._build_history_tab()
         self._build_about_tab()
 
@@ -130,6 +134,12 @@ class DesktopApp:
         self.query_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self.query_input.bind(
             "<Return>", lambda e: self._submit_query() or "break"
+        )
+        self.query_input.bind(
+            "<Control-Return>", lambda e: self._submit_query() or "break"
+        )
+        self.query_input.bind(
+            "<Escape>", lambda e: self._clear_query() or "break"
         )
 
         self.clear_button = ctk.CTkButton(
@@ -321,6 +331,24 @@ class DesktopApp:
             ).pack(expand=True)
 
     # ═══════════════════════════════════════════
+    # 知识管理标签页
+    # ═══════════════════════════════════════════
+    def _build_km_tab(self) -> None:
+        try:
+            from desktop.knowledge_manager import KnowledgeManagerView
+
+            kb = getattr(self.service, "kb", None)
+            self._km_view = KnowledgeManagerView(self.km_tab, kb=kb)
+            self._km_view.pack(fill="both", expand=True)
+        except Exception as exc:
+            logger.warning("知识管理标签页加载失败: %s", exc)
+            ctk.CTkLabel(
+                self.km_tab,
+                text=f"知识管理模块加载失败: {exc}",
+                text_color="#e74c3c",
+            ).pack(expand=True)
+
+    # ═══════════════════════════════════════════
     # 历史记录标签页
     # ═══════════════════════════════════════════
     def _build_history_tab(self) -> None:
@@ -476,15 +504,25 @@ class DesktopApp:
         sections = [
             (
                 "📋 项目简介",
-                "中医药智能问答系统用于提供中医药知识科普、症状参考分析和历史记录管理。\n基于 TCMNet Transformer 深度学习模型进行智能辨证与方剂推荐。",
+                "中医药智能问答系统是一款基于深度学习与知识图谱的中医辅助诊疗参考工具。\n"
+                "系统搭载 TCMNet Transformer 深度学习模型，融合中医药知识图谱进行智能辨证推理，\n"
+                "覆盖 30 种证型分类体系（肺系、心系、肝胆系、脾胃系、肾系、气血津液等），\n"
+                "支持从症状描述到证型判定、方剂推荐、药材与用量建议的完整推理管线。",
             ),
             (
                 "🔧 主要功能",
-                "1. 输入症状描述进行智能辨证与方剂推荐\n2. 通过快捷标签快速补全症状描述\n3. 查看、搜索、导出和清理历史记录",
+                "1. 智能辨证与方剂推荐 — 输入症状描述，自动进行证型分析并推荐方剂与药材（含用量）\n"
+                "2. 智能搜索引擎 — 支持口语化症状识别与同义词扩展（272 条口语映射），精准匹配知识库\n"
+                "3. 配伍安全筛查 — 自动过滤十八反十九畏、孕妇禁忌及毒性药材配伍\n"
+                "4. 知识图谱可视化 — 以交互式图谱展示症状、证型、药材、方剂之间的关联关系\n"
+                "5. 知识库管理 — 支持对症状、证型、药材、方剂等知识的增删改查与导入导出\n"
+                "6. 历史记录管理 — 查看、搜索、导出和清理历史问诊记录",
             ),
             (
                 "⚕ 使用提醒",
-                "本系统仅提供知识参考，不构成医疗诊断或治疗建议。\n如有持续不适，请及时咨询专业医疗机构或执业医师。",
+                "本系统仅提供中医药知识参考，不构成医疗诊断或治疗建议。\n"
+                "系统生成的方剂仅供参考，实际用药请以执业医师诊断为准。\n"
+                "如有持续不适，请及时咨询专业医疗机构或执业医师。",
             ),
             (
                 "👨‍💻 开发团队",
@@ -532,9 +570,46 @@ class DesktopApp:
         self.status_var.set("输入已清空")
 
     # ═══════════════════════════════════════════
+    # NLU 模型预加载
+    # ═══════════════════════════════════════════
+    def _start_nlu_preload(self) -> None:
+        from desktop.service import preload_nlu_async
+
+        self.status_var.set("⏳ AI 模型加载中，请稍候…")
+        self._nlu_load_start = __import__("time").time()
+        preload_nlu_async(callback=self._on_nlu_loaded)
+        self._poll_nlu_status()
+
+    def _on_nlu_loaded(self, success: bool, message: str) -> None:
+        elapsed = __import__("time").time() - self._nlu_load_start
+        if success:
+            logger.info("NLU 模型就绪（耗时 %.1f 秒）", elapsed)
+        else:
+            logger.error("NLU 模型加载失败: %s", message)
+
+    def _poll_nlu_status(self) -> None:
+        from desktop.service import get_nlu_status
+
+        loading, ready, error = get_nlu_status()
+        if ready:
+            self.status_var.set("✅ AI 模型已就绪，输入症状开始查询")
+            self.submit_button.configure(state="normal")
+            return
+        if error:
+            self.status_var.set(f"⚠ 模型加载失败: {error[:60]}")
+            self.submit_button.configure(state="normal")
+            return
+        if loading:
+            elapsed = __import__("time").time() - self._nlu_load_start
+            self.status_var.set(f"⏳ AI 模型加载中…（已等待 {elapsed:.0f} 秒）")
+        self.root.after(1000, self._poll_nlu_status)
+
+    # ═══════════════════════════════════════════
     # 查询逻辑
     # ═══════════════════════════════════════════
     def _submit_query(self) -> None:
+        from desktop.service import is_nlu_loading, is_nlu_ready, get_nlu_status
+
         query = self.query_input.get("1.0", "end").strip()
         if self.query_in_flight:
             messagebox.showinfo("提示", "上一条查询仍在处理中，请稍候。")
@@ -547,6 +622,24 @@ class DesktopApp:
             return
         if sum(1 for char in query if not char.isspace()) < 2:
             messagebox.showwarning("提示", "输入内容过短，请补充更完整的问题描述。")
+            return
+
+        # 模型状态检查
+        if not is_nlu_ready():
+            _, _, error = get_nlu_status()
+            if error:
+                messagebox.showerror(
+                    "模型加载失败",
+                    f"AI 模型未能成功加载，无法查询。\n\n错误信息：{error}\n\n请检查模型文件是否完整。",
+                )
+                return
+            if is_nlu_loading():
+                messagebox.showinfo(
+                    "模型加载中",
+                    "AI 模型正在后台加载，请稍候再试。\n\n加载完成后状态栏会显示「AI 模型已就绪」。",
+                )
+                return
+            messagebox.showinfo("提示", "AI 模型尚未开始加载，请稍候。")
             return
 
         self.query_in_flight = True
@@ -566,6 +659,9 @@ class DesktopApp:
             logger.info("检测到症状: %s", detected)
             result = self.service.query(query, detected)
             self.result_queue.put(("success", result))
+        except ValueError as exc:
+            logger.warning("输入校验失败: %s", exc)
+            self.result_queue.put(("error", f"输入有误：{exc}"))
         except RuntimeError as exc:
             logger.exception("NLU 或 AI 模型错误")
             self.result_queue.put(("error", f"模型错误：{exc}"))
@@ -587,8 +683,18 @@ class DesktopApp:
         self.query_in_flight = False
         self.submit_button.configure(state="normal")
         if status == "error":
-            self.status_var.set("AI 查询失败")
-            messagebox.showerror("AI 查询失败", str(payload))
+            err_msg = str(payload)
+            user_msg = "查询过程中出现异常，请稍后重试。"
+            if "timeout" in err_msg.lower() or "超时" in err_msg:
+                user_msg = "AI 模型响应超时，请稍后重试。"
+            elif "not available" in err_msg.lower() or "不可用" in err_msg:
+                user_msg = "AI 模型暂未加载完成，请等待状态栏显示「就绪」后再试。"
+            elif "CUDA" in err_msg or "显存" in err_msg:
+                user_msg = "GPU 资源不足，系统将自动切换到 CPU 模式。"
+            elif "内存" in err_msg or "memory" in err_msg.lower():
+                user_msg = "系统内存不足，请关闭其他程序后重试。"
+            self.status_var.set("⚠ 查询失败")
+            messagebox.showerror("查询失败", user_msg)
             return
 
         data: dict[str, Any] = payload

@@ -11,7 +11,6 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from core.knowledge_base import KnowledgeBase
-from core.result_verify import ResultVerifier
 from core.tcm_config import generate_health_tips
 
 
@@ -27,6 +26,11 @@ def _get_project_root() -> Path:
 
 # NLU 引擎（延迟导入，避免启动时加载大模型）
 _nlu_engine: Any | None = None
+_nlu_loading: bool = False
+_nlu_ready: bool = False
+_nlu_error: str | None = None
+_nlu_lock = threading.Lock()
+_nlu_callbacks: list = []
 
 
 def _get_nlu_engine():
@@ -40,6 +44,65 @@ def _get_nlu_engine():
         _nlu_engine.load()
         logger.info("NLU 引擎已就绪")
     return _nlu_engine
+
+
+def preload_nlu_async(callback=None):
+    """在后台线程预加载 NLU 模型，加载完成后调用 callback(success, message)"""
+    global _nlu_loading, _nlu_ready, _nlu_error
+
+    with _nlu_lock:
+        if _nlu_ready or _nlu_loading:
+            if callback:
+                callback(_nlu_ready, _nlu_error or "模型已就绪")
+            return
+        _nlu_loading = True
+        _nlu_error = None
+
+    if callback:
+        _nlu_callbacks.append(callback)
+
+    def _load():
+        global _nlu_loading, _nlu_ready, _nlu_error
+        try:
+            logger.info("开始后台预加载 NLU 模型...")
+            _get_nlu_engine()
+            with _nlu_lock:
+                _nlu_ready = True
+                _nlu_loading = False
+            logger.info("NLU 模型后台预加载完成")
+            for cb in _nlu_callbacks:
+                try:
+                    cb(True, "模型已就绪")
+                except Exception:
+                    pass
+        except Exception as exc:
+            with _nlu_lock:
+                _nlu_loading = False
+                _nlu_error = str(exc)
+            logger.error("NLU 模型后台预加载失败: %s", exc)
+            for cb in _nlu_callbacks:
+                try:
+                    cb(False, str(exc))
+                except Exception:
+                    pass
+
+    thread = threading.Thread(target=_load, daemon=True, name="nlu-preload")
+    thread.start()
+
+
+def is_nlu_ready() -> bool:
+    """查询 NLU 模型是否已就绪"""
+    return _nlu_ready
+
+
+def is_nlu_loading() -> bool:
+    """查询 NLU 模型是否正在加载"""
+    return _nlu_loading
+
+
+def get_nlu_status() -> tuple[bool, bool, str | None]:
+    """返回 (loading, ready, error)"""
+    return _nlu_loading, _nlu_ready, _nlu_error
 
 
 def detect_symptoms_nlu(text: str) -> list[str]:
@@ -138,7 +201,6 @@ class TCMDesktopService:
 
     def __init__(self) -> None:
         self.kb = KnowledgeBase()
-        self.verifier = ResultVerifier()
         self.history_lock = threading.Lock()
         self.history_file = self._resolve_history_file()
         self.history_lock_file = self.history_file.with_suffix(".lock")
@@ -321,6 +383,9 @@ class TCMDesktopService:
                 )
                 if herb.get("efficacy"):
                     parts.append(f"   功效：{herb['efficacy'][:80]}")
+                usage = herb.get("usage") or self.get_herb_dosage(herb["name"])
+                if usage:
+                    parts.append(f"   用量：{usage}")
 
         parts.append("\n【安全提示】")
         if safety and safety.get("warnings"):
@@ -535,6 +600,23 @@ class TCMDesktopService:
         with self.history_lock:
             self.history_data.clear()
             self.save_history()
+
+    def get_herb_dosage(self, herb_name: str) -> str:
+        """从数据库查询药材用法用量。"""
+        if not self.kb or not self.kb.is_available:
+            return ""
+        try:
+            with self.kb._lock:
+                cur = self.kb.conn.execute(
+                    "SELECT usage FROM herbs WHERE name = ? LIMIT 1",
+                    (herb_name,),
+                )
+                row = cur.fetchone()
+                if row and row["usage"]:
+                    return row["usage"]
+        except Exception:
+            pass
+        return ""
 
     def close(self) -> None:
         try:

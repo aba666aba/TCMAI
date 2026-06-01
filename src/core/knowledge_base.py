@@ -27,6 +27,7 @@ class KnowledgeBase:
         self.conn: sqlite3.Connection | None = None
         self.is_available = False
         self._lock = threading.RLock()
+        self.knowledge_config = None
         self._connect()
 
     def _connect(self) -> None:
@@ -42,6 +43,14 @@ class KnowledgeBase:
             self.conn.row_factory = sqlite3.Row
             self.is_available = True
             logger.info("知识库连接成功: %s", self.db_path)
+            # 初始化知识配置管理器
+            try:
+                from core.knowledge_config import KnowledgeConfig, migrate_hardcoded_to_db
+
+                migrate_hardcoded_to_db(self.conn)
+                self.knowledge_config = KnowledgeConfig(self.conn)
+            except Exception as cfg_exc:
+                logger.warning("知识配置初始化失败（不影响主功能）: %s", cfg_exc)
         except sqlite3.Error as exc:
             logger.error("知识库连接失败(SQLite): %s", exc)
             self.conn = None
