@@ -18,7 +18,6 @@ class KnowledgeGraphQuery:
     def find_nodes(
         self, name: str | None = None, node_type: str | None = None
     ) -> list[str]:
-        """按名称和类型查找节点"""
         results = []
         for nid in self.graph.nodes:
             data = self.graph.nodes[nid]
@@ -44,7 +43,6 @@ class KnowledgeGraphQuery:
     def get_neighbors(
         self, node_id: str, edge_type: str | None = None
     ) -> list[tuple[str, str, dict]]:
-        """获取邻接节点（含边信息）"""
         results = []
         for _, neighbor, data in self.graph.edges(node_id, data=True):
             if edge_type and data.get("type") != edge_type:

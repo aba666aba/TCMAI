@@ -146,7 +146,7 @@ class KnowledgeBase:
         return [dict(row) for row in cursor.fetchall()]
 
     def _search_efficacy(self, keyword):
-        results: list[dict[str, Any]] = []
+        results = []
         cursor = self.conn.cursor()
 
         cursor.execute(

@@ -1,9 +1,4 @@
-"""
-知识图谱可视化组件（CustomTkinter 版）
-
-嵌入 CustomTkinter 的交互式知识图谱查看器。
-使用 Tk Canvas 渲染，支持搜索、缩放和节点点击查看详情。
-"""
+"""知识图谱可视化组件 — Canvas 渲染，支持搜索/缩放/节点交互"""
 
 import logging
 import threading

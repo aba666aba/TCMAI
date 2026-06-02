@@ -70,7 +70,7 @@ class KnowledgeManagerView(ctk.CTkFrame):
         self._cfg = getattr(kb, "knowledge_config", None) if kb else None
         self._load_table(self._current_table)
 
-    def _build_ui(self) -> None:
+    def _build_ui(self):
         # 顶部：说明
         info_frame = ctk.CTkFrame(self, fg_color="transparent")
         info_frame.pack(fill="x", padx=16, pady=(10, 4))
@@ -177,7 +177,7 @@ class KnowledgeManagerView(ctk.CTkFrame):
         )
         self._tree.configure(style="Knowledge.Treeview")
 
-    def _load_table(self, table_key: str) -> None:
+    def _load_table(self, table_key: str):
         self._current_table = table_key
         self._search_var.set("")
 
@@ -231,13 +231,13 @@ class KnowledgeManagerView(ctk.CTkFrame):
             logger.error("查询 %s 失败: %s", table_key, exc)
             return []
 
-    def _refresh_tree(self) -> None:
+    def _refresh_tree(self):
         for item in self._tree.get_children():
             self._tree.delete(item)
         for row in self._all_rows:
             self._tree.insert("", "end", values=row)
 
-    def _apply_filter(self) -> None:
+    def _apply_filter(self):
         keyword = self._search_var.get().strip().lower()
         for item in self._tree.get_children():
             self._tree.delete(item)
@@ -245,7 +245,7 @@ class KnowledgeManagerView(ctk.CTkFrame):
             if not keyword or keyword in str(row).lower():
                 self._tree.insert("", "end", values=row)
 
-    def _add_entry(self) -> None:
+    def _add_entry(self):
         """弹出对话框添加新条目。"""
         tdef = self.TABLE_DEFS[self._current_table]
         cols = tdef["columns"]
@@ -316,7 +316,7 @@ class KnowledgeManagerView(ctk.CTkFrame):
             command=dialog.destroy,
         ).pack(side="left")
 
-    def _delete_entry(self) -> None:
+    def _delete_entry(self):
         """删除选中的条目。"""
         selection = self._tree.selection()
         if not selection:

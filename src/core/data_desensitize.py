@@ -1,6 +1,5 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
-# See LICENSE file for details
 
 """数据脱敏 — 用户隐私保护、日志匿名化（含中医药白名单防误伤）"""
 

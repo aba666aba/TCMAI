@@ -350,7 +350,7 @@ class KGEnhancedRecommender:
 
         return insights
 
-    def _kg_safety_check(self, herb_names: list[str]) -> list[str]:
+    def _kg_safety_check(self, herb_names):
         """KG 安全检查"""
         warnings = []
         for h in herb_names:
@@ -364,7 +364,7 @@ class KGEnhancedRecommender:
 
     # 工具
 
-    def _error_result(self, message: str, symptom_text: str) -> dict:
+    def _error_result(self, message: str, symptom_text: str):
         return {
             "error": message,
             "symptoms": [symptom_text],

@@ -106,24 +106,9 @@ class ResultVerifier:
         return sourced_answer
 
     def _generate_disclaimer(self) -> str:
-        """
-        生成合规提示
-
-        Returns:
-            合规提示文本
-        """
         return " ".join(self.disclaimer_templates)
 
     def _extract_knowledge(self, knowledge: dict = None) -> str:
-        """
-        提取相关知识
-
-        Args:
-            knowledge: 知识库信息
-
-        Returns:
-            格式化后的知识文本
-        """
         if not knowledge:
             return "暂无相关知识"
 

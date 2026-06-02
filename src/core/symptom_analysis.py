@@ -120,7 +120,6 @@ class SymptomAnalyzer:
         return results
 
     def _check_contraindications(self, syndromes: list[SyndromeResult]) -> list[str]:
-        """禁忌检查（基于 CONTRAINDICATION_RULES）"""
         warnings = []
         for syndrome in syndromes:
             name = syndrome.syndrome_name
@@ -136,7 +135,6 @@ class SymptomAnalyzer:
         return warnings
 
     def _generate_suggestions(self, syndromes: list[SyndromeResult]) -> list[str]:
-        """生成调理建议（基于9种证型）"""
         suggestions = []
 
         if not syndromes:

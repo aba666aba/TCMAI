@@ -109,7 +109,7 @@ class DesktopApp:
         self._build_about_tab()
 
     # 首页
-    def _build_home_tab(self) -> None:
+    def _build_home_tab(self):
         # FIXME: 低分辨率下标签页显示不全，需要响应式布局
         container = ctk.CTkScrollableFrame(self.home_tab, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -290,7 +290,7 @@ class DesktopApp:
         ).pack(anchor="w", padx=14, pady=(0, 6))
 
     # 知识图谱标签页
-    def _build_kg_tab(self) -> None:
+    def _build_kg_tab(self):
         if not HAS_KG:
             ctk.CTkLabel(
                 self.kg_tab,
@@ -330,7 +330,7 @@ class DesktopApp:
             ).pack(expand=True)
 
     # 知识管理标签页
-    def _build_km_tab(self) -> None:
+    def _build_km_tab(self):
         try:
             from desktop.knowledge_manager import KnowledgeManagerView
 
@@ -346,7 +346,7 @@ class DesktopApp:
             ).pack(expand=True)
 
     # 历史记录标签页
-    def _build_history_tab(self) -> None:
+    def _build_history_tab(self):
         wrapper = ctk.CTkFrame(self.history_tab, fg_color="transparent")
         wrapper.pack(fill="both", expand=True)
 
@@ -474,7 +474,7 @@ class DesktopApp:
         self.history_detail.configure(state="disabled")
 
     # 关于标签页
-    def _build_about_tab(self) -> None:
+    def _build_about_tab(self):
         # 外层滚动区
         about_frame = ctk.CTkScrollableFrame(self.about_tab, corner_radius=8)
         about_frame.pack(fill="both", expand=True, padx=8, pady=8)
@@ -549,7 +549,7 @@ class DesktopApp:
         widget.insert("1.0", value.strip() if value else "")
         widget.configure(state="disabled")
 
-    def _append_symptom(self, symptom: str) -> None:
+    def _append_symptom(self, symptom: str):
         current = self.query_input.get("1.0", "end").strip()
         updated = f"{current}，{symptom}" if current else symptom
         self.query_input.delete("1.0", "end")
@@ -561,7 +561,7 @@ class DesktopApp:
         self.status_var.set("输入已清空")
 
     # NLU 模型预加载
-    def _start_nlu_preload(self) -> None:
+    def _start_nlu_preload(self):
         from desktop.service import preload_nlu_async
 
         self.status_var.set("⏳ AI 模型加载中，请稍候…")
@@ -569,14 +569,14 @@ class DesktopApp:
         preload_nlu_async(callback=self._on_nlu_loaded)
         self._poll_nlu_status()
 
-    def _on_nlu_loaded(self, success: bool, message: str) -> None:
+    def _on_nlu_loaded(self, success: bool, message: str):
         elapsed = __import__("time").time() - self._nlu_load_start
         if success:
             logger.info("NLU 模型就绪（耗时 %.1f 秒）", elapsed)
         else:
             logger.error("NLU 模型加载失败: %s", message)
 
-    def _poll_nlu_status(self) -> None:
+    def _poll_nlu_status(self):
         from desktop.service import get_nlu_status
 
         loading, ready, error = get_nlu_status()
@@ -594,7 +594,7 @@ class DesktopApp:
         self.root.after(1000, self._poll_nlu_status)
 
     # 查询逻辑
-    def _submit_query(self) -> None:
+    def _submit_query(self):
         from desktop.service import is_nlu_loading, is_nlu_ready, get_nlu_status
 
         query = self.query_input.get("1.0", "end").strip()
@@ -638,7 +638,7 @@ class DesktopApp:
         thread = threading.Thread(target=self._run_query, args=(query,), daemon=True)
         thread.start()
 
-    def _run_query(self, query: str) -> None:
+    def _run_query(self, query: str):
         try:
             from desktop.service import detect_symptoms_nlu
 
@@ -656,7 +656,7 @@ class DesktopApp:
             logger.exception("桌面端查询失败")
             self.result_queue.put(("error", str(exc)))
 
-    def _poll_queue(self) -> None:
+    def _poll_queue(self):
         try:
             while True:
                 status, payload = self.result_queue.get_nowait()
@@ -665,7 +665,7 @@ class DesktopApp:
             pass
         self.root.after(120, self._poll_queue)
 
-    def _finish_query(self, status: str, payload: Any) -> None:
+    def _finish_query(self, status: str, payload: Any):
         self.progress.stop()
         self.query_in_flight = False
         self.submit_button.configure(state="normal")
@@ -724,7 +724,7 @@ class DesktopApp:
                 self.status_var.set(f"⚠ 知识图谱加载失败: {exc}")
 
     # 历史记录管理
-    def _load_history(self) -> None:
+    def _load_history(self):
         search = (
             self.history_search_var.get().strip().lower()
             if hasattr(self, "history_search_var")
@@ -756,7 +756,7 @@ class DesktopApp:
                 values=(record.get("timestamp", ""), preview),
             )
 
-    def _on_history_select(self, _event: Any) -> None:
+    def _on_history_select(self, _event: Any):
         selection = self.history_tree.selection()
         if not selection:
             return
@@ -780,7 +780,7 @@ class DesktopApp:
         )
         self._set_text(self.history_detail, detail)
 
-    def _delete_selected_history(self) -> None:
+    def _delete_selected_history(self):
         if self.selected_history_id is None:
             messagebox.showinfo("提示", "请先选择一条历史记录。")
             return
@@ -791,7 +791,7 @@ class DesktopApp:
             self._set_text(self.history_detail, "记录已删除。")
             self._load_history()
 
-    def _clear_history(self) -> None:
+    def _clear_history(self):
         if not self.service.history_data:
             messagebox.showinfo("提示", "当前没有可清空的历史记录。")
             return
@@ -802,7 +802,7 @@ class DesktopApp:
         self._set_text(self.history_detail, "历史记录已清空。")
         self._load_history()
 
-    def _export_history(self) -> None:
+    def _export_history(self):
         records = self.service.export_history()
         if not records:
             messagebox.showinfo("提示", "当前没有可导出的历史记录。")

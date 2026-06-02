@@ -29,37 +29,37 @@ class IntelligentSearch:
         # 预编译别名正则用于快速检测
         self._alias_pattern = self._build_alias_pattern()
 
-    def _get_alias_map(self) -> dict[str, str]:
+    def _get_alias_map(self):
         if self._cfg:
             return self._cfg.get_symptom_alias_map()
         return SYMPTOM_ALIAS_MAP
 
-    def _get_formula_map(self) -> dict[str, list[dict]]:
+    def _get_formula_map(self):
         if self._cfg:
             return self._cfg.get_symptom_formula_map()
         return SYMPTOM_TO_FORMULA_MAP
 
-    def _get_synonym_map(self) -> dict[str, list[str]]:
+    def _get_synonym_map(self):
         if self._cfg:
             return self._cfg.get_tcm_synonym_map()
         return TCM_SYNONYM_MAP
 
-    def _get_formula_alias_map(self) -> dict[str, list[str]]:
+    def _get_formula_alias_map(self):
         if self._cfg:
             return self._cfg.get_formula_alias_map()
         return FORMULA_ALIAS_MAP
 
-    def _get_herb_alias_map(self) -> dict[str, list[str]]:
+    def _get_herb_alias_map(self):
         if self._cfg:
             return self._cfg.get_herb_alias_map()
         return HERB_ALIAS_MAP
 
-    def _get_symptom_list(self) -> list[str]:
+    def _get_symptom_list(self):
         if self._cfg:
             return self._cfg.get_symptom_list()
         return SYMPTOM_LIST
 
-    def _get_alias_reverse_map(self) -> dict[str, list[str]]:
+    def _get_alias_reverse_map(self):
         if self._cfg:
             alias_map = self._cfg.get_symptom_alias_map()
             rev: dict[str, list[str]] = {}
@@ -343,7 +343,6 @@ class IntelligentSearch:
         )
 
     def _kb_search(self, query: str) -> dict[str, Any]:
-        """调用底层知识库搜索"""
         if self.kb is None:
             return {
                 "herbs": [],
@@ -447,7 +446,6 @@ class IntelligentSearch:
     # ================================================================
 
     def _merge_raw_results(self, strategy_results):
-        """合并多个策略的搜索结果"""
         merged: dict[str, dict[int, dict]] = {
             "herbs": {},
             "formulas": {},
@@ -466,7 +464,6 @@ class IntelligentSearch:
 
     def _fuse_and_rank(self, query, symptoms, inferred_formulas,
                        inferred_syndromes, multi_results):
-        """融合搜索结果并加入推荐方剂和推理路径"""
 
         # --- 标注方剂匹配来源 ---
         db_formulas = multi_results.get("formulas", [])
@@ -511,7 +508,6 @@ class IntelligentSearch:
         return result
 
     def _generate_summary(self, fused: dict[str, Any]) -> str:
-        """生成搜索摘要"""
         parts: list[str] = []
 
         symptoms = fused.get("symptoms", [])
