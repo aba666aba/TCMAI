@@ -68,7 +68,7 @@ class IntelligentSearch:
             return rev
         return SYMPTOM_ALIAS_REVERSE_MAP
 
-    def _build_alias_pattern(self) -> re.Pattern:
+    def _build_alias_pattern(self):
         alias_map = self._get_alias_map()
         aliases = sorted(alias_map.keys(), key=len, reverse=True)
         pattern = "|".join(re.escape(a) for a in aliases)
@@ -266,6 +266,7 @@ class IntelligentSearch:
             key=lambda x: x["score"],
             reverse=True,
         )
+        # print(f"[DEBUG] syndromes: {[(s['syndrome'], s['score']) for s in sorted_result[:3]]}")
         return sorted_result
 
     # ================================================================
@@ -285,6 +286,7 @@ class IntelligentSearch:
 
         # --- Step 1: 查询扩展 ---
         expanded = self.expand_query(query)
+        # print(f"[DEBUG] expanded symptoms: {expanded['standardized_symptoms']}")
         logger.info(
             "智能查询扩展: 原始='%s', 标准化症状=%s, 扩展词=%s",
             query[:30],
@@ -342,7 +344,7 @@ class IntelligentSearch:
             ]
         )
 
-    def _kb_search(self, query: str) -> dict[str, Any]:
+    def _kb_search(self, query):
         if self.kb is None:
             return {
                 "herbs": [],
@@ -507,7 +509,7 @@ class IntelligentSearch:
 
         return result
 
-    def _generate_summary(self, fused: dict[str, Any]) -> str:
+    def _generate_summary(self, fused):
         parts: list[str] = []
 
         symptoms = fused.get("symptoms", [])

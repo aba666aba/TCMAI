@@ -80,7 +80,7 @@ class KGEnhancedRecommender:
 
     # KG 推理
 
-    def _kg_reasoning(self, symptoms: list[str]) -> dict:
+    def _kg_reasoning(self, symptoms):
         """
         KG 三条推理路径：
           A. 症状 → 证型 → 推荐药材/方剂（辨证论治路径）
@@ -150,6 +150,7 @@ class KGEnhancedRecommender:
             "formulas": direct_formulas,
         }
 
+        # import json; print(json.dumps(result, ensure_ascii=False, indent=2)[:500])
         return result
 
     # 融合

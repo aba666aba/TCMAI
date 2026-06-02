@@ -134,6 +134,7 @@ def detect_symptoms_nlu(text: str) -> list[str]:
     if not engine:
         raise RuntimeError("NLU 引擎不可用，无法提取症状")
     result = engine.extract_symptoms(enhanced_text)
+    # print(f"[NLU DEBUG] raw={result}, text={enhanced_text[:50]}")
     if not result:
         raise RuntimeError("NLU 引擎未提取到任何症状")
     logger.info("NLU 提取症状: %s", result)
@@ -203,6 +204,7 @@ class TCMDesktopService:
         self.kb = KnowledgeBase()
         # print(f"[DEBUG] KnowledgeBase loaded, available={self.kb.is_available}")
         self.history_lock = threading.Lock()
+        # TODO: 历史记录应该用sqlite，json文件并发有问题
         self.history_file = self._resolve_history_file()
         self.history_lock_file = self.history_file.with_suffix(".lock")
         self.history_data = self.load_history()
@@ -210,7 +212,7 @@ class TCMDesktopService:
         self._recommender_load_attempted = False
         self._recommender_available = False
 
-    def _resolve_history_file(self) -> Path:
+    def _resolve_history_file(self):
         root = _get_project_root()
         data_dir = (root / "data").resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
