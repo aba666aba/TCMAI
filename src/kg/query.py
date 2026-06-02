@@ -1,12 +1,4 @@
-"""
-TCM 知识图谱查询接口
-
-支持：
-- 实体查询（按类型/名称搜索）
-- 关系查询（邻接/路径/子图提取）
-- 推理查询（症状→证型→药物推荐）
-- 最短路径分析
-"""
+"""TCM 知识图谱查询接口 — 实体/关系/推理查询、最短路径分析"""
 
 import logging
 
@@ -21,9 +13,7 @@ class KnowledgeGraphQuery:
     def __init__(self, graph):
         self.graph = graph
 
-    # ═══════════════════════════════════════════
     # 实体查询
-    # ═══════════════════════════════════════════
 
     def find_nodes(
         self, name: str | None = None, node_type: str | None = None
@@ -49,9 +39,7 @@ class KnowledgeGraphQuery:
         data["id"] = node_id
         return data
 
-    # ═══════════════════════════════════════════
     # 关系查询
-    # ═══════════════════════════════════════════
 
     def get_neighbors(
         self, node_id: str, edge_type: str | None = None
@@ -68,9 +56,7 @@ class KnowledgeGraphQuery:
         """获取节点度数"""
         return self.graph.degree(node_id) if self.graph.has_node(node_id) else 0
 
-    # ═══════════════════════════════════════════
     # 推理查询
-    # ═══════════════════════════════════════════
 
     def symptom_to_recommendation(self, symptom_name: str, top_k: int = 10) -> dict:
         """
@@ -278,9 +264,7 @@ class KnowledgeGraphQuery:
             )[:top_k],
         }
 
-    # ═══════════════════════════════════════════
     # 内部工具
-    # ═══════════════════════════════════════════
 
     def _node_name(self, node_id: str) -> str:
         """从节点ID提取名称"""

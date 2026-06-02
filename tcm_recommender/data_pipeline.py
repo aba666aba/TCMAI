@@ -428,7 +428,6 @@ class TCMDataPipeline:
         logger.info("  [OK] 证型: %s", self.num_syndromes)
 
     def _build_indices(self):
-        """构建 DB ID ↔ 模型索引的双向映射（1-based model idx, 0=padding）"""
         for idx, hid in enumerate(sorted(self.herbs.keys()), 1):
             self.herb_db_id_to_model_idx[hid] = idx
             self.model_idx_to_herb_db_id[idx] = hid
@@ -455,6 +454,7 @@ class TCMDataPipeline:
         )
 
     def _build_association_matrices(self):
+        # FIXME: 500行的函数太长了，但拆开又怕影响性能，先不动
         """增强版关联矩阵：文本匹配 + 方剂反推 + 分类语义"""
         logger.info("  构建增强关联矩阵...")
         ns, nh, nf = self.num_symptoms, self.num_herbs, self.num_formulas
@@ -1025,7 +1025,6 @@ class TCMDataPipeline:
         return symptoms, herbs, formulas, syndromes, weights
 
     def _generate_herb_samples(self, count: int):
-        """药材驱动：为每味药材匹配其关联症状"""
         symptoms_list, herbs_list, formulas_list, syndromes_list, weights = (
             [],
             [],
@@ -1106,7 +1105,6 @@ class TCMDataPipeline:
         return symptoms_list, herbs_list, formulas_list, syndromes_list, weights
 
     def _generate_formula_samples(self, count: int):
-        """方剂驱动：为每个方剂生成训练样本"""
         syms, herbs, forms, syns, weights = [], [], [], [], []
         nh = self.num_herbs
 
@@ -1154,7 +1152,6 @@ class TCMDataPipeline:
         return syms, herbs, forms, syns, weights
 
     def _generate_augmented_samples(self, count: int):
-        """组合增强：随机组合症状 + 基于关联矩阵生成标签（限制正标签数≤20）"""
         syms, herbs, forms, syns, weights = [], [], [], [], []
         ns, nh = self.num_symptoms, self.num_herbs
         all_s_indices = list(range(ns))
@@ -1216,7 +1213,6 @@ class TCMDataPipeline:
         return syms, herbs, forms, syns, weights
 
     def _generate_negative_samples(self, count: int):
-        """负样本：语义不匹配的症状-药材对（对比学习用）"""
         syms, herbs, forms, syns, weights = [], [], [], [], []
         ns, nh = self.num_symptoms, self.num_herbs
         all_s = list(range(ns))

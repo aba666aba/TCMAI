@@ -14,7 +14,7 @@ from core.knowledge_base import KnowledgeBase
 from core.tcm_config import generate_health_tips
 
 
-# ── 统一根目录解析 ──
+# 统一根目录解析
 def _get_project_root() -> Path:
     """获取项目根目录：TCMAI_ROOT > frozen > __file__ 降级链"""
     tcm_root = os.environ.get("TCMAI_ROOT")
@@ -107,7 +107,7 @@ def get_nlu_status() -> tuple[bool, bool, str | None]:
 
 def detect_symptoms_nlu(text: str) -> list[str]:
     """仅使用 NLU 引擎提取症状，失败则抛出异常"""
-    # ── 证型→症状展开（用户可能直接输入"肾虚""脾虚"等） ──
+    # 证型→症状展开（用户可能直接输入"肾虚""脾虚"等）
     expanded = list(text)
     try:
         from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
@@ -201,6 +201,7 @@ class TCMDesktopService:
 
     def __init__(self) -> None:
         self.kb = KnowledgeBase()
+        # print(f"[DEBUG] KnowledgeBase loaded, available={self.kb.is_available}")
         self.history_lock = threading.Lock()
         self.history_file = self._resolve_history_file()
         self.history_lock_file = self.history_file.with_suffix(".lock")
@@ -241,7 +242,7 @@ class TCMDesktopService:
 
                     fcntl.lockf(handle, fcntl.LOCK_UN)
 
-    def _sanitize_history_item(self, item: dict[str, Any]) -> dict[str, Any]:
+    def _sanitize_history_item(self, item):
         symptoms = item.get("symptoms", [])
         if not isinstance(symptoms, list):
             symptoms = []
@@ -272,6 +273,7 @@ class TCMDesktopService:
         return normalized
 
     def load_history(self) -> list[dict[str, Any]]:
+        # TODO: 历史记录应该用sqlite，json文件并发有问题
         if not self.history_file.exists():
             return []
         try:
@@ -427,6 +429,7 @@ class TCMDesktopService:
             raise ValueError("症状列表最多支持 20 项")
 
         filtered_symptoms = [s for s in symptoms if isinstance(s, str) and s.strip()]
+        # print(f"[DEBUG] query={query_text!r}, symptoms={filtered_symptoms}")
 
         # ========== 智能搜索（增强 AI 结果的补充知识） ==========
         intel_result = self.kb.intelligent_search(query_text)

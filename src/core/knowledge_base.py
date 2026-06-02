@@ -30,11 +30,12 @@ class KnowledgeBase:
         self.knowledge_config = None
         self._connect()
 
-    def _connect(self) -> None:
+    def _connect(self):
         try:
             if not os.path.exists(self.db_path):
                 logger.warning("知识库文件不存在，已降级为空知识库: %s", self.db_path)
                 return
+            # logger.debug("连接知识库: %s", self.db_path)
             if os.path.getsize(self.db_path) == 0:
                 logger.warning("知识库文件为空，已降级为空知识库: %s", self.db_path)
                 return
@@ -60,7 +61,7 @@ class KnowledgeBase:
             self.conn = None
             self.is_available = False
 
-    def _empty_result(self) -> dict[str, Any]:
+    def _empty_result(self):
         return {
             "herbs": [],
             "formulas": [],
@@ -88,7 +89,8 @@ class KnowledgeBase:
                 logger.error("知识库搜索失败: %s", exc)
                 return self._empty_result()
 
-    def _search_herbs(self, keyword: str) -> list[dict]:
+    def _search_herbs(self, keyword):
+        # NOTE: 这里的LIKE查询没走索引，数据量大了会慢
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -102,7 +104,7 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_formulas(self, keyword: str) -> list[dict]:
+    def _search_formulas(self, keyword):
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -116,7 +118,7 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_patent_medicines(self, keyword: str) -> list[dict]:
+    def _search_patent_medicines(self, keyword):
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -130,7 +132,7 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_folk_remedies(self, keyword: str) -> list[dict]:
+    def _search_folk_remedies(self, keyword):
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -143,7 +145,7 @@ class KnowledgeBase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def _search_efficacy(self, keyword: str) -> list[dict]:
+    def _search_efficacy(self, keyword):
         results: list[dict[str, Any]] = []
         cursor = self.conn.cursor()
 

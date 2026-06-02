@@ -1,11 +1,4 @@
-"""
-KG 增强推荐器
-
-将 TCMNet 模型预测结果与知识图谱推理融合：
-  1. 模型预测 → 药材/方剂/证型分数
-  2. KG推理 → 症状→证型→推荐药材/方剂（含路径）
-  3. 融合 → 加权合并 + 图谱验证 + 推理路径解释
-"""
+"""KG 增强推荐器 — TCMNet 模型预测 + 知识图谱推理融合"""
 
 import logging
 from pathlib import Path
@@ -19,12 +12,6 @@ class KGEnhancedRecommender:
     """KG 增强推荐器（包装 TCMRecommender + 知识图谱）"""
 
     def __init__(self, model_recommender, kg_query, kg_config: dict | None = None):
-        """
-        Args:
-            model_recommender: TCMRecommender 实例
-            kg_query: KnowledgeGraphQuery 实例
-            kg_config: 融合参数
-        """
         self.model = model_recommender
         self.kg = kg_query
         self.cfg = kg_config or {
@@ -34,9 +21,7 @@ class KGEnhancedRecommender:
             "syndrome_weight": 0.3,  # 证型推荐路径权重
         }
 
-    # ═══════════════════════════════════════════
     # 主入口
-    # ═══════════════════════════════════════════
 
     def recommend(
         self, symptom_text: str, top_k_herb: int = 10, top_k_formula: int = 5
@@ -59,30 +44,30 @@ class KGEnhancedRecommender:
                 "kg_insights": {...},       # 图谱洞察
             }
         """
-        # ── 步骤1: 解析症状 ──
+        # 步骤1: 解析症状
         symptom_ids, valid_symptoms, unknown = self.model.parse_symptoms(symptom_text)
         if not symptom_ids:
             return self._error_result("未识别到有效症状", symptom_text)
 
-        # ── 步骤2: 模型预测 ──
+        # 步骤2: 模型预测
         model_result = self.model.recommend(symptom_ids, top_k_herb, top_k_formula)
 
-        # ── 步骤3: KG 推理（多条路径） ──
+        # 步骤3: KG 推理（多条路径）
         kg_result = self._kg_reasoning(valid_symptoms)
 
-        # ── 步骤4: 融合 ──
+        # 步骤4: 融合
         fused = self._fusion(model_result, kg_result, top_k_herb, top_k_formula)
 
         # 修复症状显示（从解析结果取）
         fused["symptoms"] = valid_symptoms
 
-        # ── 步骤5: 构建推理路径 ──
+        # 步骤5: 构建推理路径
         fused["reasoning_paths"] = self._build_paths(valid_symptoms, kg_result)
 
-        # ── 步骤6: 图谱洞察 ──
+        # 步骤6: 图谱洞察
         fused["kg_insights"] = self._kg_insights(fused["herbs"], fused["formulas"])
 
-        # ── 步骤7: 安全检查（KG增强） ──
+        # 步骤7: 安全检查（KG增强）
         herb_names = [h["name"] for h in fused["herbs"]]
         safety = self.model.check_safety(herb_names)
         # 补充KG禁忌检查
@@ -93,9 +78,7 @@ class KGEnhancedRecommender:
 
         return fused
 
-    # ═══════════════════════════════════════════
     # KG 推理
-    # ═══════════════════════════════════════════
 
     def _kg_reasoning(self, symptoms: list[str]) -> dict:
         """
@@ -169,16 +152,14 @@ class KGEnhancedRecommender:
 
         return result
 
-    # ═══════════════════════════════════════════
     # 融合
-    # ═══════════════════════════════════════════
 
     def _fusion(
         self, model_result: dict, kg_result: dict, top_k_herb: int, top_k_formula: int
     ) -> dict:
         """融合模型预测 + KG推理结果"""
 
-        # ── 药材融合 ──
+        # 药材融合
         herb_scores = {}  # name -> {"model_score": x, "kg_score": x, "boosted": bool}
 
         # 模型结果
@@ -235,7 +216,7 @@ class KGEnhancedRecommender:
 
         fused_herbs.sort(key=lambda x: -x["score"])
 
-        # ── 方剂融合（类似逻辑） ──
+        # 方剂融合（类似逻辑）
         formula_scores = {}
         for f in model_result.get("formulas", []):
             name = f["name"]
@@ -288,9 +269,7 @@ class KGEnhancedRecommender:
             "formulas": fused_formulas[:top_k_formula],
         }
 
-    # ═══════════════════════════════════════════
     # 可解释性：推理路径
-    # ═══════════════════════════════════════════
 
     def _build_paths(self, symptoms: list[str], kg_result: dict) -> list[dict]:
         """构建可读的推理路径"""
@@ -339,9 +318,7 @@ class KGEnhancedRecommender:
 
         return paths
 
-    # ═══════════════════════════════════════════
     # KG 洞察
-    # ═══════════════════════════════════════════
 
     def _kg_insights(self, herbs: list[dict], formulas: list[dict]) -> dict:
         """从 KG 提取额外洞察"""
@@ -385,9 +362,7 @@ class KGEnhancedRecommender:
                     warnings.append(f"{h}: 孕妇禁用")
         return warnings
 
-    # ═══════════════════════════════════════════
     # 工具
-    # ═══════════════════════════════════════════
 
     def _error_result(self, message: str, symptom_text: str) -> dict:
         return {

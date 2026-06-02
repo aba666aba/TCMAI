@@ -1,18 +1,7 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
-"""
-智能查询引擎
-
-实现多策略融合搜索：
-1. 同义词/近义词扩展查询
-2. 证型反向推导→方剂推荐
-3. 多关键词分拆组合搜索
-4. 模糊匹配（拼音/编辑距离）
-5. 结果去重融合与智能排序
-
-核心入口：IntelligentSearch.search()
-"""
+"""智能查询引擎 — 多策略融合搜索（同义词扩展+证型推理+模糊匹配）"""
 
 import logging
 import re
@@ -32,23 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class IntelligentSearch:
-    """智能搜索引擎
-
-    用法:
-        searcher = IntelligentSearch(kb)
-        result = searcher.search("最近睡不着还总没力气")
-        # result = {
-        #     "expanded_queries": [...],    # 扩展后的查询词列表
-        #     "identified_symptoms": [...],  # 识别到的标准症状
-        #     "inferred_syndromes": [...],   # 推断的证型
-        #     "recommended_formulas": [...], # 推荐的方剂（带推理路径）
-        #     "herbs": [...],                # 搜索到的药材
-        #     "formulas": [...],             # 搜索到的方剂
-        #     "patent_medicines": [...],
-        #     "folk_remedies": [...],
-        #     "search_summary": "...",       # 搜索摘要
-        # }
-    """
+    """智能搜索引擎，入口方法 search()"""
 
     def __init__(self, kb=None):
         self.kb = kb
@@ -96,7 +69,6 @@ class IntelligentSearch:
         return SYMPTOM_ALIAS_REVERSE_MAP
 
     def _build_alias_pattern(self) -> re.Pattern:
-        """构建所有口语别名的大正则（用于一次性检测所有症状）"""
         alias_map = self._get_alias_map()
         aliases = sorted(alias_map.keys(), key=len, reverse=True)
         pattern = "|".join(re.escape(a) for a in aliases)
@@ -189,8 +161,7 @@ class IntelligentSearch:
 
         return result
 
-    def _standardize_symptoms(self, query: str) -> list[str]:
-        """将口语化症状映射为标准症状术语"""
+    def _standardize_symptoms(self, query):
         found: set[str] = set()
         for alias, standard in self._get_alias_map().items():
             if alias in query:
@@ -203,16 +174,14 @@ class IntelligentSearch:
 
         return sorted(found)
 
-    def _detect_standard_symptoms(self, query: str) -> list[str]:
-        """检测查询中是否包含标准症状名"""
+    def _detect_standard_symptoms(self, query):
         found: list[str] = []
         for symptom in self._get_symptom_list():
             if symptom in query and symptom not in found:
                 found.append(symptom)
         return found
 
-    def _expand_syndrome_synonyms(self, query: str) -> list[str]:
-        """检测查询中的证型同义表达"""
+    def _expand_syndrome_synonyms(self, query):
         found: list[str] = []
         for key, synonyms in self._get_synonym_map().items():
             if key in query:
@@ -393,8 +362,8 @@ class IntelligentSearch:
                 "folk_remedies": [],
             }
 
+    # TODO: 这三个搜索方法结构几乎一样，后面重构合并成一个
     def _search_with_expansion(self, terms: list[str]) -> dict[str, list[dict]]:
-        """用多个扩展词分别搜索，合并结果"""
         merged: dict[str, dict[int, dict]] = {
             "herbs": {},
             "formulas": {},
@@ -416,7 +385,6 @@ class IntelligentSearch:
         }
 
     def _search_with_symptoms(self, symptoms: list[str]) -> dict[str, list[dict]]:
-        """用标准症状搜索功效和主治"""
         if not symptoms or self.kb is None:
             return {
                 "herbs": [],
@@ -447,7 +415,6 @@ class IntelligentSearch:
     def _search_with_syndrome_terms(
         self, syndrome_terms: list[str]
     ) -> dict[str, list[dict]]:
-        """用证型相关词搜索"""
         if not syndrome_terms or self.kb is None:
             return {
                 "herbs": [],
@@ -479,9 +446,7 @@ class IntelligentSearch:
     # 结果融合与排序
     # ================================================================
 
-    def _merge_raw_results(
-        self, strategy_results: list[tuple[str, dict, float]]
-    ) -> dict[str, list[dict]]:
+    def _merge_raw_results(self, strategy_results):
         """合并多个策略的搜索结果"""
         merged: dict[str, dict[int, dict]] = {
             "herbs": {},
@@ -499,14 +464,8 @@ class IntelligentSearch:
 
         return {category: list(items.values()) for category, items in merged.items()}
 
-    def _fuse_and_rank(
-        self,
-        query: str,
-        symptoms: list[str],
-        inferred_formulas: list[dict[str, Any]],
-        inferred_syndromes: list[dict[str, Any]],
-        multi_results: dict[str, list[dict]],
-    ) -> dict[str, Any]:
+    def _fuse_and_rank(self, query, symptoms, inferred_formulas,
+                       inferred_syndromes, multi_results):
         """融合搜索结果并加入推荐方剂和推理路径"""
 
         # --- 标注方剂匹配来源 ---

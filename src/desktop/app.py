@@ -4,8 +4,10 @@
 
 import json
 import logging
+import os
 import queue
 import threading
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
@@ -51,14 +53,14 @@ class DesktopApp:
     FONT_SECTION = ("Microsoft YaHei UI", 19, "bold")
     FONT_HERO_SUB = ("Microsoft YaHei UI", 17)
 
-    # ── 窗口配置 ──
-    def _configure_root(self) -> None:
+    # 窗口配置
+    def _configure_root(self):
         self.root.title("中医药智能问答系统")
         self.root.minsize(1080, 720)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # ── 整体布局 ──
-    def _build_layout(self) -> None:
+    # 整体布局
+    def _build_layout(self):
         # 外层容器
         container = ctk.CTkFrame(self.root, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=20, pady=(16, 16))
@@ -106,10 +108,9 @@ class DesktopApp:
         self._build_history_tab()
         self._build_about_tab()
 
-    # ═══════════════════════════════════════════
     # 首页
-    # ═══════════════════════════════════════════
     def _build_home_tab(self) -> None:
+        # FIXME: 低分辨率下标签页显示不全，需要响应式布局
         container = ctk.CTkScrollableFrame(self.home_tab, fg_color="transparent")
         container.pack(fill="both", expand=True)
 
@@ -288,9 +289,7 @@ class DesktopApp:
             text_color=("#7a5a16", "#c8a050"),
         ).pack(anchor="w", padx=14, pady=(0, 6))
 
-    # ═══════════════════════════════════════════
     # 知识图谱标签页
-    # ═══════════════════════════════════════════
     def _build_kg_tab(self) -> None:
         if not HAS_KG:
             ctk.CTkLabel(
@@ -330,9 +329,7 @@ class DesktopApp:
                 text_color="#e74c3c",
             ).pack(expand=True)
 
-    # ═══════════════════════════════════════════
     # 知识管理标签页
-    # ═══════════════════════════════════════════
     def _build_km_tab(self) -> None:
         try:
             from desktop.knowledge_manager import KnowledgeManagerView
@@ -348,9 +345,7 @@ class DesktopApp:
                 text_color="#e74c3c",
             ).pack(expand=True)
 
-    # ═══════════════════════════════════════════
     # 历史记录标签页
-    # ═══════════════════════════════════════════
     def _build_history_tab(self) -> None:
         wrapper = ctk.CTkFrame(self.history_tab, fg_color="transparent")
         wrapper.pack(fill="both", expand=True)
@@ -478,9 +473,7 @@ class DesktopApp:
         )
         self.history_detail.configure(state="disabled")
 
-    # ═══════════════════════════════════════════
     # 关于标签页
-    # ═══════════════════════════════════════════
     def _build_about_tab(self) -> None:
         # 外层滚动区
         about_frame = ctk.CTkScrollableFrame(self.about_tab, corner_radius=8)
@@ -549,10 +542,8 @@ class DesktopApp:
                 font=self.FONT_SMALL,
             ).pack(anchor="w", padx=18, pady=(0, 14))
 
-    # ═══════════════════════════════════════════
     # 工具方法
-    # ═══════════════════════════════════════════
-    def _set_text(self, widget: ctk.CTkTextbox, value: str) -> None:
+    def _set_text(self, widget, value):
         widget.configure(state="normal")
         widget.delete("1.0", "end")
         widget.insert("1.0", value.strip() if value else "")
@@ -565,13 +556,11 @@ class DesktopApp:
         self.query_input.insert("1.0", updated)
         self.query_input.focus_set()
 
-    def _clear_query(self) -> None:
+    def _clear_query(self):
         self.query_input.delete("1.0", "end")
         self.status_var.set("输入已清空")
 
-    # ═══════════════════════════════════════════
     # NLU 模型预加载
-    # ═══════════════════════════════════════════
     def _start_nlu_preload(self) -> None:
         from desktop.service import preload_nlu_async
 
@@ -604,9 +593,7 @@ class DesktopApp:
             self.status_var.set(f"⏳ AI 模型加载中…（已等待 {elapsed:.0f} 秒）")
         self.root.after(1000, self._poll_nlu_status)
 
-    # ═══════════════════════════════════════════
     # 查询逻辑
-    # ═══════════════════════════════════════════
     def _submit_query(self) -> None:
         from desktop.service import is_nlu_loading, is_nlu_ready, get_nlu_status
 
@@ -736,9 +723,7 @@ class DesktopApp:
                 logger.exception("首页知识图谱展示失败")
                 self.status_var.set(f"⚠ 知识图谱加载失败: {exc}")
 
-    # ═══════════════════════════════════════════
     # 历史记录管理
-    # ═══════════════════════════════════════════
     def _load_history(self) -> None:
         search = (
             self.history_search_var.get().strip().lower()
@@ -860,7 +845,7 @@ class DesktopApp:
         except Exception as exc:
             messagebox.showerror("导出失败", str(exc))
 
-    def _on_close(self) -> None:
+    def _on_close(self):
         self.service.close()
         self.root.destroy()
 

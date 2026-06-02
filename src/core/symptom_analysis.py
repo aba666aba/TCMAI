@@ -2,12 +2,7 @@
 # Licensed under Apache License 2.0
 # See LICENSE file for details
 
-"""
-症状分析模块
-
-原创功能：症状组合分析、证型判断、禁忌校验
-所有数据定义从 tcm_config 统一读取（SYNDROME_DEFINITIONS 9 证型）。
-"""
+"""症状分析 — 组合分析、证型判断、禁忌校验"""
 
 import logging
 from dataclasses import dataclass
@@ -76,7 +71,6 @@ class SymptomAnalyzer:
         }
 
     def _standardize_symptoms(self, symptoms: list[str]) -> list[SymptomInfo]:
-        """将日常用语映射到中医专业术语"""
         standardized = []
         for symptom in symptoms:
             std_name = self.symptom_map.get(symptom, symptom)
@@ -98,7 +92,6 @@ class SymptomAnalyzer:
         return standardized
 
     def _identify_syndromes(self, symptoms: list[SymptomInfo]) -> list[SyndromeResult]:
-        """证型判断（基于 SYNDROME_DEFINITIONS 9 证型）"""
         symptom_names: set[str] = {s.standardized_name for s in symptoms}
         results = []
 

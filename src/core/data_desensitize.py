@@ -2,14 +2,7 @@
 # Licensed under Apache License 2.0
 # See LICENSE file for details
 
-"""
-数据脱敏模块
-
-原创功能：用户数据脱敏、隐私保护、日志匿名化
-
-注意：脱敏规则会误伤中医药术语（如"黄芪"被当作"黄"姓姓名），
-因此维护 TCM_WHITELIST 白名单，匹配到白名单中的词条时跳过姓名脱敏。
-"""
+"""数据脱敏 — 用户隐私保护、日志匿名化（含中医药白名单防误伤）"""
 
 import hashlib
 import logging
@@ -18,7 +11,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ── 中医药专用白名单 ──────────────────────────────
+# 中医药专用白名单
 # 这些词虽符合"姓氏+1~2汉字"的姓名格式，但实际是中药/方剂名称，
 # 脱敏姓名正则不应匹配它们。从 tcm_config 提取。
 TCM_WHITELIST: set[str] = {

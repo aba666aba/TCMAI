@@ -24,7 +24,7 @@ def _resolve_default_model_path() -> str:
         "models", "nlu", "qwen"
     )
 
-# ── 系统提示词 ──
+# 系统提示词
 _SYSTEM_PROMPT = """你是一位中医药症状提取专家。你的任务是从患者的病情描述中**完整地提取所有症状**，并映射到标准症状名称。
 
 规则：

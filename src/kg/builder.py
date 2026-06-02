@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import networkx as nx
+# import matplotlib.pyplot as plt  # 调试用，发布时移除
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,9 @@ class TCMKnowledgeGraph:
             "edges": {},
         }
 
-    # ═══════════════════════════════════════════
     # 构建入口
-    # ═══════════════════════════════════════════
 
     def build(self) -> "TCMKnowledgeGraph":
-        """构建完整知识图谱"""
         logger.info("=" * 50)
         logger.info("TCM 知识图谱构建开始")
 
@@ -117,9 +115,7 @@ class TCMKnowledgeGraph:
         )
         return self
 
-    # ═══════════════════════════════════════════
     # 1. 证型 + 症状
-    # ═══════════════════════════════════════════
 
     def _add_symptoms_and_syndromes_nodes(self):
         """添加症状和证型节点（不含推荐边）"""
@@ -195,9 +191,7 @@ class TCMKnowledgeGraph:
                         label="推荐方剂",
                     )
 
-    # ═══════════════════════════════════════════
     # 2. 药材
-    # ═══════════════════════════════════════════
 
     def _add_herbs(self):
         """从数据库添加药材节点"""
@@ -243,9 +237,7 @@ class TCMKnowledgeGraph:
                 )
         self.stats["nodes"]["Herb"] = len(rows)
 
-    # ═══════════════════════════════════════════
     # 3. 方剂
-    # ═══════════════════════════════════════════
 
     def _add_formulas(self):
         """从数据库添加方剂节点"""
@@ -275,9 +267,7 @@ class TCMKnowledgeGraph:
             )
         self.stats["nodes"]["Formula"] = len(rows)
 
-    # ═══════════════════════════════════════════
     # 4. 中成药
-    # ═══════════════════════════════════════════
 
     def _add_patent_medicines(self):
         conn = self._db
@@ -304,9 +294,7 @@ class TCMKnowledgeGraph:
             )
         self.stats["nodes"]["PatentMedicine"] = len(rows)
 
-    # ═══════════════════════════════════════════
     # 5. 验方
-    # ═══════════════════════════════════════════
 
     def _add_folk_remedies(self):
         conn = self._db
@@ -331,9 +319,7 @@ class TCMKnowledgeGraph:
             )
         self.stats["nodes"]["FolkRemedy"] = len(rows)
 
-    # ═══════════════════════════════════════════
     # 6. 药材属性（性味归经）
-    # ═══════════════════════════════════════════
 
     def _add_herb_attributes(self):
         """从药材的 nature/flavor/meridian 字段提取属性节点"""
@@ -410,9 +396,7 @@ class TCMKnowledgeGraph:
             ]
         )
 
-    # ═══════════════════════════════════════════
     # 7. 症状-药材/方剂 关联
-    # ═══════════════════════════════════════════
 
     def _add_symptom_herb_associations(self, pipeline):
         """从改进后的 pipeline 加载关联矩阵"""
@@ -472,9 +456,7 @@ class TCMKnowledgeGraph:
                         fml_edge_count += 1
         logger.info("  症状→方剂: %s 边", fml_edge_count)
 
-    # ═══════════════════════════════════════════
     # 8. 方剂组成（药材→方剂）
-    # ═══════════════════════════════════════════
 
     def _add_formula_compositions(self, pipeline):
         """解析方剂组成，构建药材→方剂边"""
@@ -500,9 +482,7 @@ class TCMKnowledgeGraph:
                     edge_count += 1
         logger.info("  药材→方剂(组成): %s 边", edge_count)
 
-    # ═══════════════════════════════════════════
     # 9. 配伍禁忌
-    # ═══════════════════════════════════════════
 
     def _add_incompatibilities(self):
         """添加十八反十九畏 和 毒性"""
@@ -542,11 +522,10 @@ class TCMKnowledgeGraph:
             if name in toxic_set:
                 self.graph.nodes[nid]["toxic"] = True
 
-    # ═══════════════════════════════════════════
     # 10. 药材共现
-    # ═══════════════════════════════════════════
 
     def _add_cooccurrence(self, pipeline):
+        # TODO: 共现矩阵构建太慢，大数据量时需要优化
         """添加方剂内药材共现关系（Top 1000 最显著）"""
 
         cooc = pipeline.herb_cooccurrence
@@ -574,9 +553,7 @@ class TCMKnowledgeGraph:
                         edge_count += 1
         logger.info("  药材共现: %s 边 (阈值>%.1f)", edge_count, threshold)
 
-    # ═══════════════════════════════════════════
     # 工具方法
-    # ═══════════════════════════════════════════
 
     def close(self):
         """关闭数据库连接"""

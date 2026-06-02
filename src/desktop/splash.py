@@ -61,7 +61,7 @@ class SplashScreen:
         )
         self._sub_label.place(relx=0.5, rely=0.55, anchor="center")
 
-        # ── 右下方强制中止按钮（防止卡顿无法退出） ──
+        # 右下方强制中止按钮（防止卡顿无法退出）
         self._kill_btn = ctk.CTkButton(
             outer,
             text="强制中止",
@@ -96,7 +96,7 @@ class SplashScreen:
         progress = 1.0 - (self._current_step / self.STEPS)
 
         if progress < self.PHASE1_END:
-            # ── 阶段一：文字融入背景 ──
+            # 阶段一：文字融入背景
             t = progress / self.PHASE1_END  # 0→1 within phase 1
             # 标题：金色 → 背景色
             title_color = _lerp_color(self.ACCENT, self.BG_DEEP, t)
@@ -110,7 +110,7 @@ class SplashScreen:
             # 标题微微上移
             self._title_label.place(relx=0.5, rely=0.45 - t * 40 / 600, anchor="center")
         else:
-            # ── 阶段二：窗口透明度淡出 ──
+            # 阶段二：窗口透明度淡出
             t = (progress - self.PHASE1_END) / (1.0 - self.PHASE1_END)
             alpha = 1.0 - t
             try:

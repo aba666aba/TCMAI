@@ -168,9 +168,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
         }
         self._edge_mode = tk.StringVar(value="all")
 
-    # ═══════════════════════════════════════════
     # UI 构建
-    # ═══════════════════════════════════════════
 
     def _build_ui(self):
         if self.standalone:
@@ -456,9 +454,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
                 font=("Microsoft YaHei UI", 16),
             ).pack(side="left")
 
-    # ═══════════════════════════════════════════
     # 图谱加载与绘制
-    # ═══════════════════════════════════════════
 
     def _load_graph(self):
         if self.graph is not None:
@@ -1224,9 +1220,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
             self.query = None
             self._reset_view()
 
-    # ═══════════════════════════════════════════
     # 外部接口：展示查询结果
-    # ═══════════════════════════════════════════
 
     def show_query_result(
         self,

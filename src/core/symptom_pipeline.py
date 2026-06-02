@@ -7,6 +7,7 @@
 提供单一入口：症状检测 → 标准化 → 证型推断 → 禁忌检查。
 """
 
+import json
 import logging
 
 from core.symptom_analysis import SymptomAnalyzer

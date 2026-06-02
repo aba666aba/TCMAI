@@ -2,11 +2,7 @@
 # Licensed under Apache License 2.0
 # See LICENSE file for details
 
-"""
-结果校验模块
-
-原创功能：问答结果溯源、合规提示添加、内容过滤
-"""
+"""结果校验 — 溯源、合规提示、内容过滤"""
 
 import logging
 import re
@@ -17,11 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ResultVerifier:
-    """
-    结果校验器
-
-    负责对 AI 生成的回答进行校验、溯源和合规处理
-    """
+    """结果校验器 — AI 回答的溯源和合规处理"""
 
     def __init__(self):
         """初始化校验器"""
@@ -86,16 +78,7 @@ class ResultVerifier:
         logger.info("回答校验完成")
         return result
 
-    def _filter_content(self, content: str) -> str:
-        """
-        过滤不当内容
-
-        Args:
-            content: 原始内容
-
-        Returns:
-            过滤后的内容
-        """
+    def _filter_content(self, content):
         filtered = content
 
         for pattern in self.sensitive_patterns:
@@ -108,17 +91,7 @@ class ResultVerifier:
 
         return filtered
 
-    def _add_source(self, answer: str, knowledge: dict = None) -> str:
-        """
-        添加溯源信息
-
-        Args:
-            answer: 回答内容
-            knowledge: 知识库信息
-
-        Returns:
-            添加溯源后的回答
-        """
+    def _add_source(self, answer, knowledge=None):
         if not knowledge:
             return answer
 
@@ -168,16 +141,7 @@ class ResultVerifier:
 
         return "; ".join(parts) if parts else "暂无相关知识"
 
-    def _check_warning(self, content: str) -> bool:
-        """
-        检查是否需要特别警告
-
-        Args:
-            content: 内容
-
-        Returns:
-            是否需要警告
-        """
+    def _check_warning(self, content):
         warning_keywords = [
             '毒性',
             '禁忌',
