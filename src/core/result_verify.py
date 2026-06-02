@@ -108,7 +108,7 @@ class ResultVerifier:
     def _generate_disclaimer(self) -> str:
         return " ".join(self.disclaimer_templates)
 
-    def _extract_knowledge(self, knowledge: dict = None) -> str:
+    def _extract_knowledge(self, knowledge=None):
         if not knowledge:
             return "暂无相关知识"
 
