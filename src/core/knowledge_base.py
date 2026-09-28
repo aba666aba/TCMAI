@@ -9,7 +9,16 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeBase:
+    """中医药知识库，封装 SQLite 查询。所有公开方法线程安全（内部用 RLock）。"""
+
     def __init__(self, db_path: str = None):
+        """初始化知识库连接。
+
+        Args:
+            db_path: 数据库文件路径。为空时按优先级自动查找：
+                     环境变量 TCMAI_ROOT > frozen exe 同级 > 源码上级 data/
+        """
+        # 数据库路径降级链：环境变量 → 打包exe目录 → 源码目录
         if db_path is None:
             tcm_root = os.environ.get("TCMAI_ROOT")
             if tcm_root:
@@ -18,8 +27,10 @@ class KnowledgeBase:
                 import sys
 
                 if getattr(sys, "frozen", False):
+                    # PyInstaller 打包后，exe 和 data/ 在同一目录
                     base_path = Path(sys.executable).parent
                 else:
+                    # 开发环境：向上两级到 TCMAI 根目录
                     base_path = Path(__file__).resolve().parents[2]
                 db_path = base_path / "data" / "tcm_knowledge.db"
 

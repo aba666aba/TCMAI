@@ -1,0 +1,79 @@
+{
+  "method": "独立评估(教科书ground truth) — 训练/测试标签均源自7层关联矩阵",
+  "test_cases": 14,
+  "metrics": {
+    "association_matrix_based_recall@10": "80-85%",
+    "independent_textbook_recall@10": "22.4%"
+  },
+  "gap_analysis": "约58个百分点差距表明: 模型学到了关联矩阵规则, 对独立的中医临床知识泛化有限",
+  "best_weight": "DL=0.4/KG=0.6",
+  "boost_effect": "几乎无影响(模型+KG推荐基本不重叠)",
+  "weight_results": [
+    {
+      "mw": 1.0,
+      "kw": 0.0,
+      "precision": 0.1143,
+      "recall": 0.2119
+    },
+    {
+      "mw": 0.9,
+      "kw": 0.1,
+      "precision": 0.1143,
+      "recall": 0.2119
+    },
+    {
+      "mw": 0.8,
+      "kw": 0.2,
+      "precision": 0.1143,
+      "recall": 0.2119
+    },
+    {
+      "mw": 0.7,
+      "kw": 0.3,
+      "precision": 0.1143,
+      "recall": 0.2119
+    },
+    {
+      "mw": 0.6,
+      "kw": 0.4,
+      "precision": 0.1143,
+      "recall": 0.2119
+    },
+    {
+      "mw": 0.5,
+      "kw": 0.5,
+      "precision": 0.1143,
+      "recall": 0.2119
+    },
+    {
+      "mw": 0.4,
+      "kw": 0.6,
+      "precision": 0.1214,
+      "recall": 0.2238
+    },
+    {
+      "mw": 0.3,
+      "kw": 0.7,
+      "precision": 0.1214,
+      "recall": 0.2238
+    },
+    {
+      "mw": 0.2,
+      "kw": 0.8,
+      "precision": 0.1214,
+      "recall": 0.2238
+    },
+    {
+      "mw": 0.1,
+      "kw": 0.9,
+      "precision": 0.1214,
+      "recall": 0.2238
+    },
+    {
+      "mw": 0.0,
+      "kw": 1.0,
+      "precision": 0.1214,
+      "recall": 0.2238
+    }
+  ]
+}

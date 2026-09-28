@@ -1,11 +1,7 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
-"""
-中医药推荐系统 - 训练脚本
-
-管线：数据加载 -> 特征构建 -> 模型训练 -> 评估保存
-"""
+"""训练脚本 — 数据加载 -> 特征构建 -> 模型训练 -> 评估保存"""
 
 import argparse
 import json
@@ -34,15 +30,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── 常量 ─────────────────────────────────────────
+# 常量
 MAX_SYMPTOMS = 32
 NATURE_LIST = ["寒", "热", "温", "凉", "平"]
 FLAVOR_LIST = ["酸", "苦", "甘", "辛", "咸"]
 
 
-# ═══════════════════════════════════════════════════════════
 # 数据集
-# ═══════════════════════════════════════════════════════════
 
 
 class TCMDataset(Dataset):
@@ -84,9 +78,7 @@ class TCMDataset(Dataset):
         }
 
 
-# ═══════════════════════════════════════════════════════════
 # 药材特征构建
-# ═══════════════════════════════════════════════════════════
 
 
 def build_herb_features(pipeline: TCMDataPipeline) -> dict[str, torch.Tensor]:
@@ -178,9 +170,7 @@ def build_herb_features(pipeline: TCMDataPipeline) -> dict[str, torch.Tensor]:
     }
 
 
-# ═══════════════════════════════════════════════════════════
 # 训练器
-# ═══════════════════════════════════════════════════════════
 
 
 class Trainer:
@@ -554,9 +544,7 @@ class Trainer:
         logger.info("模型已保存: %s", path)
 
 
-# ═══════════════════════════════════════════════════════════
 # 主函数
-# ═══════════════════════════════════════════════════════════
 
 
 def main():
@@ -588,7 +576,7 @@ def main():
     device = torch.device(args.device)
     logger.info("设备: %s", device)
 
-    # ═══ 1. 数据 ═══
+    # 1. 数据
     data_path = Path(args.data)
     if not data_path.exists():
         logger.info("生成训练数据 (%s 样本)...", args.samples)
@@ -653,7 +641,7 @@ def main():
     )
     logger.info("训练集: %s | 验证集: %s", n_train, n_val)
 
-    # ═══ 2. 特征（优先从 npz 加载缓存，无需重复连接数据库） ═══
+    # 2. 特征（优先从 npz 加载缓存，无需重复连接数据库）
     herb_feat_data = data.get("herb_features")
     if herb_feat_data is not None:
         logger.info("从 npz 加载缓存的药材特征...")
@@ -676,7 +664,7 @@ def main():
         herb_feat = build_herb_features(pipeline)
         pipeline.close()
 
-    # ═══ 3. 模型 ═══
+    # 3. 模型
     logger.info("创建模型...")
     model = create_model(
         num_symptoms=n_symptoms,
@@ -691,7 +679,7 @@ def main():
         dropout=0.1,
     )
 
-    # ═══ 4. 训练 ═══
+    # 4. 训练
     trainer = Trainer(
         model,
         herb_feat,
@@ -704,7 +692,7 @@ def main():
         train_loader, val_loader, epochs=args.epochs, save_prefix="best_model"
     )
 
-    # ═══ 5. 最终测试 ═══
+    # 5. 最终测试
     logger.info("最终测试...")
     checkpoint = torch.load(args.output, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])

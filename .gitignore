@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+
+# ---- 构建与打包产物 ----
+build/
+dist/
+installer_output/
+*.spec
+
+# ---- 模型权重与缓存 (体积大，不入库) ----
+*.safetensors
+*.pth
+*.pkl
+*.msc
+*.mv
+*.mdl
+
+# ---- 本地工具与运行时产物 ----
+.qwen/
+logs/
+*.log
+*.lock
+data/font_test.txt
+data/kg_test_full.txt

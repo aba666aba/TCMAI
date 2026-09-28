@@ -4,6 +4,7 @@
 
 """症状分析 — 组合分析、证型判断、禁忌校验"""
 
+import json
 import logging
 from dataclasses import dataclass
 
@@ -119,7 +120,7 @@ class SymptomAnalyzer:
         logger.info("证型判断完成：%s", [r.syndrome_name for r in results])
         return results
 
-    def _check_contraindications(self, syndromes: list[SyndromeResult]) -> list[str]:
+    def _check_contraindications(self, syndromes):
         warnings = []
         for syndrome in syndromes:
             name = syndrome.syndrome_name
@@ -134,7 +135,7 @@ class SymptomAnalyzer:
         logger.info("禁忌检查完成：%s", warnings)
         return warnings
 
-    def _generate_suggestions(self, syndromes: list[SyndromeResult]) -> list[str]:
+    def _generate_suggestions(self, syndromes):
         suggestions = []
 
         if not syndromes:

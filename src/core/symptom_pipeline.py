@@ -1,11 +1,7 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
-"""
-统一症状处理管线
-
-提供单一入口：症状检测 → 标准化 → 证型推断 → 禁忌检查。
-"""
+"""统一症状处理管线 — 症状检测 → 标准化 → 证型推断 → 禁忌检查"""
 
 import json
 import logging

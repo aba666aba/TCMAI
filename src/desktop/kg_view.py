@@ -368,7 +368,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
             v.set(True)
         self._redraw_current()
 
-    def _get_active_edges(self) -> set:
+    def _get_active_edges(self):
         mode = self._edge_mode.get()
         all_edges = {
             "belongs_to",

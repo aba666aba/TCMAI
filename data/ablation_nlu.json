@@ -1,0 +1,335 @@
+{
+  "test_count": 30,
+  "precision_type": "cpu_float32",
+  "exact_match_rate": 0.43333333333333335,
+  "at_least_one_hit_rate": 0.75,
+  "precision_micro": 0.575,
+  "recall_micro": 0.5111111111111111,
+  "f1_micro": 0.5411764705882353,
+  "avg_inference_time_s": 18.756666666666668,
+  "details": [
+    {
+      "text": "睡不着觉",
+      "expected": [
+        "失眠"
+      ],
+      "predicted": [
+        "失眠"
+      ],
+      "time": 17.2
+    },
+    {
+      "text": "晚上翻来覆去睡不着",
+      "expected": [
+        "失眠"
+      ],
+      "predicted": [
+        "失眠"
+      ],
+      "time": 17.9
+    },
+    {
+      "text": "头疼得厉害",
+      "expected": [
+        "头痛"
+      ],
+      "predicted": [
+        "头痛"
+      ],
+      "time": 20.0
+    },
+    {
+      "text": "吃不下饭",
+      "expected": [
+        "食欲不振"
+      ],
+      "predicted": [
+        "食积"
+      ],
+      "time": 22.3
+    },
+    {
+      "text": "没胃口什么都不想吃",
+      "expected": [
+        "食欲不振"
+      ],
+      "predicted": [
+        "食欲不振"
+      ],
+      "time": 18.2
+    },
+    {
+      "text": "肚子咕噜咕噜响拉稀",
+      "expected": [
+        "腹泻"
+      ],
+      "predicted": [
+        "腹胀"
+      ],
+      "time": 18.2
+    },
+    {
+      "text": "浑身没劲",
+      "expected": [
+        "乏力"
+      ],
+      "predicted": [
+        "乏力"
+      ],
+      "time": 18.1
+    },
+    {
+      "text": "走几步路就喘不上气",
+      "expected": [
+        "气短"
+      ],
+      "predicted": [
+        "气短"
+      ],
+      "time": 18.3
+    },
+    {
+      "text": "咳嗽有黄痰",
+      "expected": [
+        "咳嗽",
+        "咳痰"
+      ],
+      "predicted": [
+        "咳嗽",
+        "黄痰"
+      ],
+      "time": 18.3
+    },
+    {
+      "text": "胸口闷得慌",
+      "expected": [
+        "胸闷"
+      ],
+      "predicted": [
+        "胸闷"
+      ],
+      "time": 18.1
+    },
+    {
+      "text": "手脚冰凉",
+      "expected": [
+        "手足不温"
+      ],
+      "predicted": [
+        "畏寒"
+      ],
+      "time": 18.2
+    },
+    {
+      "text": "腰酸得直不起来",
+      "expected": [
+        "腰膝酸软"
+      ],
+      "predicted": [
+        "腰痛"
+      ],
+      "time": 18.2
+    },
+    {
+      "text": "晚上老起来上厕所",
+      "expected": [
+        "夜尿多"
+      ],
+      "predicted": [
+        "夜尿多"
+      ],
+      "time": 18.2
+    },
+    {
+      "text": "心烦意乱坐立不安",
+      "expected": [
+        "心烦"
+      ],
+      "predicted": [
+        "心烦"
+      ],
+      "time": 18.1
+    },
+    {
+      "text": "眼睛发红",
+      "expected": [
+        "目赤"
+      ],
+      "predicted": [
+        "眼红"
+      ],
+      "time": 18.0
+    },
+    {
+      "text": "耳鸣",
+      "expected": [
+        "耳鸣"
+      ],
+      "predicted": [
+        "耳鸣"
+      ],
+      "time": 18.1
+    },
+    {
+      "text": "鼻塞不通气",
+      "expected": [
+        "鼻塞"
+      ],
+      "predicted": [
+        "鼻塞"
+      ],
+      "time": 18.1
+    },
+    {
+      "text": "口苦",
+      "expected": [
+        "口苦"
+      ],
+      "predicted": [
+        "口苦"
+      ],
+      "time": 18.1
+    },
+    {
+      "text": "胃胀不想吃东西还便秘",
+      "expected": [
+        "腹胀",
+        "食欲不振",
+        "便秘"
+      ],
+      "predicted": [
+        "胃胀",
+        "便秘"
+      ],
+      "time": 18.7
+    },
+    {
+      "text": "腰酸腿软怕冷",
+      "expected": [
+        "腰膝酸软",
+        "畏寒"
+      ],
+      "predicted": [
+        "腰腿酸软",
+        "畏寒"
+      ],
+      "time": 18.8
+    },
+    {
+      "text": "口干手心发热晚上出汗",
+      "expected": [
+        "口干",
+        "五心烦热",
+        "盗汗"
+      ],
+      "predicted": [
+        "口干",
+        "手心热",
+        "夜间出汗"
+      ],
+      "time": 19.0
+    },
+    {
+      "text": "心慌气短走几步就喘",
+      "expected": [
+        "心悸",
+        "气短",
+        "乏力"
+      ],
+      "predicted": [
+        "心慌",
+        "气短"
+      ],
+      "time": 19.0
+    },
+    {
+      "text": "头晕耳鸣腰酸",
+      "expected": [
+        "头晕",
+        "耳鸣",
+        "腰膝酸软"
+      ],
+      "predicted": [
+        "头晕",
+        "耳鸣",
+        "腰酸"
+      ],
+      "time": 19.4
+    },
+    {
+      "text": "失眠多梦白天头晕没精神",
+      "expected": [
+        "失眠",
+        "多梦",
+        "头晕",
+        "乏力"
+      ],
+      "predicted": [
+        "失眠",
+        "头晕"
+      ],
+      "time": 26.5
+    },
+    {
+      "text": "最近压力大",
+      "expected": [],
+      "predicted": [
+        "压力"
+      ],
+      "time": 19.0
+    },
+    {
+      "text": "整个人都不好了",
+      "expected": [],
+      "predicted": [
+        "虚弱"
+      ],
+      "time": 18.0
+    },
+    {
+      "text": "上火了",
+      "expected": [
+        "发热",
+        "咽喉肿痛",
+        "口干"
+      ],
+      "predicted": [
+        "口干",
+        "口渴"
+      ],
+      "time": 18.4
+    },
+    {
+      "text": "湿气重",
+      "expected": [
+        "便溏",
+        "水肿",
+        "乏力"
+      ],
+      "predicted": [
+        "湿重"
+      ],
+      "time": 18.0
+    },
+    {
+      "text": "拉肚子",
+      "expected": [
+        "腹泻"
+      ],
+      "predicted": [
+        "腹泻"
+      ],
+      "time": 18.1
+    },
+    {
+      "text": "吃一点就饱了",
+      "expected": [
+        "食欲不振"
+      ],
+      "predicted": [
+        "[\"饱"
+      ],
+      "time": 18.2
+    }
+  ]
+}

@@ -1,9 +1,5 @@
-"""
-数据库扩充脚本 — 基于中药学/方剂学标准知识，扩充药材和方剂数据。
-
-药材: (name, category, nature, flavor, meridian, efficacy, indications, usage, contraindications)
-方剂: (name, category, source_book, composition, functions, indications, usage, modification)
-"""
+# -*- coding: utf-8 -*-
+"""数据库扩充脚本 — 基于中药学/方剂学标准知识扩充药材和方剂"""
 
 import sqlite3
 from pathlib import Path

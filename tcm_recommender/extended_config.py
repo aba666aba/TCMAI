@@ -1,11 +1,7 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
-"""
-扩展症状、证型定义（基于《中药学》《方剂学》教材）
-症状: 200 种
-证型: 17 种
-"""
+"""扩展症状/证型定义（200 症状, 17 证型）"""
 
 # NLU 输出→标准症状别名映射（处理 NLU 与推荐模型词表差异）
 SYMPTOM_ALIAS_MAP: dict[str, str] = {

@@ -1,19 +1,7 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
-"""
-中医药推荐系统 - 深度学习模型
-
-架构：
-  SymptomEncoder (6层Transformer, 512dim, 8heads)
-     + Embedding + PositionalEncoding
-     + x6 TransformerEncoderLayer (GELU, PreLN)
-     + AttentivePooling -> [B, 512]
-  HerbEncoder (双塔: 文本特征 + 属性编码)
-  CrossAttention (症状x药材交互)
-  MultiTaskHeads (证型/药材/方剂三头)
-  ContrastiveLoss (InfoNCE)
-"""
+"""TCMNet 深度学习模型 — Transformer + 双塔CNN + 交叉注意力 + 多任务学习"""
 
 from typing import Optional
 
@@ -32,15 +20,26 @@ if str(_src) not in sys.path:
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════
 # 基础组件
-# ═══════════════════════════════════════════════════════════
 
 class PreLayerNormTransformerEncoderLayer(nn.Module):
-    """Pre-LN Transformer Encoder Layer (更稳定的训练)"""
+    """Pre-LN Transformer Encoder Layer
+
+    与标准 Post-LN 不同，这里把 LayerNorm 放在 attention/FFN 之前（Pre-LN），
+    残差连接后不再归一化。好处是梯度流更稳定，深层网络不容易梯度消失，
+    训练初期收敛更快。这也是 GPT-2、BERT-wwm 等后续模型采用的方案。
+    """
 
     def __init__(self, d_model: int, nhead: int, dim_feedforward: int = 2048,
                  dropout: float = 0.1, activation: str = "gelu"):
+        """
+        Args:
+            d_model: 每个 token 的特征维度
+            nhead: 多头注意力的头数（d_model 必须能被 nhead 整除）
+            dim_feedforward: FFN 中间层维度，通常是 d_model 的 4 倍
+            dropout: 注意力和 FFN 的 dropout 概率
+            activation: FFN 激活函数，"gelu" 或 "relu"
+        """
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,
@@ -55,14 +54,23 @@ class PreLayerNormTransformerEncoderLayer(nn.Module):
 
     def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None,
                 src_key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # Pre-LN + Attention
+        """
+        Args:
+            src: 输入序列 [batch, seq_len, d_model]
+            src_mask: 注意力掩码（本项目未使用，预留接口）
+            src_key_padding_mask: padding 位置标记 [batch, seq_len]，True 表示该位置是 padding
+
+        Returns:
+            与输入同维度的输出 [batch, seq_len, d_model]
+        """
+        # Pre-LN: 先归一化再做 attention，残差连接在归一化之前
         residual = src
         src_normed = self.norm1(src)
         attn_out, _ = self.self_attn(src_normed, src_normed, src_normed,
                                       key_padding_mask=src_key_padding_mask)
         src = residual + self.dropout1(attn_out)
 
-        # Pre-LN + FFN
+        # Pre-LN + FFN: 两层线性变换 + 激活，典型瓶颈结构
         residual = src
         src_normed = self.norm2(src)
         ffn_out = self.linear2(self.dropout_act(self.activation(self.linear1(src_normed))))
@@ -107,9 +115,7 @@ class AttentivePooling(nn.Module):
         return (x * weights).sum(dim=1)
 
 
-# ═══════════════════════════════════════════════════════════
 # 症状编码器
-# ═══════════════════════════════════════════════════════════
 
 class SymptomEncoder(nn.Module):
     """多层Transformer症状编码器"""
@@ -161,9 +167,7 @@ class SymptomEncoder(nn.Module):
         return pooled, x
 
 
-# ═══════════════════════════════════════════════════════════
 # 药材编码器 (双塔)
-# ═══════════════════════════════════════════════════════════
 
 class HerbEncoder(nn.Module):
     """双塔药材编码器：文本塔 + 属性塔"""
@@ -224,9 +228,7 @@ class HerbEncoder(nn.Module):
         return gate * text_feat + (1 - gate) * meta_feat
 
 
-# ═══════════════════════════════════════════════════════════
 # 交叉注意力模块
-# ═══════════════════════════════════════════════════════════
 
 class CrossAttentionRanker(nn.Module):
     """症状-药材交叉注意力排序器"""
@@ -269,9 +271,7 @@ class CrossAttentionRanker(nn.Module):
         return scores
 
 
-# ═══════════════════════════════════════════════════════════
 # 多任务头
-# ═══════════════════════════════════════════════════════════
 
 class SyndromeHead(nn.Module):
     def __init__(self, d_model: int = 512, num_syndromes: int = 18, dropout: float = 0.2):
@@ -292,9 +292,7 @@ class SyndromeHead(nn.Module):
         return self.net(x)
 
 
-# ═══════════════════════════════════════════════════════════
 # 主模型
-# ═══════════════════════════════════════════════════════════
 
 class TCMNet(nn.Module):
     """中医药推荐系统模型"""
@@ -418,9 +416,7 @@ class TCMNet(nn.Module):
         }
 
 
-# ═══════════════════════════════════════════════════════════
 # 工厂函数
-# ═══════════════════════════════════════════════════════════
 
 def create_model(**kwargs) -> TCMNet:
     model = TCMNet(**kwargs)

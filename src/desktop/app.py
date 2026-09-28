@@ -654,6 +654,7 @@ class DesktopApp:
             self.result_queue.put(("error", f"模型错误：{exc}"))
         except Exception as exc:
             logger.exception("桌面端查询失败")
+            # print(f"[DEBUG] query exception: {exc}", flush=True)
             self.result_queue.put(("error", str(exc)))
 
     def _poll_queue(self):

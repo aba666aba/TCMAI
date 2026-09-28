@@ -1,11 +1,7 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
-"""
-中医药推荐系统 - 推理接口
-
-根据症状推荐药材和方剂，并进行安全校验。
-"""
+"""推荐系统推理接口 — 根据症状推荐药材/方剂 + 安全校验"""
 
 import argparse
 import json
@@ -150,6 +146,7 @@ class TCMRecommender:
 
         symptom_tensor = torch.tensor([symptoms], dtype=torch.long).to(self.device)
         mask = torch.ones_like(symptom_tensor, dtype=torch.float32)
+        # print(f"[DEBUG] input shape={symptom_tensor.shape}, device={self.device}")
 
         with torch.no_grad():
             result = self.model.predict(

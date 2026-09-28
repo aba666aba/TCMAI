@@ -184,7 +184,7 @@ class NLUEngine:
             logger.error("NLU 推理失败: %s", exc)
             raise RuntimeError(f"NLU 推理失败: {exc}") from exc
 
-    def _parse_json_output(self, raw: str) -> list[str]:
+    def _parse_json_output(self, raw: str):
         raw = raw.strip()
         # 找 JSON 数组
         start = raw.find("[")

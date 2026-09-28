@@ -34,12 +34,18 @@ _nlu_callbacks: list = []
 
 
 def _get_nlu_engine():
+    """获取 NLU 引擎单例（首次调用时加载模型，后续直接返回）
+
+    Returns:
+        NLUEngine 实例，已调用 load() 完成模型加载
+    """
     global _nlu_engine
     if _nlu_engine is None:
         import torch
 
         from nlu import NLUEngine
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        # 有 GPU 时启用 4bit 量化节省显存，CPU 模式用全精度
         _nlu_engine = NLUEngine(device=device, use_4bit=(device == "cuda"))
         _nlu_engine.load()
         logger.info("NLU 引擎已就绪")
@@ -275,7 +281,7 @@ class TCMDesktopService:
         return normalized
 
     def load_history(self) -> list[dict[str, Any]]:
-        # TODO: 历史记录应该用sqlite，json文件并发有问题
+        # TODO: json读写没有原子性，多进程会丢数据
         if not self.history_file.exists():
             return []
         try:

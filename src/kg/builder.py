@@ -1,9 +1,4 @@
-"""
-TCM 知识图谱构建器
-
-从 database + config + pipeline 抽取实体和关系，
-构建 NetworkX 有向图。
-"""
+"""TCM 知识图谱构建器 — 从 database + config + pipeline 构建 NetworkX 图"""
 
 import logging
 import os
@@ -36,7 +31,17 @@ def _get_project_root() -> Path:
 
 
 class TCMKnowledgeGraph:
-    """TCM 知识图谱构建器"""
+    """TCM 知识图谱构建器
+
+    从 SQLite 知识库 + 配置文件 + 数据管线三层数据源构建 NetworkX 有向多重图。
+    节点类型：药材/方剂/证型/症状/分类/性/味/归经 等 10 种；
+    边类型：证型推荐/配伍禁忌/药材共现/方剂组成 等 14 种关系。
+
+    典型用法:
+        kg = TCMKnowledgeGraph().build()
+        kg.summary()
+        kg.save("tcm_graph.gexf")
+    """
 
     # 实体类型
     SYMPTOM = "Symptom"

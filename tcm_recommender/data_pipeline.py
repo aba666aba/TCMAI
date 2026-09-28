@@ -1,22 +1,7 @@
 # Copyright (C) 2026 中医药智能问答系统
 # Licensed under Apache License 2.0
 
-"""
-中医药推荐系统 - 大规模数据管线
-
-从 2,000+ 药材、500+ 方剂、200 症状、17 证型的知识库中，
-通过组合增强 + 噪声注入 + 证型映射生成 100,000+ 高质量训练样本。
-
-管线：
-  1. 加载基础数据（药材/方剂/症状/证型）
-  2. 构建症状-药材关联矩阵
-  3. 构建症状-方剂关联矩阵
-  4. 证型驱动样本生成（主要来源，~60K）
-  5. 药材驱动样本生成（~20K）
-  6. 方剂驱动样本生成（~10K）
-  7. 组合增强 + 噪声注入（~30K）
-  8. 输出 HDF5/NPZ 格式的高效训练数据
-"""
+"""数据管线 — 从知识库生成训练样本（关联矩阵+多阶段采样+增强）"""
 
 from typing import Optional
 
@@ -36,7 +21,7 @@ if str(_project) not in sys.path:
 
 logger = logging.getLogger(__name__)
 
-# ── 常量 ─────────────────────────────────────────
+# 常量
 MAX_SYMPTOMS_PER_SAMPLE = 32
 MAX_HERBS_PER_SAMPLE = 40
 MIN_SYMPTOMS = 2
@@ -364,9 +349,7 @@ class TCMDataPipeline:
         self.num_symptoms = 0
         self.num_syndromes = 0
 
-    # ═══════════════════════════════════════════════
     # 1. 数据加载
-    # ═══════════════════════════════════════════════
 
     def load_all(self) -> "TCMDataPipeline":
         """加载全部基础数据"""
@@ -455,7 +438,6 @@ class TCMDataPipeline:
 
     def _build_association_matrices(self):
         # FIXME: 500行的函数太长了，但拆开又怕影响性能，先不动
-        """增强版关联矩阵：文本匹配 + 方剂反推 + 分类语义"""
         logger.info("  构建增强关联矩阵...")
         ns, nh, nf = self.num_symptoms, self.num_herbs, self.num_formulas
 
@@ -781,7 +763,6 @@ class TCMDataPipeline:
         self.symptom_formula_matrix = sym_formula
 
     def _build_cooccurrence(self):
-        """构建药材共现矩阵（基于方剂组成）"""
         cooc = np.zeros((self.num_herbs, self.num_herbs), dtype=np.float32)
         for formula in self.formulas.values():
             comp = formula.get("composition", "")
@@ -803,7 +784,6 @@ class TCMDataPipeline:
         )
 
     def _parse_composition_indices(self, composition: str) -> list[int]:
-        """增强版组成解析：处理更多真实格式（带炮制/剂量/子串回退）"""
         if not composition or not composition.strip():
             return []
         import re
@@ -872,9 +852,7 @@ class TCMDataPipeline:
 
         return indices
 
-    # ═══════════════════════════════════════════════
     # 2. 样本生成
-    # ═══════════════════════════════════════════════
 
     def generate_samples(self, target_count: int = 500000) -> dict[str, np.ndarray]:
         """主生成函数：生成 target_count 个训练样本"""
@@ -944,11 +922,11 @@ class TCMDataPipeline:
         )
         logger.info("=" * 50)
         logger.info("生成完成: %s 样本", len(all_symptoms))
+        # print(f"[DEBUG] herb_label nonzero: {(result['herb_labels'].sum(axis=1) > 0).sum()}")
         self._print_stats(result)
         return result
 
     def _generate_syndrome_samples(self, count: int):
-        """证型驱动：为每个证型生成症状子集变体"""
         symptoms, herbs, formulas, syndromes, weights = [], [], [], [], []
         ns, nh = self.num_symptoms, self.num_herbs
         list(self.syndromes.keys())
@@ -1264,14 +1242,11 @@ class TCMDataPipeline:
                 best_id = syn_idx
         return best_id
 
-    # ═══════════════════════════════════════════════
     # 3. 数据打包
-    # ═══════════════════════════════════════════════
 
     def _pack_samples(
         self, symptoms, herb_labels, formula_labels, syndrome_labels, weights
     ):
-        """将变长样本列表打包为固定格式 NDArray（padding）"""
         n = len(symptoms)
         ns, nh = self.num_symptoms, self.num_herbs
 
@@ -1312,7 +1287,6 @@ class TCMDataPipeline:
         }
 
     def _print_stats(self, result: dict):
-        """打印数据统计"""
         hl = result["herb_labels"]
         fl = result["formula_labels"]
         sl = result["syndrome_labels"]
@@ -1331,9 +1305,7 @@ class TCMDataPipeline:
         logger.info("    有证型标签: %.1f%%", has_syndrome * 100)
         logger.info("    有药材标签: %.1f%%", has_herb * 100)
 
-    # ═══════════════════════════════════════════════
     # 4. 药材特征构建（持久化到 npz，避免 train.py 重复计算）
-    # ═══════════════════════════════════════════════
 
     def build_herb_features(self) -> dict[str, np.ndarray]:
         """构建药材特征（与 train.py build_herb_features 输出格式一致）
@@ -1427,9 +1399,7 @@ class TCMDataPipeline:
             "num_flavors": len(FLAVOR_LIST) + 2,
         }
 
-    # ═══════════════════════════════════════════════
     # 5. IO
-    # ═══════════════════════════════════════════════
 
     def save(self, result: dict, path: str, include_herb_features: bool = True):
         """保存为压缩 NPZ 格式（可选包含药材特征缓存）"""
