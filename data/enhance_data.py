@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (C) 2026 中医药智能问答系统 (TCMAI)
+# Copyright (C) 2026 aba666aba
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # 本文件是中医药智能问答系统 (TCMAI) 的一部分。
