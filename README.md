@@ -574,7 +574,7 @@ build_installer.bat
 
 ---
 
-## 许可证
+## 📄 许可证
 
 本项目采用 **GNU Affero 通用公共许可证第 3 版（AGPL-3.0-or-later）**，全文见 [LICENSE](LICENSE)。
 
