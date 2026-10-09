@@ -27,3 +27,9 @@ logs/
 *.lock
 data/font_test.txt
 data/kg_test_full.txt
+
+# ---- 用户运行数据（含症状等健康信息，严禁入库）----
+data/history.json
+data/history.json.corrupt.json
+data/logs/
+data/ablation_nlu_quant.json
