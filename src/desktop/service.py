@@ -392,8 +392,9 @@ class TCMDesktopService:
         if result.get("formulas"):
             parts.append("\n【推荐方剂】")
             for i, formula in enumerate(result["formulas"][:5], 1):
+                toxic_mark = " ☠️（含毒性药材，须医师指导）" if formula.get("contains_toxic") else ""
                 parts.append(
-                    f"{i}. {formula['name']}（置信度：{formula['score']:.2f}）"
+                    f"{i}. {formula['name']}（置信度：{formula['score']:.2f}）{toxic_mark}"
                 )
                 if formula.get("composition"):
                     parts.append(f"   组成：{formula['composition']}")
@@ -413,17 +414,36 @@ class TCMDesktopService:
                 if usage:
                     parts.append(f"   用量：{usage}")
 
+        # 安全硬拦截结果提示：模型命中过毒性药材、但已被移除
+        blocked = result.get("blocked_toxic_herbs") or []
+        if blocked:
+            parts.append("\n【安全拦截】")
+            parts.append(
+                f"⚠️ 模型本可能输出以下毒性/峻烈药材，已按安全策略从推荐结果中移除："
+                f"{'、'.join(blocked)}"
+            )
+            parts.append(
+                "   此类药材必须由执业中医师根据病情、体质与炮制规范决定，"
+                "本系统不予推荐，请勿自行购买或服用。"
+            )
+
         parts.append("\n【安全提示】")
-        if safety and safety.get("warnings"):
-            for w in safety["warnings"]:
-                parts.append(w)
+        if safety:
+            # 三级提示：配伍禁忌（需拦截）> 毒性药材 > 一般注意事项
+            for w in safety.get("incompatibilities") or []:
+                parts.append(f"⚠️ 配伍禁忌 — {w}")
             if safety.get("toxic_herbs"):
                 toxic_names = "、".join(safety["toxic_herbs"])
                 parts.append(f"☠️ 含毒性药材：{toxic_names}，须在医师指导下使用")
-            if not safety.get("is_safe"):
-                parts.append("⚠️ 检测到配伍禁忌，请勿自行搭配使用！")
+            cautions = safety.get("warnings") or []
+            if cautions:
+                parts.append("以下为药材一般注意事项（非配伍禁忌）：")
+                for w in cautions[:5]:
+                    parts.append(f"· {w}")
+            if safety.get("is_safe"):
+                parts.append("✓ 未检测到十八反/十九畏类配伍禁忌，且不含毒性药材")
         else:
-            parts.append("✓ 未检测到常见配伍禁忌")
+            parts.append("⚠️ 未能完成安全校验，请务必咨询执业中医师后再使用")
 
         parts.append("\n【养生建议】")
         sym_set = set(result.get("symptoms", []) or symptoms)

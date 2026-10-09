@@ -20,6 +20,7 @@
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -38,6 +39,7 @@ from tcm_recommender.extended_config import (
     EXTENDED_SYMPTOM_LIST,
     EXTENDED_SYNDROME_DEFINITIONS,
     SYMPTOM_ALIAS_MAP,
+    is_toxic_herb,
 )
 from tcm_recommender.model import create_model
 from tcm_recommender.train import build_herb_features
@@ -191,8 +193,19 @@ class TCMRecommender:
                     "name": name,
                     "score": prob,
                     "efficacy": "",
-                    "is_toxic": False,
+                    "is_toxic": is_toxic_herb(name),
                 }
+
+        # ⚠️ 安全硬拦截：毒性/峻烈药材一律不进入推荐结果。
+        # 这些药材必须由执业中医师按病情、体质与炮制规范决定，模型无权推荐。
+        # 原实现在此位置放行，导致实盘以 1.00 置信度输出「砒石」。
+        blocked_herbs = sorted(
+            (h["name"] for h in seen_names.values() if h["is_toxic"]),
+            key=lambda n: seen_names[n]["score"],
+            reverse=True,
+        )
+        for name in blocked_herbs:
+            seen_names.pop(name, None)
 
         herb_results = sorted(
             seen_names.values(), key=lambda x: x["score"], reverse=True
@@ -225,6 +238,9 @@ class TCMRecommender:
                     "score": prob,
                     "composition": "",
                     "functions": "",
+                    # 方剂名命中毒性清单（如「朱砂安神丸」「附子理中丸」）：
+                    # 方剂本身有临床价值，不剔除，但必须标注警示由医师判断。
+                    "contains_toxic": is_toxic_herb(name),
                 }
             )
             if len(formula_results) >= top_k_formula:
@@ -254,18 +270,66 @@ class TCMRecommender:
             "syndrome": top_syndrome,
             "herbs": herb_results,
             "formulas": formula_results,
+            # 被安全硬拦截的毒性药材（已从 herbs 中移除，仅用于向用户提示）
+            "blocked_toxic_herbs": blocked_herbs,
         }
 
+    # ---------------------------------------------------------------
+    # 配伍禁忌判定
+    # 数据库里 2961 味药材中 2111 味带禁忌文本，且大量为「畏XX」类文献表述
+    # （如「黄芪：畏防风」），逐句关键词匹配会把普通药材全判成禁忌。
+    # 因此采用**权威药对表 + 双向配对**：只有当推荐组合中同时出现禁忌药对的
+    # 两味药，且药对中的另一味在本味药的禁忌文本中被提及（或明确写着「不宜与…同用」）
+    # 时，才判定为真正的配伍禁忌。这是十八反/十九畏的可靠判定方式。
+    _INCOMPATIBLE_PAIRS = (
+        # 十八反（《儒门事亲》）
+        ("甘草", "甘遂"), ("甘草", "大戟"), ("甘草", "芫花"), ("甘草", "海藻"),
+        ("乌头", "贝母"), ("乌头", "瓜蒌"), ("乌头", "半夏"),
+        ("乌头", "白蔹"), ("乌头", "白及"),
+        ("藜芦", "人参"), ("藜芦", "沙参"), ("藜芦", "丹参"),
+        ("藜芦", "玄参"), ("藜芦", "细辛"), ("藜芦", "芍药"),
+        # 十九畏
+        ("硫黄", "朴硝"), ("水银", "砒霜"), ("狼毒", "密陀僧"),
+        ("巴豆", "牵牛"), ("丁香", "郁金"), ("川乌", "犀角"),
+        ("草乌", "犀角"), ("牙硝", "三棱"), ("官桂", "石脂"),
+        ("人参", "五灵脂"),
+    )
+    # 明确禁止同用的句式
+    _EXPLICIT_BAN = re.compile(r"(不宜|不可|不能|禁止|忌)\s*与?.{0,12}(同用|合用|配伍)")
+
+    def _pair_conflict(self, herb: str, others: list[str]) -> list[str]:
+        """返回与 herb 构成配伍禁忌的其他药材名（基于权威药对表双向核对）"""
+        hits = []
+        for a, b in self._INCOMPATIBLE_PAIRS:
+            if herb != a and herb != b:
+                continue
+            other = b if herb == a else a
+            # 另一味必须在本次推荐组合中，且与本味药不同名
+            if not any((other in o or o in other) and o != herb for o in others):
+                continue
+            # 同义替代：乌头/川乌/草乌，朴硝/芒硝，犀角/水牛角等按包含关系处理
+            hits.append(other)
+        return hits
+
     def check_safety(self, herb_names: list[str]) -> dict:
-        """安全检查（十八反/十九畏/孕妇禁用），同一药名只显示一条警告"""
+        """安全检查（十八反/十九畏 + 毒性药材 + 逐味注意事项）
+
+        返回结构契约（下游 src/desktop/service.py 依赖）：
+            warnings         : list[str]  逐味禁忌文本（一般注意事项，仅作提示）
+            incompatibilities: list[str]  确认的配伍禁忌（权威药对表 + 明确禁止句式）
+            toxic_herbs      : list[str]  命中毒性清单的药材
+            is_safe          : bool       无配伍禁忌且无毒 → True
+        """
         import sqlite3
 
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
 
         warnings = []
+        incompatibilities = []
         seen = set()
-        for h in herb_names:
+        names = list(herb_names)
+        for h in names:
             if h in seen:
                 continue
             seen.add(h)
@@ -273,11 +337,52 @@ class TCMRecommender:
                 "SELECT contraindications FROM herbs WHERE name = ? LIMIT 1", (h,)
             )
             row = cur.fetchone()
-            if row and row[0]:
-                warnings.append(f"{h}: {row[0][:100]}")
+            text = row[0] if (row and row[0]) else ""
+            if text:
+                warnings.append(f"{h}: {text[:100]}")
+
+            # 1) 权威药对命中
+            for other in self._pair_conflict(h, names):
+                incompatibilities.append(f"{h} + {other}：属十八反/十九畏配伍禁忌")
+
+            # 2) 明确「不宜与…同用」句式，且被点名的药材确实在本组合中
+            for sentence in re.split(r"[。；;！!\n]", text):
+                sentence = sentence.strip()
+                if not sentence or not self._EXPLICIT_BAN.search(sentence):
+                    continue
+                if any(
+                    (o in sentence) and (o != h) and (o in names)
+                    for o in names
+                ):
+                    incompatibilities.append(f"{h}: {sentence[:100]}")
 
         conn.close()
-        return {"warnings": warnings}
+
+        # 去重：同一药对可能双向命中（A+B 与 B+A），按下标归一化后只保留一条
+        deduped = []
+        seen_keys = set()
+        for item in incompatibilities:
+            marker = "属十八反/十九畏配伍禁忌"
+            if marker in item:
+                pair = item.split("：")[0]
+                key = tuple(sorted(pair.split(" + ")))
+            else:
+                key = (item,)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(item)
+
+        toxic_herbs = [h for h in names if is_toxic_herb(h)]
+        return {
+            "warnings": warnings,
+            "incompatibilities": deduped,
+            "toxic_herbs": toxic_herbs,
+            # 原实现遗漏 is_safe，导致 service.py 的 not safety.get("is_safe")
+            # 恒为真、把每一次校验都报成「检测到配伍禁忌」。此处按真实语义补上：
+            # 只有确认的配伍禁忌或毒性药材才判定为不安全。
+            "is_safe": not deduped and not toxic_herbs,
+        }
 
     def format_output(self, result: dict) -> str:
         """格式化输出"""
@@ -299,6 +404,14 @@ class TCMRecommender:
         lines.append("\n推荐药材:")
         for i, h in enumerate(result["herbs"], 1):
             lines.append(f"  {i}. {h['name']} (概率: {h['score'] * 100:.1f}%)")
+
+        blocked = result.get("blocked_toxic_herbs") or []
+        if blocked:
+            lines.append(
+                "\n⚠️ 安全拦截（毒性/峻烈药材，已从推荐中移除）: {}".format(
+                    "、".join(blocked)
+                )
+            )
 
         lines.append("\n推荐方剂:")
         for i, f in enumerate(result["formulas"], 1):
