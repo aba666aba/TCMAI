@@ -26,7 +26,9 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
+from core.data_desensitize import desensitize_query_text
 from core.knowledge_base import KnowledgeBase
+from core.result_verify import ResultVerifier
 from core.tcm_config import generate_health_tips
 
 
@@ -39,6 +41,18 @@ def _get_project_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parents[2]
+
+# 结果校验器（无外部依赖，模块加载时直接实例化）
+_result_verifier: ResultVerifier | None = None
+
+
+def _get_result_verifier() -> ResultVerifier:
+    """获取结果校验器单例"""
+    global _result_verifier
+    if _result_verifier is None:
+        _result_verifier = ResultVerifier()
+    return _result_verifier
+
 
 # NLU 引擎（延迟导入，避免启动时加载大模型）
 _nlu_engine: Any | None = None
@@ -475,8 +489,12 @@ class TCMDesktopService:
         filtered_symptoms = [s for s in symptoms if isinstance(s, str) and s.strip()]
         # print(f"[DEBUG] query={query_text!r}, symptoms={filtered_symptoms}")
 
+        # ========== 输入脱敏（进入检索/模型/历史前去掉手机号、身份证、邮箱等） ==========
+        safe_query = desensitize_query_text(query_text)
+        safe_symptoms = [desensitize_query_text(s) for s in filtered_symptoms]
+
         # ========== 智能搜索（增强 AI 结果的补充知识） ==========
-        intel_result = self.kb.intelligent_search(query_text)
+        intel_result = self.kb.intelligent_search(safe_query)
         intel_knowledge_text = format_intelligent_knowledge_for_display(intel_result)
 
         # ========== 加载 AI 模型 ==========
@@ -499,8 +517,8 @@ class TCMDesktopService:
                     future = executor.submit(
                         self._run_recommender_inference,
                         recommender,
-                        query_text,
-                        filtered_symptoms,
+                        safe_query,
+                        safe_symptoms,
                     )
                     answer, knowledge_result = future.result(timeout=60)
                 break  # 成功则跳出重试循环
@@ -546,12 +564,14 @@ class TCMDesktopService:
                 ],
             }
 
-        disclaimer = (
-            "温馨提示：本结果基于深度学习模型推荐，仅供参考。实际用药请咨询专业中医师。"
-        )
+        # ========== 结果校验（过滤"保证治愈/根治"等绝对化断言 + 典籍溯源 + 合规提示） ==========
+        verification = _get_result_verifier().verify(final_answer, knowledge)
+        final_answer = verification["answer"]
+        disclaimer = verification["disclaimer"]
+        has_warning = verification["has_warning"]
 
         history_item = self._append_history(
-            query_text, filtered_symptoms, final_answer, "ai"
+            safe_query, safe_symptoms, final_answer, "ai"
         )
         return {
             "success": True,
@@ -559,6 +579,7 @@ class TCMDesktopService:
             "knowledge": knowledge,
             "disclaimer": disclaimer,
             "mode": "ai",
+            "has_warning": has_warning,
             "history_item": history_item,
         }
 

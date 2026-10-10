@@ -266,10 +266,12 @@ class DataDesensitizer:
         """
         cleaned = text
 
-        # 移除所有匹配的个人信息
-        for field, pattern in self.patterns.items():
-            if field != 'name':  # 姓名只做脱敏，不移除
-                cleaned = re.sub(pattern, f'[{field}已移除]', cleaned)
+        # 仅移除可精确定位的身份标识；姓名与地址不在此处处理：
+        #   - 姓名正则本质上是"姓氏 + 1~2 个汉字"，用于移除会误伤中医药词条；
+        #   - 地址正则匹配的是单个"省/市/区/号/路"等字，逐字替换会把正常句子打碎。
+        # 身份证先于手机号处理，否则 18 位号码会被手机号规则先切走中间 11 位。
+        for field in ('id_card', 'email', 'phone'):
+            cleaned = re.sub(self.patterns[field], f'[{field}已移除]', cleaned)
 
         return cleaned
 
@@ -321,3 +323,22 @@ def desensitize_query(query: str) -> str:
         脱敏后的查询
     """
     return get_desensitizer().anonymize_query(query)
+
+
+def desensitize_query_text(query: str) -> str:
+    """
+    便捷函数：脱敏查询原文（保留中医药词条）
+
+    与 ``desensitize_query`` 的区别：不调用基于姓名模式的 ``_desensitize_text``，
+    而是直接移除手机号、身份证号、邮箱等身份标识。原因是查询链路里既要保护
+    隐私、又要保住检索与推理质量，而中文姓名模式会误伤"当归""黄芪"这类
+    非白名单的中医药词，把它们打成"当*""黄*"，导致检索与模型输入语义受损。
+    输入侧只需要剥离真正的身份标识，姓名本身不构成查询必需信息。
+
+    Args:
+        query: 用户输入的查询内容
+
+    Returns:
+        移除身份标识后的查询内容
+    """
+    return get_desensitizer().remove_pii(query)

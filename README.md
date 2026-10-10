@@ -142,8 +142,8 @@ TCMAI/
 │   │   ├── intelligent_search.py #   多策略融合搜索引擎（3步流水线）
 │   │   ├── symptom_analysis.py   #   辨证论治分析器（9证型匹配评分）
 │   │   ├── symptom_pipeline.py   #   统一症状处理管线（检测→分析→汇总）
-│   │   ├── result_verify.py      #   结果合规工具（断言过滤/溯源/完整性检查，工具类）
-│   │   └── data_desensitize.py   #   数据脱敏工具（五类 PII + 中医药白名单，工具类）
+│   │   ├── result_verify.py      #   结果合规（断言过滤/溯源/免责模板，已接入查询链路）
+│   │   └── data_desensitize.py   #   数据脱敏（PII 检测 + 中医药白名单，输入侧已接入）
 │   │
 │   ├── desktop/                  # 桌面 GUI 层
 │   │   ├── app.py                #   主窗口 DesktopApp（5标签页，CTkTabview）
@@ -421,12 +421,12 @@ if model_score > 0 AND kg_score > 0:
 **结果合规工具**（`src/core/result_verify.py`）：
 - 提供绝对化疗效断言（治愈/根治/无效退款/绝对有效 等）的正则替换
 - 提供典籍引用标注、合规免责声明模板与回答完整性检查
-- 说明：该模块为**可调用的工具类**，当前版本由界面层直接给出免责提示，模块本身未在查询链路中自动调用
+- 已接入查询链路：`TCMDesktopService.query()` 在生成回答后调用 `ResultVerifier.verify()`，对回答做断言过滤、典籍溯源，并返回 `has_warning`（回答含毒性/禁忌/慎用等提示时为 `True`）；界面的免责声明文案由该模块的模板提供
 
 **数据脱敏工具**（`src/core/data_desensitize.py`）：
 - 提供五类 PII 检测（身份证号/手机号/邮箱/地址/姓名）与中医药白名单保护
 - 提供 SHA256 匿名化 ID 生成
-- 说明：同上，属**可调用的工具类**；当前版本的查询历史以本机明文存储，未自动脱敏，请勿在症状描述中填写个人信息
+- 已接入查询链路：`TCMDesktopService.query()` 在检索、模型推理与写入历史之前，对查询文本和症状文本调用 `desensitize_query_text()` 剥离身份证号、手机号、邮箱；写入 `data/history.json` 的即为脱敏后的文本。姓名与地址不做自动处理（姓名规则会误伤中医药词条，地址规则会逐字打碎正常语句），因此仍请避免在症状描述中填写个人信息
 
 ---
 
