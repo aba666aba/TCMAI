@@ -462,21 +462,51 @@ class IntelligentSearch:
     # ================================================================
 
     def _merge_raw_results(self, strategy_results):
+        """合并多策略检索结果。
+
+        每个策略带权重（原文直接 1.0 > 同义词扩展 0.9 > 症状搜索 0.85 > 证型搜索 0.8）。
+        命中多个策略的条目更可信，因此：
+          · 按 item_id 去重
+          · 累加各策略权重作为 match_weight（上限 2.0，避免多策略叠加过度压倒原文命中）
+          · 记录命中来源，供下游排序与展示使用
+
+        修正前该权重参数被传入却从未使用，实际只做「保留先到者」的去重，
+        与文档所述「多策略加权融合」不符。
+        """
         merged: dict[str, dict[int, dict]] = {
             "herbs": {},
             "formulas": {},
             "patent_medicines": {},
             "folk_remedies": {},
         }
+        meta: dict[str, dict[int, dict]] = {c: {} for c in merged}
 
-        for _strategy_name, result, _weight in strategy_results:
+        for strategy_name, result, weight in strategy_results:
+            w = float(weight) if weight is not None else 1.0
             for category in merged:
                 for item in result.get(category, []):
                     item_id = item.get("id", hash(item.get("name", "")))
                     if item_id not in merged[category]:
-                        merged[category][item_id] = item
+                        merged[category][item_id] = dict(item)
+                        meta[category][item_id] = {"weight": 0.0, "strategies": []}
+                    m = meta[category][item_id]
+                    m["weight"] = min(m["weight"] + w, 2.0)
+                    if strategy_name not in m["strategies"]:
+                        m["strategies"].append(strategy_name)
 
-        return {category: list(items.values()) for category, items in merged.items()}
+        merged_list: dict[str, list[dict]] = {}
+        for category, items in merged.items():
+            out = []
+            for item_id, item in items.items():
+                m = meta[category][item_id]
+                item["match_weight"] = round(m["weight"], 3)
+                item["matched_by"] = m["strategies"]
+                out.append(item)
+            # 权重高者优先；权重相同保持原顺序（sort 稳定）
+            out.sort(key=lambda x: x.get("match_weight", 0.0), reverse=True)
+            merged_list[category] = out
+
+        return merged_list
 
     def _fuse_and_rank(self, query, symptoms, inferred_formulas,
                        inferred_syndromes, multi_results):

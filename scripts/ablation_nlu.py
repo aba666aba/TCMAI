@@ -15,10 +15,15 @@
 # 注意：以网络服务方式提供本程序的服务端修改版本，同样必须按 AGPL-3.0
 # 第 13 条向所有用户提供对应源代码。
 """NLU 精度测试 — CPU float32
-D:\Python\python.exe E:\TOM\TCMAI\scripts\ablation_nlu.py
+
+用法（在项目根目录执行）：python scripts/ablation_nlu.py
 """
 import sys, json, time
-sys.path.insert(0, r'E:\TOM\TCMAI')
+from pathlib import Path
+
+# 相对本脚本定位项目根目录，避免写死机器相关路径
+PROJECT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT))
 from src.nlu.engine import NLUEngine
 
 tests = [
@@ -105,6 +110,8 @@ out = {
     'avg_inference_time_s': sum(r["time"] for r in results) / len(results),
     'details': results,
 }
-with open(r'E:\TOM\TCMAI\data\ablation_nlu.json', 'w', encoding='utf-8') as f:
+out_path = PROJECT / 'data' / 'ablation_nlu.json'
+out_path.parent.mkdir(parents=True, exist_ok=True)
+with open(out_path, 'w', encoding='utf-8') as f:
     json.dump(out, f, ensure_ascii=False, indent=2)
-print(f'\n结果: E:/TOM/TCMAI/data/ablation_nlu.json')
+print(f'\n结果: {out_path}')

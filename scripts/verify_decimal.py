@@ -18,7 +18,8 @@
 import re
 from pathlib import Path
 
-text = Path(r'E:\TOM\TCMAI\ppt_text_dump.txt').read_text(encoding='utf-8')
+PROJECT = Path(__file__).resolve().parents[1]
+text = (PROJECT / 'ppt_text_dump.txt').read_text(encoding='utf-8')
 
 pcts = re.findall(r'\d+\.\d+%', text)
 print('=== All X.X% values ===')

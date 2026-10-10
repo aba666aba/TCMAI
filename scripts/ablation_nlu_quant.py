@@ -17,7 +17,7 @@
 """NLU 量化精度测量 — float16 vs 4-bit 症状提取一致率
 
 运行方式:
-  D:\Python\python.exe E:\TOM\TCMAI\scripts\ablation_nlu_quant.py
+  python scripts/ablation_nlu_quant.py
 
 测试内容:
   1. 100条口语化症状描述 + 人工标注标准答案

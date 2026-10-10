@@ -18,7 +18,8 @@
 from pptx import Presentation
 from pathlib import Path
 
-PPT = Path(r'E:\TOM\TCMAI\智慧中药方生成系统-结题答辩_modified.pptx')
+PROJECT = Path(__file__).resolve().parents[1]
+PPT = PROJECT / '智慧中药方生成系统-结题答辩_modified.pptx'
 
 
 def replace_in_para(para, old, new):

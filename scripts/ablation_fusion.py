@@ -16,7 +16,7 @@
 # 第 13 条向所有用户提供对应源代码。
 """消融实验 - 带详细输出分析
 
-D:\Python\python.exe E:\TOM\TCMAI\scripts\ablation_fusion.py
+用法：python scripts/ablation_fusion.py
 """
 
 import json, sys, time, pickle

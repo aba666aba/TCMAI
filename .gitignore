@@ -10,7 +10,9 @@ venv/
 build/
 dist/
 installer_output/
+# 通用忽略 *.spec，但保留项目正式的打包配置（否则 build_installer.bat 无配置可用）
 *.spec
+!TCMAI.spec
 
 # ---- 模型权重与缓存 (体积大，不入库) ----
 *.safetensors
