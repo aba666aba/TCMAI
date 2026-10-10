@@ -37,8 +37,7 @@ data/logs/
 data/ablation_nlu_quant.json
 
 # ---- 凭据与本地配置（严禁入库）----
-# 教训：曾有 config.json 内含 Neo4j 明文口令并被推送到公开仓库。
-# 新配置请使用 config.example.json 作为模板，真实值只放本地 config.json。
+# 连接信息与口令一律放本地 config.json，模板见 config.example.json。
 /config.json
 config.local.json
 .env
