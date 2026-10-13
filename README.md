@@ -179,11 +179,26 @@ TCMAI/
 │   ├── enhance_data.py           # 训练数据增强工具
 │   └── fill_indications.py       # 方剂主治字段补充工具
 │
+├── scripts/                      # 运维 / 实验脚本（不参与运行时链路）
+│   ├── download_weights.py       #   下载权重与底座模型（含 SHA256 校验、直链回退）
+│   ├── ablation_fusion.py        #   消融实验：模型与 KG 融合权重扫描（读 kg_cache.pkl）
+│   ├── ablation_nlu.py           #   消融实验：NLU 精度测试（CPU float32）
+│   ├── ablation_nlu_quant.py     #   消融实验：NLU 量化精度对比（float16 vs 4-bit）
+│   └── build_installer.bat       #   PyInstaller + Inno Setup 打包
+│
+├── _modelscope/                  # 权重发布用（维护者工具，不影响运行）
+│   ├── MODEL_CARD.md             #   模型卡（发布到 ModelScope 的内容）
+│   └── upload_to_modelscope.py   #   上传权重到 ModelScope 模型库，需 AccessToken
+│
 └── models/nlu/qwen/              # Qwen2.5-0.5B 模型文件
     ├── config.json               #   模型配置（hidden=896, layers=24, heads=14）
     ├── model.safetensors         #   权重文件（~942MB, bfloat16）※不入库
     └── chat_template.jinja       #   Qwen2 对话模板
 ```
+
+> **说明**：`scripts/ablation_*.py` 是论文消融实验代码，不被 `src/` 引用、也不参与应用
+> 运行时链路，需手动执行（结果输出到 `data/ablation_*.json`，该文件不入库）。
+> `_modelscope/` 仅供维护者发布权重使用，普通使用者无需关心。
 
 > **⚠️ 大文件不入库**：以下两类文件体积过大，被 `.gitignore` 排除，**clone 仓库后不会自带**，
 > 需用 `scripts/download_weights.py` 拉取（详见[模型文件下载](#模型文件下载)）。
