@@ -22,6 +22,7 @@
 - [数据管线与训练流程](#数据管线与训练流程)
 - [算法对比与选型](#算法对比与选型)
 - [快速开始](#快速开始)
+  - [模型文件下载](#模型文件下载)
 - [构建安装包](#构建安装包)
 - [许可证](#许可证)
 
@@ -180,9 +181,17 @@ TCMAI/
 │
 └── models/nlu/qwen/              # Qwen2.5-0.5B 模型文件
     ├── config.json               #   模型配置（hidden=896, layers=24, heads=14）
-    ├── model.safetensors         #   权重文件（~988MB, bfloat16）
+    ├── model.safetensors         #   权重文件（~942MB, bfloat16）※不入库
     └── chat_template.jinja       #   Qwen2 对话模板
 ```
+
+> **⚠️ 大文件不入库**：以下两类文件体积过大，被 `.gitignore` 排除，**clone 仓库后不会自带**，
+> 需用 `scripts/download_weights.py` 拉取（详见[模型文件下载](#模型文件下载)）。
+>
+> | 文件 | 体积 | 性质 |
+> |------|------|------|
+> | `tcm_recommender/best_model.pth` | ~127 MB | 本项目自行训练的推荐权重（TCMNet 11.08M 参数） |
+> | `models/nlu/qwen/model.safetensors` | ~942 MB | Qwen2.5-0.5B-Instruct 底座模型（公开模型，可重新下载） |
 
 ---
 
@@ -448,7 +457,8 @@ if model_score > 0 AND kg_score > 0:
 
 ### 训练样本生成（5 阶段流水线）
 
-> 样本量由 `--samples` 控制（默认 500000）。本仓库随附权重对应的实际训练配置为 **100000 样本**（见 `tcm_recommender/best_model.json`）。
+> 样本量由 `--samples` 控制（默认 500000）。**随附权重检查点内未记录样本量**，无法从权重反推；
+> `tcm_recommender/best_model.json` 中的 `samples=100000` 属另一次（不匹配的）训练记录，不能作为本权重的依据。
 
 | 阶段 | 占比 | 策略 | 权重 |
 |------|------|------|------|
@@ -541,6 +551,70 @@ python -m tcm_recommender.train \
 
 ```bash
 pip install customtkinter networkx torch transformers bitsandbytes numpy tqdm
+```
+
+### 模型文件下载
+
+权重文件体积大，不入 git 仓库，**clone 后必须执行一次**本步骤：
+
+```bash
+pip install modelscope
+python scripts/download_weights.py
+```
+
+脚本会拉取两类文件，并做 SHA256 与体积校验：
+
+| 下载项 | 来源 | 落盘位置 | 体积 |
+|--------|------|----------|------|
+| 推荐模型权重 | [`aba666aba/TCMAI-tcm-recommender`](https://www.modelscope.cn/models/aba666aba/TCMAI-tcm-recommender) | `tcm_recommender/best_model.pth` | ~127 MB |
+| NLU 底座模型 | ModelScope 公开模型 `Qwen/Qwen2.5-0.5B-Instruct` | `models/nlu/qwen/` | ~942 MB |
+
+权重地址：[modelscope.cn/models/aba666aba/TCMAI-tcm-recommender](https://www.modelscope.cn/models/aba666aba/TCMAI-tcm-recommender)
+（直链 `…/resolve/master/best_model.pth`）。已校验：远端文件 SHA256 与本地原件一致，
+`1d8414c676144652e1d3ce21f18ede039f56e01c135428a545739b3ca17da98f`（133,079,050 字节）。
+
+常用参数：
+
+```bash
+python scripts/download_weights.py --only ckpt     # 只下载训练权重
+python scripts/download_weights.py --only base     # 只下载底座模型
+python scripts/download_weights.py --force         # 强制重下
+python scripts/download_weights.py --verify-only   # 只校验本地已有文件（不联网）
+```
+
+**权重版本说明**：随本仓库发布的 `best_model.pth` 结构为 `d_model=384, num_layers=4`（从检查点
+`config` 字段读取），共训练 7 轮，**指标以检查点自带记录为准**：
+
+| 指标 | 值 |
+|------|-----|
+| `syn_acc`（证型准确率） | **0.979** |
+| `herb_recall10`（药材召回） | **0.398** |
+| `val_loss` | 1.408 |
+| 训练轮次 | 7（`val_loss` 1.603 → 1.411 单调下降） |
+
+> ⚠️ **注意 `tcm_recommender/best_model.json` 与权重不匹配**：该文件记录的是另一次训练
+> （`output=best_model_v4.pth, d_model=256, num_layers=2, samples=100000`，指标 `syn_acc=0.964`），
+> 与随附权重（384/4，`syn_acc=0.979`）不是同一次运行的产物。以**检查点内的 `config`/`metrics`/`history` 为准**。
+
+**可复现性**：训练脚本 `tcm_recommender/train.py` 未固定全局随机种子，且生成训练集
+`data/train_data*.npz` 未入库，因此**本次训练的权重无法精确复现**；仓库提供的是训练完成的权重本身。
+
+若权重模型库发布在私有命名空间，需先登录：`modelscope login --token <你的AccessToken>`
+（Token 可在 ModelScope 个人中心的访问令牌页获取；**该 Token 属凭据，切勿提交进仓库**）。
+
+若模型库地址变更，可用环境变量覆盖，无需改代码：
+
+```bash
+set TCMAI_CKPT_REPO=<你的命名空间>/<模型库名>
+set TCMAI_CKPT_SHA256=<新的SHA256>
+```
+
+**备用下载通道**：若 ModelScope 不可用（模型库未发布、网络受限、需要登录），
+可设置 `TCMAI_CKPT_URL` 指向任一权重直链（如 GitHub Release 附件），脚本会自动回退：
+
+```bash
+set TCMAI_CKPT_URL=https://github.com/<owner>/<repo>/releases/download/<tag>/best_model.pth
+python scripts/download_weights.py --only ckpt
 ```
 
 ### 启动
