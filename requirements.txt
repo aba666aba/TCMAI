@@ -1,0 +1,34 @@
+# TCMAI 运行依赖
+#
+# 安装：
+#   pip install -r requirements.txt
+#
+# 注意 torch 的 CUDA 版本：本文件按 CPU/PyPI 默认源解析。
+# 如需 CUDA 12.4 对应版本，请先按官方指引安装 torch，再执行本文件：
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# ── 桌面 GUI ──
+customtkinter>=5.2,<6
+
+# ── 知识图谱 ──
+networkx>=3.2
+
+# ── 深度学习推理（TCMNet）与 NLU 大模型 ──
+torch>=2.0
+transformers>=4.40
+# accelerate 为硬依赖：transformers 在导入 AutoModelForCausalLM 阶段即要求其存在，
+# 缺失会导致 `from transformers import AutoModelForCausalLM` 直接 ModuleNotFoundError，
+# 进而使 NLU 引擎完全不可用（不是等到加载模型才失败）。
+accelerate>=0.26
+numpy>=1.24
+tqdm>=4.66
+
+# ── 模型权重下载（scripts/download_weights.py）──
+modelscope>=1.9
+
+# ── 可选：CUDA 下 4-bit 量化加载 ──
+# 缺失时 src/nlu/engine.py 自动回退 float16，不影响功能。
+# bitsandbytes>=0.43
+
+# ── 开发（可选）──
+# pytest>=8.0

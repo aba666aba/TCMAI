@@ -142,7 +142,7 @@ class TCMRecommender:
                 unknown_symptoms.append(symp)
 
         if unknown_symptoms:
-            logger.warning("未知症状（不在 229 症状列表中）: %s", unknown_symptoms)
+            logger.warning("未知症状（不在症状词表中）: %s", unknown_symptoms)
         if symptoms and not symptom_ids:
             logger.warning("所有症状都无效，输入：%s", symptoms)
 

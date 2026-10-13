@@ -91,7 +91,7 @@
     ├─[1]─► NLU Engine (Qwen2.5): 提取结构化症状列表 → ["失眠","乏力","头晕"]
     │         证型展开增强: 若检测到证型名→附加对应症状
     │
-    ├─[2]─► TCMRecommender.parse_symptoms(): 别名映射 + 229标准症状匹配
+    ├─[2]─► TCMRecommender.parse_symptoms(): 别名映射 + 229 条目标准症状匹配
     │
     ├─[3]─► 三路并行:
     │         ├─ TCMNet.predict(): 6层Transformer编码症状 → CrossAttention排序药材/方剂
@@ -167,7 +167,7 @@ TCMAI/
 │
 ├── tcm_recommender/              # 深度学习推荐模型
 │   ├── __init__.py               #   包入口，导出 TCMRecommender
-│   ├── extended_config.py        #   229症状 + 30证型定义 + 别名映射 + 毒性药材表
+│   ├── extended_config.py        #   229 条目症状(228 唯一) + 30证型定义 + 别名映射 + 毒性药材表
 │   ├── data_pipeline.py          #   数据管线 TCMDataPipeline（7层关联矩阵+5阶段采样）
 │   ├── data_expansion.py         #   知识库扩充脚本（按中药学分类定义药材/方剂）
 │   ├── model.py                  #   TCMNet 模型（SymptomEncoder+HerbEncoder双塔+CrossAttention）
@@ -215,7 +215,7 @@ TCMAI/
 
 ### 1. NLU 引擎 (`NLUEngine`)
 
-**职责**：将中文自由文本患者描述转化为 229 种标准中医药症状名称的结构化列表。
+**职责**：将中文自由文本患者描述转化为标准中医药症状名称的结构化列表（词表 229 个条目 / 228 个唯一症状）。
 
 **模型**：Qwen2.5-0.5B（`hidden_size=896, num_layers=24, num_heads=14, vocab=151936`）。
 
@@ -226,7 +226,7 @@ TCMAI/
 | CUDA（回退） | float16 | ~1-2 GB |
 | CPU | 按模型配置（bfloat16 / float32） | ~2-4 GB |
 
-**提示词工程**：封闭词表约束——系统提示词包含完整 229 症状列表，强制模型"只输出列表中存在的症状名"，将开放生成任务降级为多标签分类。4 个 few-shot 示例覆盖消化/心肺/寒虚/肠胃领域。
+**提示词工程**：封闭词表约束——系统提示词包含完整症状列表（229 条目），强制模型"只输出列表中存在的症状名"，将开放生成任务降级为多标签分类。4 个 few-shot 示例覆盖消化/心肺/寒虚/肠胃领域。
 
 **输出解析**：两步策略
 1. 主策略：在原始输出中定位 `[...]` 边界，`json.loads()` 解析
@@ -326,8 +326,8 @@ Step 3: 多策略搜索 + 融合排序
 
 ```
                      Pre-LN Transformer Encoder
-                    ×num_layers（默认 6，随仓库权重为 2）
-                    (d_model 默认 512，随仓库权重为 256；nhead=8, FFN=4×d_model, GELU)
+                    ×num_layers（随仓库权重为 4）
+                    (随仓库权重 d_model=384；nhead=8, FFN=4×d_model, GELU)
                          │
                     AttentivePooling ──► symptom_vec [B, D]
                          │
@@ -356,7 +356,7 @@ Step 3: 多策略搜索 + 融合排序
 
 | 模块 | 配置 | 说明 |
 |------|------|------|
-| `SymptomEncoder` | 6层 Pre-LN Transformer, d_model=384/512, nhead=8 | Pre-LN 将 LayerNorm 放在 Attention/FFN 之前，缓解深层梯度消失 |
+| `SymptomEncoder` | Pre-LN Transformer, 随仓库权重 d_model=384 / 4 层, nhead=8 | Pre-LN 将 LayerNorm 放在 Attention/FFN 之前，缓解深层梯度消失 |
 | `HerbEncoder`（文本塔） | 2层 MLP + GELU, text_dim=256 | 输入：药材功效+主治文本的中文字符多热编码 |
 | `HerbEncoder`（属性塔） | category_emb(64) + nature_emb(64) + flavor_emb(64) | 药材分类+药性+药味三元嵌入 |
 | `HerbEncoder`（融合门） | sigmoid gate, output_dim=d_model | 学习文本特征与属性特征的动态融合比例 |
@@ -465,7 +465,8 @@ if model_score > 0 AND kg_score > 0:
 
 ### 关联矩阵构建（7层流水线）
 
-`TCMDataPipeline._build_association_matrices()` 构建 `symptom_herb_matrix [229, H]` 和 `symptom_formula_matrix [229, F]`：
+`TCMDataPipeline._build_association_matrices()` 构建 `symptom_herb_matrix [229, H]` 和 `symptom_formula_matrix [229, F]`
+（第 0 行为填充，症状 ID 从 1 起算；维度 = 229 条目 + 1 填充位，由已发布权重 `[230, 384]` 的嵌入形状确定）：
 
 | 层 | 策略 | 权重 | 方法 |
 |----|------|------|------|
@@ -517,7 +518,7 @@ python -m tcm_recommender.train \
 
 ## 算法对比与选型
 
-中医药方剂推荐是一个典型的**多模态小样本知识推理**问题：症状空间稀疏（229 维组合），先验知识密集（十八反十九畏、性味归经），且对可解释性有刚性需求（医生需要理解推荐依据）。
+中医药方剂推荐是一个典型的**多模态小样本知识推理**问题：症状空间稀疏（228 个唯一症状的组合空间），先验知识密集（十八反十九畏、性味归经），且对可解释性有刚性需求（医生需要理解推荐依据）。
 
 ### 对比方案
 
@@ -534,7 +535,7 @@ python -m tcm_recommender.train \
 ### 为什么不选其他方案
 
 **纯规则系统**（如传统专家系统）：
-- 229 症状 × 30 证型 × 300+ 药材的组合规则无法穷举
+- 228 唯一症状 × 30 证型 × 300+ 药材的组合规则无法穷举
 - 口语化症状（"吃不下饭""睡不好"）需要维护大量别名规则
 - 方剂配伍中的剂量推理无法用简单 if-then 表达
 
