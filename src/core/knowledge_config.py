@@ -376,6 +376,12 @@ class KnowledgeConfig:
                 try:
                     symptoms = json.loads(r["symptoms_json"])
                 except Exception:
+                    # 降级为空症状可让程序继续运行，但该证型会失去全部症状关联，
+                    # 症状→证型匹配随之静默失效，因此必须留下记录。
+                    logger.exception(
+                        "证型 %r 的 symptoms_json 解析失败，已降级为空症状列表",
+                        r["name"],
+                    )
                     symptoms = []
                 result[r["name"]] = {
                     "description": r["description"],
