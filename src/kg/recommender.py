@@ -30,10 +30,14 @@ class KGEnhancedRecommender:
     def __init__(self, model_recommender, kg_query, kg_config: dict | None = None):
         self.model = model_recommender
         self.kg = kg_query
+        # 默认权重取自 scripts/ablation_fusion.py 的实测最优（14 例教科书 ground truth）：
+        #   DL=0.4/KG=0.6 → Recall@10 23.8%；DL=0.6/KG=0.4 → 21.2%（两者无统计显著性差异）
+        # 旧默认值 0.6/0.4 既非实测最优，也无其他依据。
+        # 注意：kg_boost 实测"几乎无影响"（模型与 KG 候选基本不重叠），保留仅为兼容旧行为。
         self.cfg = kg_config or {
-            "model_weight": 0.6,  # 模型预测权重
-            "kg_weight": 0.4,  # KG推理权重
-            "kg_boost": 0.15,  # KG验证通过的额外加分
+            "model_weight": 0.4,  # 模型预测权重（实测最优）
+            "kg_weight": 0.6,  # KG推理权重（实测最优）
+            "kg_boost": 0.15,  # KG验证通过的额外加分（实测影响可忽略）
             "syndrome_weight": 0.3,  # 证型推荐路径权重
         }
 

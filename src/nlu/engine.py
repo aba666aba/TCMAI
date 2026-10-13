@@ -84,6 +84,7 @@ class NLUEngine:
         self._model = None
         self._tokenizer = None
         self._symptom_list_text = ""
+        self._vocab_cache = None
 
     def _build_symptom_list_text(self) -> str:
         if self._symptom_list_text:
@@ -95,6 +96,72 @@ class NLUEngine:
             return items
         except ImportError:
             return "胃痛、头痛、发热、咳嗽、失眠、乏力、腹痛、腹泻"
+
+    def _load_vocabulary(self) -> tuple[set[str], dict[str, str]]:
+        """加载标准症状词表与别名映射（与 recommend.py 使用同一份数据）。
+
+        提示词里的"只输出列表内症状"是软约束，小模型经常不遵守
+        （实测：输入"睡不着、没力气、头晕"会输出词表外的"疲劳""乏累"）。
+        因此需要在解析后做一次硬校验。
+        """
+        if self._vocab_cache is not None:
+            return self._vocab_cache
+        try:
+            from tcm_recommender.extended_config import (
+                EXTENDED_SYMPTOM_LIST,
+                SYMPTOM_ALIAS_MAP,
+            )
+
+            vocab = set(EXTENDED_SYMPTOM_LIST)
+            aliases = {k: v for k, v in SYMPTOM_ALIAS_MAP.items() if v in vocab}
+        except ImportError:
+            vocab = {"胃痛", "头痛", "发热", "咳嗽", "失眠", "乏力", "腹痛", "腹泻"}
+            aliases = {}
+        self._vocab_cache = (vocab, aliases)
+        return self._vocab_cache
+
+    def _normalize_symptoms(self, symptoms: list[str]) -> list[str]:
+        """把模型输出约束到 229 条标准词表内。
+
+        处理顺序：
+          1. 精确命中标准词 → 直接保留
+          2. 命中别名表（如 疲劳→乏力、睡不着→失眠）→ 映射为标准词
+          3. 前两步都没有结果时，才尝试"标准词包含该词"的保守匹配
+             （如 乏累→乏力），且仅当唯一命中时才采纳
+          4. 仍无法归一的 → 丢弃并记警告，避免词表外词汇流向下游
+             （下游 TCMRecommender 用词表索引症状，词表外词无法编码）
+        """
+        vocab, aliases = self._load_vocabulary()
+        resolved: list[str] = []
+        unmapped: list[str] = []
+
+        for raw in symptoms:
+            item = str(raw).strip()
+            if not item:
+                continue
+            if item in vocab:
+                target = item
+            elif item in aliases:
+                target = aliases[item]
+            else:
+                target = None
+            if target is None:
+                unmapped.append(item)
+            elif target not in resolved:
+                resolved.append(target)
+
+        # 保守兜底：仅在无任何命中时启用子串匹配，且要求唯一命中
+        if not resolved and unmapped:
+            for item in unmapped:
+                candidates = [s for s in vocab if s in item or item in s]
+                if len(candidates) == 1 and candidates[0] not in resolved:
+                    resolved.append(candidates[0])
+
+        if unmapped:
+            logger.warning(
+                "NLU 输出含词表外症状，已丢弃或归一: %s", "、".join(unmapped)
+            )
+        return resolved
 
     def load(self):
         if self._model is not None:
@@ -194,7 +261,15 @@ class NLUEngine:
             logger.info("NLU 原始输出: %s", raw_output[:200])
 
             symptoms = self._parse_json_output(raw_output)
-            return symptoms
+            normalized = self._normalize_symptoms(symptoms)
+            if len(normalized) != len(symptoms):
+                logger.info(
+                    "NLU 词表校验: %d 条输出 → %d 条标准症状 %s",
+                    len(symptoms),
+                    len(normalized),
+                    normalized,
+                )
+            return normalized
 
         except Exception as exc:
             logger.error("NLU 推理失败: %s", exc)

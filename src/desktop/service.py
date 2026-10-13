@@ -501,8 +501,15 @@ class TCMDesktopService:
         recommender = self._get_recommender()
         if recommender is None:
             raise RuntimeError(
-                "AI 模型不可用。请检查：\n"
-                "1. PyTorch 是否已安装\n"
+                "AI 模型不可用，无法生成推荐。\n"
+                "\n"
+                "最常见原因：本仓库的模型权重体积过大（~127MB），未纳入 git，\n"
+                "直接 clone 后仓库里没有该文件。请先执行一次下载脚本：\n"
+                "    pip install modelscope\n"
+                "    python scripts/download_weights.py\n"
+                "\n"
+                "若已下载仍报错，请依次检查：\n"
+                "1. 是否已安装 torch 与 accelerate（accelerate 缺失会导致 transformers 无法导入）\n"
                 "2. 模型文件 tcm_recommender/best_model.pth 是否存在\n"
                 "3. 知识库文件 data/tcm_knowledge.db 是否存在"
             )

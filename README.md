@@ -21,6 +21,7 @@
   - [安全与合规](#7-安全与合规)
 - [数据管线与训练流程](#数据管线与训练流程)
 - [算法对比与选型](#算法对比与选型)
+- [实现现状与已知局限](#实现现状与已知局限)
 - [快速开始](#快速开始)
   - [模型文件下载](#模型文件下载)
 - [构建安装包](#构建安装包)
@@ -388,13 +389,19 @@ Step 3: 多策略搜索 + 融合排序
 
 ### 5. KG 增强推荐器 (`KGEnhancedRecommender`)
 
+> **⚠️ 该组件不在桌面端演示链路上。** 桌面主链路（`src/desktop/service.py`）直接调用
+> `TCMRecommender`，**全程不做任何 KG 打分**；`KGEnhancedRecommender` 目前只被
+> `scripts/ablation_fusion.py`（消融实验）使用。演示界面上同时出现的"推荐药材"与
+> "智能搜索发现"是**两个引擎的结果并列展示，而非融合后的单一排序**。
+> 详见[实现现状与已知局限](#实现现状与已知局限)。
+
 **职责**：融合 TCMNet 模型预测与知识图谱推理，生成最终推荐结果。
 
-**融合公式**：
+**融合公式**（实测最优权重为 `0.4/0.6`，旧文档的 `0.6/0.4` 无依据支持）：
 ```
-fused_score = model_score × 0.6 + kg_score × 0.4
+fused_score = model_score × 0.4 + kg_score × 0.6
 if model_score > 0 AND kg_score > 0:
-    fused_score += 0.15  # 模型+KG共同推荐加分
+    fused_score += 0.15  # 模型+KG共同推荐加分（实测"几乎无影响"）
 ```
 
 **三路 KG 推理**：
@@ -553,6 +560,64 @@ python -m tcm_recommender.train \
 
 ---
 
+## 实现现状与已知局限
+
+本节如实记录**当前代码实际做到什么、没做到什么**，供使用者与评审对照。
+此前一版曾包含同类章节，后在一次文档整理中被删除，现恢复并更新为实测数据。
+
+### 1. 融合未接入演示链路
+
+- 桌面主链路 `src/desktop/service.py` 调用的是 `TCMRecommender`，**不含任何 KG 打分**
+- `KGEnhancedRecommender`（`src/kg/recommender.py`）全仓库仅被 `scripts/ablation_fusion.py` 引用
+- 因此界面上"推荐药材"与"智能搜索发现"是**并列展示**，不是融合后的统一排序
+- 后果举例：同一输入下模型给出 `酸枣仁汤`、智能搜索给出 `四君子汤/归脾汤`，
+  两者未做一致性裁决，用户可能看到互相矛盾的建议
+
+### 2. 融合增益很小，且几乎全部来自 KG
+
+`scripts/ablation_fusion.py` 实测（14 例教科书 ground truth，候选集 = 模型 Top20 ∪ KG）：
+
+| 配置 | Recall@10 | Precision@10 |
+|------|-----------|--------------|
+| 纯模型 (DL=1.0/KG=0.0) | 21.2% | 0.1143 |
+| 纯 KG (DL=0.0/KG=1.0) | 23.8% | 0.1286 |
+| 融合最优 (DL=0.4/KG=0.6) | 23.8% | 0.1286 |
+
+- **融合相比纯模型提升 2.6 个百分点，与纯 KG 完全相同** → 提升来自 KG 候选覆盖，而非"协同"
+- `kg_boost`（0.15 协同加分）实测"几乎无影响"，因模型与 KG 推荐药材基本不重叠
+- 权重 0–0.5 区间内指标恒定不变（排序未变），说明权重扫描大半区间无信息量
+- ⚠️ **样本量仅 14 例**，1 例差异即引起约 1.4 个百分点波动，上述差异**不具统计显著性**
+- 历史文档声称的关联矩阵同源 Recall@10 "80-85%" 系**硬编码字符串、无测量出处**，
+  已从脚本与文档中删除，不再作为对照
+
+### 3. 训练不可复现
+
+- `tcm_recommender/train.py` 未固定全局随机种子
+- 生成训练集用的 `data/train_data*.npz` 未入库，且本地已不存在
+- 因此**随仓库发布的权重无法通过重跑训练复现**，只能直接使用权重文件本身
+
+### 4. 权重指标与仓库内两份 JSON 不一致
+
+三处出现的 Recall/准确率各自来自不同运行，**不可混用**：
+
+| 来源 | 值 | 说明 |
+|------|-----|------|
+| `best_model.pth` 检查点内记录 | `syn_acc 0.979`, `herb_recall10 0.398` | 与随附权重对应，**以此为准** |
+| `tcm_recommender/best_model.json` | `syn_acc 0.964`, `herb_recall10 0.257` | 另一次训练（`d_model=256/num_layers=2`），与权重不匹配 |
+| 本文第 2 节消融表 | `Recall@10 21.2%` | 教科书 ground truth 口径，与上面两个口径均不同 |
+
+### 5. 其他已知问题
+
+- **置信度饱和**：模型对药材的得分大量为 `1.000`（实测 Top-12 全为 1.0），
+  浮点相等，排序依据实际来自并列顺序，**该数值不应被解读为置信度**
+- **NLU 词表约束**：小模型经常输出词表外症状（实测"睡不着、没力气"→ `疲劳/乏累`）。
+  已在 `src/nlu/engine.py` 增加硬校验（别名映射 + 唯一子串兜底 + 丢弃），
+  但**模型召回本身有限**：同一次实测中"睡不着""头晕"未被提取出来
+- **`device_map` 依赖 `accelerate`**：缺该包时 `transformers` 连
+  `AutoModelForCausalLM` 都无法导入，NLU 引擎完全不可用（见[安装依赖](#安装依赖)）
+
+---
+
 ## 快速开始
 
 ### 环境要求
@@ -565,8 +630,20 @@ python -m tcm_recommender.train \
 ### 安装依赖
 
 ```bash
-pip install customtkinter networkx torch transformers bitsandbytes numpy tqdm
+# 必需
+pip install customtkinter networkx torch transformers accelerate numpy tqdm
+
+# 可选：CUDA 下启用 4-bit 量化（缺失时自动回退 float16，不影响运行）
+pip install bitsandbytes
+
+# 仅下载模型权重时需要
+pip install modelscope
 ```
+
+> **⚠️ `accelerate` 是硬依赖，不能省**：`src/nlu/engine.py` 有 4 处使用 `device_map`，
+> 而 `transformers` 在**导入 `AutoModelForCausalLM` 阶段**就要求 accelerate 存在
+> （实测：屏蔽 accelerate 后连 `from transformers import AutoModelForCausalLM` 都会
+> `ModuleNotFoundError`，不是等到加载模型才失败）。漏装它会让 NLU 引擎彻底不可用。
 
 ### 模型文件下载
 

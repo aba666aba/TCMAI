@@ -19,7 +19,11 @@
 用法：python scripts/ablation_fusion.py
 """
 
-import json, sys, time, pickle
+import hashlib
+import json
+import pickle
+import sys
+import time
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -63,6 +67,28 @@ def main():
         graph = pickle.load(f)
     kg = KnowledgeGraphQuery(graph)
     print(f"加载完成 ({(time.time()-t0):.1f}s)\n")
+
+    # ── 溯源信息：指标必须可追溯到具体的模型/图谱工件 ──
+    # 实测教训：本脚本在不同时间运行得到过 22.4% 与 23.8% 两个值，
+    # 差异来自 kg_cache.pkl（2026-05-23）与知识库（2026-06-01）的更新，
+    # 而非算法随机性（同一工件下重跑结果逐位一致）。
+    def _sha256(path: str) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest()[:16]
+
+    provenance = {
+        "model_sha256_16": _sha256(model_path),
+        "kg_cache_sha256_16": _sha256(kg_cache),
+        "db_sha256_16": _sha256(db_path),
+        "test_cases": len(TEST_CASES),
+    }
+    print("工件溯源 (用于复现该指标):")
+    for k, v in provenance.items():
+        print(f"  {k} = {v}")
+    print()
 
     # 权重列表
     weights_list = [(1.0,0.0), (0.9,0.1), (0.8,0.2), (0.7,0.3),
@@ -144,12 +170,35 @@ def main():
             label = ""
             if mw == 1.0: label = "← 纯DL"
             elif kw == 1.0: label = "← 纯KG"
-            elif mw == 0.6: label = "← 当前配置"
+            elif mw == 0.6: label = "← 旧配置(PPT口径)"
+            elif mw == 0.4: label = "← 建议配置"
             all_weight_results.append((mw, kw, avg_p, avg_r, label))
             print(f"  DL={mw:.1f}/KG={kw:.1f}  {avg_r:>10.4f}  {avg_p:>14.4f}  {label:>20}")
             if avg_r > best_recall:
                 best_recall = avg_r
                 best_config = (mw, kw, avg_p, avg_r)
+
+    # ── 分析2b: 纯模型基线 —— 与上面**完全相同的排序代码**，仅去掉 KG 候选 ──
+    # 旧版本此处硬编码 "80-85%"，无任何测量出处，且与实测相差数倍，故改为实算。
+    base_p = base_r = bn = 0.0
+    for case in all_case_data:
+        ground = case["ground"]
+        model_only = [
+            (name, s["model_score"])
+            for name, s in case["herb_data"].items()
+            if s["model_score"] > 0
+        ]
+        model_only.sort(key=lambda x: -x[1])
+        top10 = [name for name, _ in model_only[:10]]
+        hits = len(set(top10) & set(ground))
+        base_p += hits / len(top10) if top10 else 0.0
+        base_r += hits / len(ground) if ground else 0.0
+        bn += 1
+    base_p = base_p / bn if bn else 0.0
+    base_r = base_r / bn if bn else 0.0
+    print(f"\n  纯模型基线(同一排序代码, 仅模型候选): "
+          f"Recall@10={base_r:.4f} ({base_r*100:.1f}%)  Precision@10={base_p:.4f}")
+    print(f"  → 该值为实测；旧文档中 '80-85%' 系硬编码字符串，无出处，已废弃")
 
     # ── 分析3: 模型Top-10命中详细 ──
     print("\n" + "─" * 70)
@@ -172,35 +221,50 @@ def main():
     print("  结 论")
     print("=" * 70)
     print(f"""
-  1. 关联矩阵评估 (训练/测试同源):    Recall@10 ≈ 80-85%
-  2. 独立教科书 ground truth 评估:    Recall@10 ≈ {best_recall*100:.0f}%
-  3. 差距 ≈ {80-best_recall*100:.0f} 个百分点
-     → 说明模型主要学到了关联矩阵规则, 而非通用中医药知识
-     → 这是本项目最大的方法论局限, 答辩中需诚实呈现
+  样本量: {len(all_case_data)} 个用例（教科书 ground truth，每例 5-6 味标准药材）
+  ⚠️ 样本量很小，1 个用例的差异即引起约 1.4 个百分点波动，
+     下述数值只应作为量级参考，不足以支撑显著优于/劣于的结论。
+
+  1. 纯模型基线 (仅模型候选, Top-10):      Recall@10 = {base_r*100:.1f}%
+  2. 融合后最优 (DL={best_config[0]:.1f}/KG={best_config[1]:.1f}):  Recall@10 = {best_recall*100:.1f}%
+  3. 纯 KG (DL=0.0/KG=1.0):               Recall@10 = {all_weight_results[-1][3]*100:.1f}%
+     → 融合相比纯模型提升 {best_recall*100 - base_r*100:.1f} 个百分点；
+       但提升主要来自 KG 候选本身，而非"模型与KG协同"
+     → 关联矩阵同源评估曾记为 "80-85%"，该数字为硬编码字符串、无测量出处，
+       已在本版本中删除，不作为对照
 
   4. Boost 参数几乎不影响结果
      → 因为模型和KG推荐的药材列表基本不重叠
      → 0.15 boost 触发次数极少
 
-  5. 最优 DL:KG 权重: {best_config[0]:.0f}/{best_config[1]:.0f}
-     → 但不同权重间差异极小(约1个百分点)
-     → 建议 60:40 保持, 因其兼顾模型泛化力和KG可解释性
+  5. 建议权重 DL={best_config[0]:.1f}/KG={best_config[1]:.1f}
+     → 不同权重间差异极小(约1-3个百分点, 且低于样本噪声)
+     → 旧文档声称的 0.6/0.4 既非最优、也不在 PPT 之外被任何实测支持
 """)
 
     # 导出
     output = {
-        "method": "独立评估(教科书ground truth)" +
-                  " — 训练/测试标签均源自7层关联矩阵",
+        "method": "独立评估(教科书ground truth)，候选集 = 模型Top20 ∪ KG推荐",
+        "provenance": provenance,
+        "sample_note": (
+            f"仅 {len(all_case_data)} 个用例，1 例差异即引起约 "
+            f"{100/len(all_case_data)/6:.1f} 个百分点波动，结论只可作量级参考"
+        ),
         "test_cases": len(all_case_data),
         "metrics": {
-            "association_matrix_based_recall@10": "80-85%",
-            "independent_textbook_recall@10": f"{best_recall*100:.1f}%",
+            # 旧版本此处为硬编码字符串 "80-85%"，无测量出处且与实测相差数倍，已删除
+            "model_only_recall@10": f"{base_r*100:.1f}%",
+            "best_fusion_recall@10": f"{best_recall*100:.1f}%",
+            "pure_kg_recall@10": f"{all_weight_results[-1][3]*100:.1f}%",
+            "model_only_precision@10": round(base_p, 4),
         },
-        "gap_analysis": (
-            f"约{80-best_recall*100:.0f}个百分点差距表明: "
-            "模型学到了关联矩阵规则, 对独立的中医临床知识泛化有限"
+        "conclusion": (
+            f"融合(DL={best_config[0]:.1f}/KG={best_config[1]:.1f}) Recall@10="
+            f"{best_recall*100:.1f}%，纯模型基线 {base_r*100:.1f}%；"
+            "提升主要来自 KG 候选覆盖，而非模型与KG协同"
         ),
         "best_weight": f"DL={best_config[0]:.1f}/KG={best_config[1]:.1f}",
+        "legacy_weight_0.6_0.4": "旧配置，实测既非最优也无依据支持",
         "boost_effect": "几乎无影响(模型+KG推荐基本不重叠)",
         "weight_results": [
             {"mw": mw, "kw": kw, "precision": round(p, 4), "recall": round(r, 4)}
