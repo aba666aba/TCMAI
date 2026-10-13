@@ -677,7 +677,12 @@ class TCMDesktopService:
             self.save_history()
 
     def get_herb_dosage(self, herb_name: str) -> str:
-        """从数据库查询药材用法用量。"""
+        """从数据库查询药材用法用量。
+
+        查询失败时返回空串（用法用量为展示增强项，缺失不应中断推荐），
+        但记录异常——静默返回空串会让"库损坏/字段缺失"与"该药材本就没有用法"
+        无法区分。
+        """
         if not self.kb or not self.kb.is_available:
             return ""
         try:
@@ -690,7 +695,7 @@ class TCMDesktopService:
                 if row and row["usage"]:
                     return row["usage"]
         except Exception:
-            pass
+            logger.exception("查询药材用法失败（herb=%s），已降级为空", herb_name)
         return ""
 
     def close(self) -> None:

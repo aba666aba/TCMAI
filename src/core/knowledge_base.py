@@ -402,12 +402,17 @@ class KnowledgeBase:
             }
 
     def get_symptom_suggestions(self, partial: str, max_results: int = 8) -> list[str]:
-        """根据输入前缀获取症状建议（模糊匹配）"""
+        """根据输入前缀获取症状建议（模糊匹配）。
+
+        失败时降级为空列表（输入提示属可选增强，不应打断输入），
+        但必须记录异常——否则检索模块故障会表现为"提示功能静默失效"。
+        """
         try:
             from core.intelligent_search import IntelligentSearch
             searcher = IntelligentSearch(self)
             return searcher.get_symptom_suggestions(partial, max_results)
         except Exception:
+            logger.exception("症状建议生成失败，已降级为空列表（partial=%r）", partial)
             return []
 
     def close(self):
