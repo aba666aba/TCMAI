@@ -158,6 +158,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
         self._tk_canvas = None
         self._canvas_items = {}
         self._edge_items = []
+        self._zoom_level = 1.0
         self._canvas_bg = None
         self._drag_start = None
         self.knowledge_text = None
@@ -228,7 +229,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
             )
             self.detail_text.pack(fill="both", expand=True, padx=6, pady=6)
             self.detail_text.insert(
-                "1.0", "💡 点击节点查看详情\n\n双击展开邻域 | 右键更多操作"
+                "1.0", "💡 点击节点弹出详情窗口\n\n双击展开邻域 | 右键更多操作 | 滚轮缩放"
             )
             self.detail_text.configure(state="disabled")
 
@@ -288,7 +289,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
             )
             self.detail_text.pack(fill="x", pady=(4, 0))
             self.detail_text.insert(
-                "1.0", "💡 点击节点查看详情 | 双击展开邻域 | 右键更多操作"
+                "1.0", "点击节点弹出详情窗口 | 双击展开邻域 | 大图模式"
             )
             self.detail_text.configure(state="disabled")
 
@@ -432,6 +433,10 @@ class KnowledgeGraphView(ctk.CTkFrame):
         ctk.CTkButton(
             toolbar, text="重置", font=self.FONT_XS, width=50, command=self._reset_view
         ).pack(side="left")
+        ctk.CTkButton(
+            toolbar, text="大图", font=self.FONT_XS, width=60,
+            command=self._open_graph_popup,
+        ).pack(side="left", padx=(4, 0))
 
     type_vars: dict = {}
 
@@ -889,6 +894,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
         c.delete("all")
         self._canvas_items = {}
         self._edge_items = []
+        self._zoom_level = 1.0
         g = self.graph
 
         xs = [pos[n][0] for n in sub.nodes]
@@ -916,7 +922,6 @@ class KnowledgeGraphView(ctk.CTkFrame):
         self._cv_cx, self._cv_cy = cx, cy
         self._cv_mx, self._cv_my = mx, my
         self._cv_pos = pos
-        self._cv_zoom = 1.0
 
         active_edges = self._get_active_edges()
         drawn = 0
@@ -984,6 +989,7 @@ class KnowledgeGraphView(ctk.CTkFrame):
             )
             self._canvas_items[n] = {
                 "oval": oid, "text": tid, "r": r, "color": color,
+                "font_size": fs,
             }
 
         if center_node and center_node in self._canvas_items:
@@ -1041,30 +1047,33 @@ class KnowledgeGraphView(ctk.CTkFrame):
         self._cv_press_node = None
 
     def _cv_on_wheel(self, e):
+        """滚轮缩放。
+
+        return "break" 至关重要：嵌入首页时外层 CTkScrollableFrame 用
+        bind_all(add="+") 全局监听滚轮，若不中断传播，缩放同时会滚动
+        页面（即"滚动条和缩放冲突"的根因）。
+        """
         factor = 1.1 if e.delta > 0 else 0.9
+        new_zoom = self._zoom_level * factor
+        if not (0.3 <= new_zoom <= 4.0):
+            return "break"
+        self._zoom_level = new_zoom
+
         self._tk_canvas.scale("all", e.x, e.y, factor, factor)
+        # 字号 = 基准字号 × 当前缩放（基准存于 _canvas_items，避免
+        # 逐次解析 itemcget(font) 造成的累积漂移）
         for _n, ci in self._canvas_items.items():
             tid = ci.get("text")
             if tid is None:
                 continue
+            new_sz = max(5, min(26, round(ci["font_size"] * self._zoom_level)))
             try:
-                old_fs = self._tk_canvas.itemcget(tid, "font")
-                parts = str(old_fs).split()
-                sz = None
-                for p in parts:
-                    try:
-                        sz = int(p)
-                        break
-                    except ValueError:
-                        continue
-                if sz is None:
-                    continue
-                new_sz = max(6, min(18, int(sz * factor)))
                 self._tk_canvas.itemconfig(
                     tid, font=("Microsoft YaHei UI", new_sz, "bold")
                 )
             except Exception as exc:
                 logger.warning("Canvas 文字缩放失败: %s", exc)
+        return "break"
 
     def _cv_on_motion(self, e):
         node = self._cv_get_node(e.x, e.y)
@@ -1079,22 +1088,33 @@ class KnowledgeGraphView(ctk.CTkFrame):
         node = self._cv_get_node(e.x, e.y)
         if node:
             self._selected_node = node
-            self._show_node_detail(node)
+            # 详情改由菜单"🔍 查看详情"触发（避免弹窗与菜单同时出现）
             self._context_menu.tk_popup(e.x_root, e.y_root)
 
     def _show_node_detail(self, node_id: str):
+        """节点详情展示。
+
+        嵌入首页模式：弹出独立详情窗口（原 120px 底部小条太局促）；
+        独立图谱模式：写入右侧 300px 详情面板。
+        """
+        if not self.standalone:
+            self._open_detail_popup(node_id)
+            return
+        text = self._node_detail_text(node_id)
+        self._set_detail(text)
+
+    def _node_detail_text(self, node_id: str) -> str:
         g = self.graph
         data = g.nodes[node_id]
         name = data.get("name", node_id)
         ntype = data.get("type", "Unknown")
 
         lines = []
-        type_icon = {
-            "Symptom": "🟡", "Syndrome": "🟣", "Herb": "🟢",
-            "Formula": "🔵", "PatentMedicine": "🟠", "FolkRemedy": "⚪",
+        type_label = {
+            "Symptom": "症状", "Syndrome": "证型", "Herb": "药材",
+            "Formula": "方剂", "PatentMedicine": "中成药", "FolkRemedy": "验方",
         }
-        icon = type_icon.get(ntype, "⚪")
-        lines.append(f"{icon} 【{ntype}】{name}")
+        lines.append(f"【{type_label.get(ntype, ntype)}】{name}")
         lines.append("─" * 40)
 
         if ntype == "Herb":
@@ -1189,18 +1209,99 @@ class KnowledgeGraphView(ctk.CTkFrame):
         for _, nbr in g.edges(node_id):
             nt = g.nodes[nbr].get("type", "?")
             neighbor_types[nt] = neighbor_types.get(nt, 0) + 1
-        for nbr, _ in g.edges(node_id):
-            nt = g.nodes[nbr].get("type", "?")
-            neighbor_types[nt] = neighbor_types.get(nt, 0) + 1
         if neighbor_types:
             parts = [f"{nt}×{cnt}" for nt, cnt in sorted(neighbor_types.items())]
             lines.append(f"  相邻: {', '.join(parts)}")
 
         text = "\n".join(lines)
-        self.detail_text.configure(state="normal")
-        self.detail_text.delete("1.0", "end")
-        self.detail_text.insert("1.0", text)
-        self.detail_text.configure(state="disabled")
+        return text
+
+    def _open_detail_popup(self, node_id: str):
+        """节点详情弹窗：大窗展示完整知识，支持展开邻域/设为中心联动主图。"""
+        g = self.graph
+        data = g.nodes[node_id]
+        name = data.get("name", node_id)
+        ntype = data.get("type", "Unknown")
+        text = self._node_detail_text(node_id)
+
+        win = ctk.CTkToplevel(self)
+        win.title(f"知识详情 · {name}")
+        win.geometry("560x480")
+        win.transient(self.winfo_toplevel())
+        win.attributes("-topmost", True)
+        win.after(180, lambda: win.attributes("-topmost", False))
+        win.lift()
+        win.focus_force()
+
+        type_label = {
+            "Symptom": "症状", "Syndrome": "证型", "Herb": "药材",
+            "Formula": "方剂", "PatentMedicine": "中成药", "FolkRemedy": "验方",
+        }
+        header = ctk.CTkFrame(win, fg_color=(" #f3f7f5", "#22352b"))
+        header.pack(fill="x", padx=10, pady=(10, 0))
+        ctk.CTkLabel(
+            header,
+            text=f"{name}（{type_label.get(ntype, ntype)}）",
+            font=("Microsoft YaHei UI", 15, "bold"),
+            anchor="w",
+        ).pack(fill="x", padx=12, pady=8)
+
+        body = ctk.CTkTextbox(win, wrap="word", font=("Microsoft YaHei UI", 12))
+        body.pack(fill="both", expand=True, padx=10, pady=8)
+        body.insert("1.0", text)
+        body.configure(state="disabled")
+
+        btn_row = ctk.CTkFrame(win, fg_color="transparent")
+        btn_row.pack(fill="x", padx=10, pady=(0, 10))
+
+        def _expand():
+            win.destroy()
+            self._selected_node = node_id
+            self._show_subgraph_all(node_id)
+
+        def _center():
+            win.destroy()
+            self._selected_node = node_id
+            self._show_subgraph(node_id)
+
+        ctk.CTkButton(
+            btn_row, text="⬆ 展开邻域", width=110, command=_expand
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btn_row, text="🎯 设为中心", width=110, command=_center
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btn_row, text="关闭", width=80,
+            fg_color="gray30", hover_color="gray20",
+            command=win.destroy,
+        ).pack(side="right")
+
+    def _open_graph_popup(self):
+        """图谱大图弹窗：全屏画布浏览，拖拽平移 + 滚轮缩放（无滚动条冲突）。"""
+        win = ctk.CTkToplevel(self)
+        win.title("知识图谱 · 大图浏览")
+        win.geometry("1000x700")
+        win.transient(self.winfo_toplevel())
+        win.after(120, win.lift)
+
+        big = KnowledgeGraphView(win, standalone=True)
+        big.graph = self.graph
+        big.query = self.query
+        big.pack(fill="both", expand=True)
+        big._load_graph_async(
+            on_done=lambda: self._restore_popup_state(big)
+        )
+
+    def _restore_popup_state(self, big_view):
+        """弹窗图谱恢复主视图当前状态（搜索词 + 当前子图）。"""
+        q = self.search_var.get().strip()
+        if q:
+            big_view.search_var.set(q)
+            big_view._do_search()
+        elif self._current_subgraph is not None and self._selected_node:
+            big_view._show_subgraph(self._selected_node)
+        else:
+            big_view._show_overview_graph()
 
     def _set_detail(self, text: str):
         self.detail_text.configure(state="normal")
@@ -1276,11 +1377,129 @@ class KnowledgeGraphView(ctk.CTkFrame):
             self._set_detail(f"未在图谱中找到相关节点: {symptoms}")
             return
 
-        primary = target_nodes[0]
-        for n in target_nodes:
-            if g.nodes[n].get("type") == "Symptom":
-                primary = n
-                break
+        # ── 按节点类型分组，构建聚焦查询子图 ──
+        symptom_nodes = [n for n in target_nodes if g.nodes[n].get("type") == "Symptom"]
+        syndrome_node = next(
+            (n for n in target_nodes if g.nodes[n].get("type") == "Syndrome"), None
+        )
+        herb_nodes = [n for n in target_nodes if g.nodes[n].get("type") == "Herb"]
+        formula_nodes = [n for n in target_nodes if g.nodes[n].get("type") == "Formula"]
+        grouped = set(symptom_nodes + herb_nodes + formula_nodes)
+        if syndrome_node:
+            grouped.add(syndrome_node)
+        other_nodes = [n for n in target_nodes if n not in grouped]
 
-        self.search_var.set(g.nodes[primary].get("name", ""))
-        self._show_subgraph(primary, target_nodes)
+        center, node_list = self._build_query_subgraph(
+            symptom_nodes + other_nodes, syndrome_node, herb_nodes, formula_nodes
+        )
+        if not node_list:
+            self._set_detail(f"未在图谱中找到与 {symptoms} 相关的连通节点")
+            return
+
+        self.search_var.set(g.nodes[center].get("name", "") if center else "")
+        self._show_subgraph_given_nodes(center, node_list)
+
+    def _build_query_subgraph(
+        self,
+        symptom_nodes: list,
+        syndrome_node: str | None,
+        herb_nodes: list,
+        formula_nodes: list,
+    ) -> tuple[str | None, list]:
+        """构建"查询关联子图"：只保留目标节点之间的边 + 必要的桥接邻居。
+
+        修复原 _show_subgraph 路径的三个显示问题：
+          1. 以症状为中心拉取全部邻居 → 节点爆炸、画面杂乱
+          2. 推荐节点与中心无边时成为孤立漂浮点
+          3. 中心选择不符合"辨证论治"语义（证型应居中）
+        """
+        g = self.graph
+        core = [n for n in [syndrome_node] + symptom_nodes if n and g.has_node(n)]
+        recommended = [
+            n for n in herb_nodes + formula_nodes if n and g.has_node(n)
+        ]
+        if not core:
+            # 症状/证型都不在图中：退化为中心取第一个有节点的推荐项
+            core = recommended[:1]
+            recommended = recommended[1:]
+        if not core:
+            return None, []
+
+        nodes = set(core) | set(recommended)
+
+        # 桥接：推荐节点若与 core 无边，找一个它与任一 core 节点的共同邻居
+        # 加入子图作为"桥"，保证连通与语义可读（如：症状—证型—药材 的中介）
+        for r in recommended:
+            r_nb = set(g.successors(r)) | set(g.predecessors(r))
+            if any(r_nb & (set(g.successors(c)) | set(g.predecessors(c))) for c in core):
+                continue  # 已连通
+            for c in core:
+                c_nb = set(g.successors(c)) | set(g.predecessors(c))
+                common = r_nb & c_nb
+                if common:
+                    nodes.add(sorted(common)[0])
+                    break
+
+        # .copy() 必须：subgraph 默认返回只读视图，下方 remove_nodes_from 会抛
+        # "Frozen graph can't be modified"
+        sub = g.subgraph(nodes).copy()
+
+        # 剔除孤立点（core 节点保留，避免中心消失）
+        isolated = [
+            n for n, deg in sub.degree()
+            if deg == 0 and n not in core
+        ]
+        if isolated:
+            sub.remove_nodes_from(isolated)
+
+        # 中心：证型优先（辨证论治语义），其次第一个症状
+        center = None
+        if syndrome_node and syndrome_node in sub.nodes:
+            center = syndrome_node
+        elif symptom_nodes:
+            center = next((n for n in symptom_nodes if n in sub.nodes), None)
+        if center is None:
+            center = next(iter(sub.nodes)) if sub.number_of_nodes() else None
+        return center, list(sub.nodes)
+
+
+def open_kg_result_popup(parent, knowledge=None):
+    """查询关联知识图谱弹窗：只画与本次查询症状/证型/方药相关的子图。
+
+    knowledge 为桌面端 query() 返回的 knowledge 字段（含 symptoms/syndrome/
+    herbs/formulas）。未查询时给出引导提示，不展示默认全图。
+    """
+    win = ctk.CTkToplevel(parent)
+    win.title("知识图谱 · 查询关联视图")
+    win.geometry("1080x720")
+    try:
+        win.transient(parent.winfo_toplevel())
+    except Exception:
+        pass
+
+    view = KnowledgeGraphView(win, standalone=True)
+    view.pack(fill="both", expand=True)
+
+    def _after_load():
+        k = knowledge or {}
+        symptoms = k.get("symptoms") or []
+        syn = k.get("syndrome")
+        syn_name = syn.get("name") if isinstance(syn, dict) else None
+        herbs = [h["name"] for h in k.get("herbs") or [] if isinstance(h, dict)]
+        forms = [f["name"] for f in k.get("formulas") or [] if isinstance(f, dict)]
+        if symptoms or herbs or forms:
+            view.show_query_result(
+                symptoms=symptoms,
+                syndrome_name=syn_name,
+                herbs=herbs,
+                formulas=forms,
+            )
+        else:
+            view._set_detail(
+                "请先在首页进行症状查询。\n\n"
+                "图谱将只展示与本次症状相关的证型、药材、方剂关联子图，"
+                "而非默认全图。"
+            )
+
+    view._load_graph_async(on_done=_after_load)
+    return win

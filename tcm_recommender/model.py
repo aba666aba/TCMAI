@@ -132,14 +132,17 @@ class AttentivePooling(nn.Module):
 # 症状编码器
 
 class SymptomEncoder(nn.Module):
-    """多层Transformer症状编码器"""
+    """多层Transformer症状编码器
+
+    症状输入是**无序集合**（NLU 抽取顺序无语义），不加位置编码，
+    避免注入伪顺序信号。
+    """
 
     def __init__(self, num_symptoms: int, d_model: int = 512, nhead: int = 8,
                  num_layers: int = 6, dim_ff: int = 2048, dropout: float = 0.1):
         super().__init__()
         self.d_model = d_model
         self.embedding = nn.Embedding(num_symptoms + 1, d_model, padding_idx=0)
-        self.pos_encoder = LearnedPositionalEncoding(d_model)
         self.dropout_emb = nn.Dropout(dropout)
 
         self.layers = nn.ModuleList([
@@ -169,7 +172,6 @@ class SymptomEncoder(nn.Module):
             mask = symptom_ids != 0
 
         x = self.embedding(symptom_ids) * (self.d_model ** 0.5)
-        x = self.pos_encoder(x)
         x = self.dropout_emb(x)
 
         key_padding_mask = ~mask
@@ -184,7 +186,12 @@ class SymptomEncoder(nn.Module):
 # 药材编码器 (双塔)
 
 class HerbEncoder(nn.Module):
-    """双塔药材编码器：文本塔 + 属性塔"""
+    """双塔药材编码器：文本塔 + 属性塔
+
+    属性塔（v2）：category embedding + nature/flavor/meridian **multi-hot
+    线性投影**——一味药"甘、辛"两味同时表达；十二经归经入模，
+    支撑引经报使的组方语义。
+    """
 
     def __init__(self, num_chars: int, num_categories: int = 30,
                  d_model: int = 512, text_dim: int = 256, meta_dim: int = 64):
@@ -203,11 +210,12 @@ class HerbEncoder(nn.Module):
             nn.LayerNorm(d_model),
         )
 
-        # 属性塔 (category + nature + flavor + meridian)
+        # 属性塔
         self.category_emb = nn.Embedding(num_categories + 1, meta_dim, padding_idx=0)
-        self.nature_emb = nn.Embedding(8, meta_dim)    # 0=padding, 1-5=natures, 6-7=unknown
-        self.flavor_emb = nn.Embedding(8, meta_dim)     # 0=padding, 1-5=flavors, 6-7=unknown
-        meta_total = meta_dim * 3
+        self.nature_proj = nn.Linear(5, meta_dim, bias=False)     # 寒热温凉平 multi-hot
+        self.flavor_proj = nn.Linear(5, meta_dim, bias=False)     # 酸苦甘辛咸 multi-hot
+        self.meridian_proj = nn.Linear(12, meta_dim, bias=False)  # 十二经 multi-hot
+        meta_total = meta_dim * 4
         self.meta_proj = nn.Sequential(
             nn.Linear(meta_total, d_model),
             nn.LayerNorm(d_model),
@@ -220,21 +228,24 @@ class HerbEncoder(nn.Module):
         )
 
     def forward(self, char_multihot: torch.Tensor, category_idx: torch.Tensor,
-                nature_idx: torch.Tensor, flavor_idx: torch.Tensor) -> torch.Tensor:
+                nature_multihot: torch.Tensor, flavor_multihot: torch.Tensor,
+                meridian_multihot: torch.Tensor) -> torch.Tensor:
         """
         Args:
             char_multihot: [num_herbs, num_chars]
             category_idx: [num_herbs] category id
-            nature_idx: [num_herbs] nature id
-            flavor_idx: [num_herbs] flavor id
+            nature_multihot: [num_herbs, 5] 寒热温凉平
+            flavor_multihot: [num_herbs, 5] 酸苦甘辛咸
+            meridian_multihot: [num_herbs, 12] 十二经
         Returns:
             [num_herbs, d_model]
         """
         text_feat = self.text_encoder(char_multihot)  # [H, D]
         meta = torch.cat([
             self.category_emb(category_idx),
-            self.nature_emb(nature_idx),
-            self.flavor_emb(flavor_idx),
+            self.nature_proj(nature_multihot.float()),
+            self.flavor_proj(flavor_multihot.float()),
+            self.meridian_proj(meridian_multihot.float()),
         ], dim=-1)
         meta_feat = self.meta_proj(meta)  # [H, D]
 
@@ -306,6 +317,40 @@ class SyndromeHead(nn.Module):
         return self.net(x)
 
 
+# 组合式方剂编码器
+
+class CompositionFormulaEncoder(nn.Module):
+    """组合式方剂编码器：方剂表征 = 其组成药材表征的聚合。
+
+    取代旧版 formula_embedding 查表（死记硬背，无法泛化到新方剂）。
+    方剂表征由药材药性（HerbEncoder 编码）组合而成：
+      - 方剂主治由「药性组合」自然涌现，与症状表征在同一语义空间对齐；
+      - 知识库新增方剂无需重训即有表征（组成解析可得），词表漂移问题根治；
+      - 组成矩阵为 buffer（随当前数据库构建），不参与训练参数。
+    """
+
+    def __init__(self, d_model: int, dropout: float = 0.1):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, herb_encodings: torch.Tensor, comp: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            herb_encodings: [H, D] 全部药材编码（HerbEncoder 输出）
+            comp: [F, H] 方剂-药材组成矩阵（buffer，1.0=组成）
+        Returns:
+            [F, D] 方剂表征
+        """
+        counts = comp.sum(dim=1, keepdim=True).clamp(min=1.0)
+        agg = (comp @ herb_encodings) / counts  # [F, D]
+        return self.proj(agg)
+
+
 # 主模型
 
 class TCMNet(nn.Module):
@@ -314,19 +359,38 @@ class TCMNet(nn.Module):
     def __init__(self, num_symptoms: int, num_herbs: int, num_formulas: int,
                  num_syndromes: int, num_chars: int, num_categories: int = 30,
                  d_model: int = 512, nhead: int = 8, num_layers: int = 6,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1,
+                 formula_composition: Optional[torch.Tensor] = None):
         super().__init__()
         self.d_model = d_model
         self.temperature = nn.Parameter(torch.tensor(0.07))
 
-        # 编码器
+        # 编码器（v2：症状集合语义无位置编码；药材属性塔多味/归经 multi-hot）
         self.symptom_encoder = SymptomEncoder(
             num_symptoms, d_model, nhead, num_layers, d_model * 4, dropout)
         self.herb_encoder = HerbEncoder(
             num_chars, num_categories, d_model, text_dim=256, meta_dim=64)
 
-        # 方剂嵌入 (可学习)
-        self.formula_embedding = nn.Embedding(num_formulas + 1, d_model, padding_idx=0)
+        # 方剂表征：新架构=组合式（组成矩阵聚合药材编码）；未提供组成矩阵时
+        # 回退旧架构查表嵌入（兼容历史 checkpoint，直至重训）
+        self.comp_encoder = None
+        self.formula_embedding = None
+        if formula_composition is not None:
+            comp = torch.as_tensor(formula_composition, dtype=torch.float32)
+            # 类空间对齐（关键）：旧架构 weight[1:] 的行数 = num_formulas 参数值
+            # （调用方传 N+1，比真实方剂数多 1 行冗余），1-based 方剂标签作为
+            # CrossEntropy 目标（0-based）恰好落在合法范围内。组合式表征必须
+            # 补齐同样的冗余行，否则标签 N 越界触发 CUDA device-side assert。
+            if comp.shape[0] < num_formulas:
+                pad = comp.new_zeros(num_formulas - comp.shape[0], comp.shape[1])
+                comp = torch.cat([comp, pad], dim=0)
+            elif comp.shape[0] > num_formulas:
+                comp = comp[: num_formulas]
+            self.register_buffer("formula_composition", comp)
+            self.comp_encoder = CompositionFormulaEncoder(d_model, dropout)
+        else:
+            self.formula_embedding = nn.Embedding(
+                num_formulas + 1, d_model, padding_idx=0)
 
         # 排序器
         self.herb_ranker = CrossAttentionRanker(d_model, nhead, dropout)
@@ -345,10 +409,23 @@ class TCMNet(nn.Module):
 
         self._init_weights()
 
+    def _formula_repr(self, herb_encodings: torch.Tensor) -> torch.Tensor:
+        if self.comp_encoder is not None:
+            return self.comp_encoder(herb_encodings, self.formula_composition)
+        return self.formula_embedding.weight[1:]  # [F, D]
+
     def _init_weights(self):
         for name, param in self.named_parameters():
             if "weight" in name and param.dim() >= 2:
-                nn.init.xavier_uniform_(param)
+                if "embedding.weight" in name or "_emb.weight" in name:
+                    # 嵌入矩阵：保持与子模块一致的 normal(d^-0.5) 初始化，
+                    # 并把 padding 行（index 0）置零。
+                    # 原实现对所有参数无差别 xavier，会覆盖 SymptomEncoder 的
+                    # 精心初始化，且把 padding_idx=0 的行洗成非零（训练期瑕疵）。
+                    nn.init.normal_(param, mean=0.0, std=param.shape[-1] ** -0.5)
+                    nn.init.constant_(param[0], 0)
+                else:
+                    nn.init.xavier_uniform_(param)
             elif "bias" in name:
                 nn.init.zeros_(param)
 
@@ -364,8 +441,10 @@ class TCMNet(nn.Module):
     def forward(self, symptom_ids: torch.Tensor, symptom_mask: torch.Tensor,
                 herb_char: torch.Tensor, herb_cat: torch.Tensor,
                 herb_nat: torch.Tensor, herb_flv: torch.Tensor,
+                herb_mer: Optional[torch.Tensor] = None,
                 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
+        herb_nat/herb_flv/herb_mer 语义：multi-hot [H,5]/[H,5]/[H,12]
         Returns:
             syndrome_logits: [B, num_syndromes]
             herb_scores: [B, num_herbs]
@@ -374,20 +453,23 @@ class TCMNet(nn.Module):
             herb_vec: [H, D]      (for contrastive loss)
         """
         sv, _ = self.symptom_encoder(symptom_ids, symptom_mask > 0.5)
-        hv = self.herb_encoder(herb_char, herb_cat, herb_nat, herb_flv)
+        hv = self.herb_encoder(herb_char, herb_cat, herb_nat, herb_flv, herb_mer)
 
         syndrome_logits = self.syndrome_head(sv)
 
         herb_scores = self.herb_ranker(sv, hv)
-        formula_emb = self.formula_embedding.weight[1:]  # [F, D]
-        formula_scores = self.formula_ranker(sv, formula_emb)
+        formula_scores = self.formula_ranker(sv, self._formula_repr(hv))
 
         return syndrome_logits, herb_scores, formula_scores, sv, hv
 
     def contrastive_loss(self, symptom_vec: torch.Tensor, herb_vec: torch.Tensor,
                          herb_labels: torch.Tensor, temperature: Optional[float] = None) -> torch.Tensor:
         """
-        Supervised Contrastive Loss (多正类版本)
+        Supervised Contrastive Loss (多正类版本) — 全向量化实现。
+
+        与旧版逐样本 Python 循环数学等价：
+          L = -(1/|P|) * Σ_{i∈P} mean_{j∈pos(i)} [ log softmax(sim_ij) ]
+        其中 P 为存在正类的样本集合。
         """
         tau = temperature if temperature is not None else self.temperature.abs()
 
@@ -396,35 +478,39 @@ class TCMNet(nn.Module):
 
         sim = sv @ hv.T / tau.clamp(min=0.01)  # [B, H]
 
-        loss = 0.0
-        count = 0
-        for i in range(sim.size(0)):
-            pos_mask = herb_labels[i] > 0.5
-            if pos_mask.sum() == 0:
-                continue
-            pos_sim = sim[i][pos_mask]
-            log_prob = pos_sim - torch.logsumexp(sim[i], dim=0)
-            loss -= log_prob.mean()
-            count += 1
+        pos_mask = herb_labels > 0.5            # [B, H]
+        pos_count = pos_mask.sum(dim=1)         # [B]
+        has_pos = pos_count > 0                 # [B]
+        if not has_pos.any():
+            return sim.new_zeros(())
 
-        return loss / max(count, 1)
+        # log softmax over 候选维
+        log_prob = sim - torch.logsumexp(sim, dim=1, keepdim=True)  # [B, H]
+        pos_mean = (log_prob * pos_mask).sum(dim=1) / pos_count.clamp(min=1)  # [B]
+        loss = -(pos_mean * has_pos.float()).sum() / has_pos.sum()
+        return loss
 
     @torch.no_grad()
     def predict(self, symptom_ids: torch.Tensor, symptom_mask: torch.Tensor,
                 herb_char: torch.Tensor, herb_cat: torch.Tensor,
                 herb_nat: torch.Tensor, herb_flv: torch.Tensor,
+                herb_mer: Optional[torch.Tensor] = None,
                 top_k: int = 10) -> dict[str, list]:
         self.eval()
         syn_logits, herb_scores, formula_scores, _, _ = self.forward(
-            symptom_ids, symptom_mask, herb_char, herb_cat, herb_nat, herb_flv)
+            symptom_ids, symptom_mask, herb_char, herb_cat, herb_nat, herb_flv,
+            herb_mer)
 
         syn_probs = F.softmax(syn_logits[0], dim=-1)
         h_topk = torch.topk(herb_scores[0], min(top_k, herb_scores.shape[1]))
         f_topk = torch.topk(formula_scores[0], min(top_k, formula_scores.shape[1]))
 
+        # 一次排序同时拿到索引与概率（原实现 argsort + sort 排了两次）
+        syn_sorted = torch.sort(syn_probs, descending=True)
+
         return {
-            "syndromes": list(zip(syn_probs.argsort(descending=True).tolist(),
-                                  syn_probs.sort(descending=True).values.tolist(), strict=False)),
+            "syndromes": list(zip(syn_sorted.indices.tolist(),
+                                  syn_sorted.values.tolist(), strict=False)),
             "herbs": list(zip(h_topk.indices.tolist(), h_topk.values.tolist(), strict=False)),
             "formulas": list(zip(f_topk.indices.tolist(), f_topk.values.tolist(), strict=False)),
         }

@@ -66,19 +66,24 @@ _nlu_callbacks: list = []
 def _get_nlu_engine():
     """获取 NLU 引擎单例（首次调用时加载模型，后续直接返回）
 
+    双重检查加锁：预加载线程与首次查询并发时不会重复加载 ~1GB 模型。
+
     Returns:
         NLUEngine 实例，已调用 load() 完成模型加载
     """
     global _nlu_engine
     if _nlu_engine is None:
-        import torch
+        with _nlu_lock:
+            if _nlu_engine is None:
+                import torch
 
-        from nlu import NLUEngine
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        # 有 GPU 时启用 4bit 量化节省显存，CPU 模式用全精度
-        _nlu_engine = NLUEngine(device=device, use_4bit=(device == "cuda"))
-        _nlu_engine.load()
-        logger.info("NLU 引擎已就绪")
+                from nlu import NLUEngine
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                # 有 GPU 时启用 4bit 量化节省显存，CPU 模式用全精度
+                engine = NLUEngine(device=device, use_4bit=(device == "cuda"))
+                engine.load()
+                _nlu_engine = engine
+                logger.info("NLU 引擎已就绪")
     return _nlu_engine
 
 
@@ -141,40 +146,91 @@ def get_nlu_status() -> tuple[bool, bool, str | None]:
     return _nlu_loading, _nlu_ready, _nlu_error
 
 
-def detect_symptoms_nlu(text: str) -> list[str]:
-    """仅使用 NLU 引擎提取症状，失败则抛出异常"""
-    # 证型→症状展开（用户可能直接输入"肾虚""脾虚"等）
+def _expand_syndrome_terms(
+    text: str, max_syndromes: int = 3, max_extra_symptoms: int = 12
+) -> str:
+    """检测用户输入中的证型名（如"肾虚""脾虚"），附加对应症状提升召回。
+
+    仅当证型名**完整出现**在输入中时才展开。原实现还包含
+    `set(text) ⊆ set(证型名)` 的字符集合子集匹配与 startswith 前缀匹配，
+    会把"气血"这类短词误命中多个证型、向 NLU 注入大量无关症状，已删除。
+    展开症状数量有上限，避免淹没用户真实描述。
+    """
     expanded = list(text)
     try:
         from tcm_recommender.extended_config import EXTENDED_SYNDROME_DEFINITIONS
 
+        matched_syndromes = 0
+        extra_symptoms = 0
         for syn_name, syn_info in EXTENDED_SYNDROME_DEFINITIONS.items():
-            text_in_syn = text in syn_name
-            syn_in_text = syn_name in text
-            startswith = syn_name.startswith(text) or text.startswith(syn_name)
-            char_match = set(text) <= set(syn_name) and len(text) >= 2
-            if text_in_syn or syn_in_text or startswith or char_match:
-                logger.info(
-                    "检测到证型名: %s → %s，展开症状: %s",
-                    text,
-                    syn_name,
-                    syn_info["symptoms"][:5],
-                )
-                expanded.extend(syn_info["symptoms"])
+            if matched_syndromes >= max_syndromes or extra_symptoms >= max_extra_symptoms:
+                break
+            if syn_name and syn_name in text:
+                logger.info("检测到证型名: %s，展开症状", syn_name)
+                for symptom in syn_info["symptoms"]:
+                    if extra_symptoms >= max_extra_symptoms:
+                        break
+                    expanded.append(symptom)
+                    extra_symptoms += 1
+                matched_syndromes += 1
     except ImportError:
         pass
-    enhanced_text = "".join(expanded)
+    return "".join(expanded)
+
+
+def detect_symptoms_nlu(text: str) -> list[str]:
+    """仅使用 NLU 引擎提取症状，失败则抛出异常（降级请用 extract_symptoms_with_fallback）"""
+    enhanced_text = _expand_syndrome_terms(text)
 
     # ── NLU 提取（无降级）──
     engine = _get_nlu_engine()
     if not engine:
         raise RuntimeError("NLU 引擎不可用，无法提取症状")
     result = engine.extract_symptoms(enhanced_text)
-    # print(f"[NLU DEBUG] raw={result}, text={enhanced_text[:50]}")
     if not result:
         raise RuntimeError("NLU 引擎未提取到任何症状")
     logger.info("NLU 提取症状: %s", result)
     return result
+
+
+def _extract_symptoms_by_keywords(text: str) -> list[str]:
+    """关键词匹配降级：别名映射 + 标准症状词表直接匹配（不依赖任何模型）。"""
+    try:
+        from core.tcm_config import SYMPTOM_ALIAS_MAP, SYMPTOM_LIST
+    except ImportError:
+        logger.exception("关键词降级所需的词表导入失败")
+        return []
+    found: set[str] = set()
+    for alias, standard in SYMPTOM_ALIAS_MAP.items():
+        if alias and alias in text:
+            found.add(standard)
+    for symptom in SYMPTOM_LIST:
+        if symptom in text:
+            found.add(symptom)
+    return sorted(found)[:20]
+
+
+def extract_symptoms_with_fallback(text: str) -> tuple[list[str], str]:
+    """症状提取三级降级链，保证查询不因 NLU 失败而失败。
+
+    1. "nlu"     — Qwen 语义抽取（首选，失败/为空时降级）
+    2. "keyword" — 别名映射 + 标准词表关键词匹配
+    3. "none"    — 返回空列表，由 service.query 走纯智能搜索回答
+
+    Returns:
+        (symptoms, mode)，mode ∈ {"nlu", "keyword", "none"}
+    """
+    try:
+        result = detect_symptoms_nlu(text)
+        return result, "nlu"
+    except Exception as exc:
+        logger.warning("NLU 提取失败(%s: %s)，降级到关键词匹配", type(exc).__name__, exc)
+
+    keywords = _extract_symptoms_by_keywords(text)
+    if keywords:
+        logger.info("关键词匹配到症状: %s", keywords)
+        return keywords, "keyword"
+    return [], "none"
 
 
 logger = logging.getLogger(__name__)
@@ -249,10 +305,10 @@ class TCMDesktopService:
         self._recommender_available = False
 
     def _resolve_history_file(self):
-        root = _get_project_root()
-        data_dir = (root / "data").resolve()
-        data_dir.mkdir(parents=True, exist_ok=True)
-        return data_dir / "history.json"
+        # 可写数据目录（打包环境为 %LOCALAPPDATA%/TCMAI/data，开发环境为项目 data/）
+        from core.paths import get_history_file
+
+        return get_history_file()
 
     @contextmanager
     def _acquire_file_lock(self):
@@ -290,7 +346,7 @@ class TCMDesktopService:
             "symptoms": [str(s)[:64] for s in symptoms[:20]],
             "answer": str(item.get("answer", ""))[:4000],
             "timestamp": str(item.get("timestamp", ""))[:32],
-            "mode": "ai" if item.get("mode") == "ai" else "ai",
+            "mode": item.get("mode", "ai"),
         }
 
     def _normalize_history(self, data: Any) -> list[dict[str, Any]]:
@@ -365,7 +421,10 @@ class TCMDesktopService:
             from tcm_recommender.recommend import TCMRecommender
 
             root = str(_get_project_root())
-            db_path = os.path.join(root, "data", "tcm_knowledge.db")
+            from core.paths import ensure_database
+
+            writable_db = ensure_database()
+            db_path = str(writable_db) if writable_db else os.path.join(root, "data", "tcm_knowledge.db")
             model_path = os.path.join(root, "tcm_recommender", "best_model.pth")
             if not os.path.exists(db_path) or not os.path.exists(model_path):
                 logger.warning("推荐模型或数据库文件不存在，AI 模式不可用")
@@ -385,6 +444,247 @@ class TCMDesktopService:
 
         return self._recommender
 
+    def _get_kg_enhanced(self):
+        """懒加载 KG 增强推荐器（包裹已加载的 DL 推荐器 + 知识图谱）。
+
+        依赖 networkx 反序列化 kg_cache.pkl；任一环节失败均返回 None，
+        由调用方优雅降级（与 NLU 降级哲学一致）。
+        """
+        if hasattr(self, "_kg_enhanced"):
+            return self._kg_enhanced
+        self._kg_enhanced = None
+        try:
+            from kg.recommender import KGEnhancedRecommender
+            from kg.query import KnowledgeGraphQuery
+
+            rec = self._get_recommender()
+            if rec is None:
+                logger.warning("DL 推荐器不可用，跳过 KG 增强")
+                return None
+
+            import pickle
+
+            from core.paths import get_data_dir
+
+            root = str(_get_project_root())
+            candidates = [
+                os.path.join(str(get_data_dir()), "kg_cache.pkl"),
+                os.path.join(root, "data", "kg_cache.pkl"),
+            ]
+            kg_cache = next((p for p in candidates if os.path.exists(p)), None)
+            if not kg_cache:
+                logger.warning("未找到 kg_cache.pkl，跳过 KG 增强")
+                return None
+
+            with open(kg_cache, "rb") as f:
+                graph = pickle.load(f)
+            kg = KnowledgeGraphQuery(graph)
+            self._kg_enhanced = KGEnhancedRecommender(rec, kg)
+            logger.info("KG 增强推荐器初始化成功")
+        except Exception as exc:
+            logger.warning("KG 增强初始化失败（已跳过）: %s", exc)
+            self._kg_enhanced = None
+        return self._kg_enhanced
+
+    def _build_enrichment(self, query_text, symptoms, intel_result, base_safety):
+        """构建「AI 解读」+「知识图谱辨证」+「组方草案」三段增强文本。
+
+        把 KG 融合接进主链路：每次查询都运行 KGEnhancedRecommender，
+        取其推理路径 / 毒性与配伍禁忌洞察，并结合检索证据合成连贯解读。
+        任何异常都返回 ("", "", "")，保证主链路不受影响（优雅降级）。
+        """
+        interpret_text = ""
+        kg_text = ""
+        rx_text = ""
+        try:
+            kg_paths = None
+            kg_safety_warn = []
+            kg_insights = {}
+            kg = self._get_kg_enhanced()
+            if kg is not None and symptoms:
+                kg_res = kg.recommend(
+                    " ".join(symptoms), top_k_herb=10, top_k_formula=5
+                )
+                kg_paths = kg_res.get("reasoning_paths")
+                kg_insights = kg_res.get("kg_insights") or {}
+                kg_safety_warn = (kg_res.get("safety") or {}).get("kg_warnings") or []
+                rx_text = self._generate_rx_text(symptoms, kg_res, kg)
+
+            from rag.synthesizer import synthesize
+
+            interpret_text = synthesize(
+                query_text, symptoms, intel_result,
+                kg_paths=kg_paths, safety=base_safety,
+            )
+
+            lines = []
+            if kg_paths:
+                for p in kg_paths[:4]:
+                    if p.get("detail"):
+                        lines.append(f"· {p['detail']}")
+            if kg_insights.get("toxic_warning"):
+                lines.append(f"⚠️ {kg_insights['toxic_warning']}")
+            for w in kg_insights.get("incompatible_warning") or []:
+                lines.append(f"⚠️ {w}")
+            for w in kg_safety_warn:
+                lines.append(f"⚠️ {w}")
+            if lines:
+                kg_text = "【知识图谱辨证】\n" + "\n".join(lines)
+        except Exception as exc:
+            logger.warning("RAG/KG 增强生成失败（已跳过）: %s", exc)
+        # rx_text 独立返回：既并入 AI 解读尾部，也单独供「组方草案」弹窗使用
+        if rx_text:
+            kg_text = (kg_text + "\n\n" + rx_text).strip()
+        return interpret_text, kg_text, rx_text
+
+    def _generate_rx_text(self, symptoms: list[str], kg_res: dict, kg) -> str:
+        """AI 组方草案（药性驱动 + 配伍硬约束 + 已入库方剂备选，供医师审核）。
+
+        任何异常返回 ""，保证主链路不受影响。
+        """
+        try:
+            gen = getattr(self, "_rx_gen", None)
+            if gen is None:
+                from rx.generator import FormulaGenerator
+
+                gen = FormulaGenerator(
+                    getattr(getattr(kg, "model", None), "db_path", None) or None
+                )
+                self._rx_gen = gen
+            res = gen.generate(
+                symptoms=symptoms,
+                herb_candidates=[
+                    {"name": h.get("name", ""), "score": h.get("score", 0)}
+                    for h in (kg_res.get("herbs") or [])
+                ],
+                syndrome_name=(kg_res.get("syndrome") or {}).get("name"),
+                matched_syndromes=(kg_res.get("syndrome_analysis") or {}).get(
+                    "matched_syndromes"
+                ),
+                alternative_formulas=[
+                    f.get("name", "") for f in (kg_res.get("formulas") or [])
+                ],
+            )
+            return res.get("text") or ""
+        except Exception as exc:
+            logger.warning("AI 组方生成失败（已跳过）: %s", exc)
+            return ""
+
+    @staticmethod
+    def _scores_saturated(scores: list[float], threshold: float = 0.999) -> bool:
+        """检测模型输出分数是否大面积饱和（sigmoid 输出大量 1.0）。
+
+        README「实现现状与已知局限」实测 Top-12 得分可全为 1.000——此时数值
+        不具备任何置信度含义，继续展示"置信度 1.00"是虚假的精确暗示，
+        应整体隐藏而不是照常显示。
+        """
+        scores = [s for s in scores if isinstance(s, (int, float))]
+        if len(scores) < 2:
+            return True  # 单条结果缺少对比基准，数值无意义
+        saturated = sum(1 for s in scores if s >= threshold)
+        return saturated / len(scores) >= 0.5
+
+    @staticmethod
+    def _short(text: str, n: int = 20) -> str:
+        text = (text or "").strip().rstrip("。；;")
+        return text[:n] + ("…" if len(text) > n else "")
+
+    def _build_answer_parts(
+        self,
+        query_text: str,
+        symptoms: list[str],
+        result: dict[str, Any],
+        safety: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        """把推荐结果拆成「最简主文 + 模块化详情」。
+
+        Returns:
+            compact: 主文本框内容——只写最简的推荐方剂 + 推荐药材（一屏看全）
+            sections: 模块化详情（由结果区下方按钮逐个弹窗展示）：
+                      症状分析 / 安全与配伍 / 养生建议
+                      （智能搜索发现、组方草案由 query 流程追加）
+        """
+        compact: list[str] = []
+        if result.get("formulas"):
+            compact.append("【推荐方剂】")
+            for i, f in enumerate(result["formulas"][:3], 1):
+                func = (f.get("functions") or "").strip()
+                mark = " ☠️" if f.get("contains_toxic") else ""
+                line = f"{i}. {f['name']}{mark}"
+                if func:
+                    line += f" —— {self._short(func, 18)}"
+                compact.append(line)
+        if result.get("herbs"):
+            compact.append("")
+            compact.append("【推荐药材】")
+            for h in result["herbs"][:6]:
+                eff = (h.get("efficacy") or "").strip()
+                usage = (
+                    h.get("usage") or self.get_herb_dosage(h["name"]) or ""
+                ).strip()
+                mark = " ☠️" if h.get("is_toxic") else ""
+                segs = [h["name"] + mark]
+                if eff:
+                    segs.append(self._short(eff, 10))
+                if usage:
+                    segs.append(usage.replace("，", " "))
+                compact.append(" · ".join(segs))
+        if not compact:
+            compact.append("（本次未生成结构化推荐，详见下方模块）")
+        compact_text = "\n".join(compact)
+
+        # ── 模块化详情 ──
+        sections: dict[str, str] = {}
+
+        analysis = ["【症状分析】"]
+        analysis.append(
+            f"您描述的症状：{'、'.join(symptoms) if symptoms else query_text}"
+        )
+        if result.get("symptoms"):
+            analysis.append(f"系统识别到：{'、'.join(result['symptoms'])}")
+        top_formula = (result.get("formulas") or [{}])[0].get("name", "")
+        if top_formula:
+            analysis.append(f"首选方剂：「{top_formula}」（辨证思路见「AI 解读」页）")
+        sections["症状分析"] = "\n".join(analysis)
+
+        safety_lines = []
+        blocked = result.get("blocked_toxic_herbs") or []
+        if blocked:
+            safety_lines.append("【安全拦截】")
+            safety_lines.append(
+                f"⚠️ 以下毒性/峻烈药材已被安全策略拦截：{'、'.join(blocked)}"
+            )
+            safety_lines.append(
+                "   此类药材必须由执业中医师根据病情、体质与炮制规范决定，本系统不予推荐。"
+            )
+        safety_lines.append("【安全提示】")
+        if safety:
+            for w in (safety.get("incompatibilities") or [])[:3]:
+                safety_lines.append(f"⚠️ 配伍禁忌 — {self._short(w, 60)}")
+            if safety.get("toxic_herbs"):
+                safety_lines.append(
+                    f"☠️ 含毒性药材：{'、'.join(safety['toxic_herbs'])}，须在医师指导下使用"
+                )
+            cautions = (safety.get("warnings") or [])[:3]
+            if cautions:
+                safety_lines.append("药材一般注意事项：")
+                for w in cautions:
+                    safety_lines.append(f"· {self._short(w, 46)}")
+            if safety.get("is_safe"):
+                safety_lines.append("✓ 未检测到十八反/十九畏类配伍禁忌，且不含毒性药材")
+        else:
+            safety_lines.append("⚠️ 未能完成安全校验，请务必咨询执业中医师后再使用")
+        sections["安全与配伍"] = "\n".join(safety_lines)
+
+        try:
+            tips = generate_health_tips(set(result.get("symptoms", []) or symptoms))
+        except Exception:
+            tips = []
+        if tips:
+            sections["养生建议"] = "\n".join(tips)
+
+        return compact_text, sections
+
     def _format_recommendation_as_answer(
         self,
         query_text: str,
@@ -392,85 +692,24 @@ class TCMDesktopService:
         result: dict[str, Any],
         safety: dict[str, Any] | None = None,
     ) -> str:
-        """将推荐模型的结构化结果格式化为自然语言回答"""
-        parts = []
-
-        parts.append("【症状分析】")
-        parts.append(
-            f"根据您描述的症状：{'、'.join(symptoms) if symptoms else query_text}"
+        """（兼容）完整文本回答：compact + 全部模块拼接，供历史记录使用。"""
+        compact, sections = self._build_answer_parts(
+            query_text, symptoms, result, safety
         )
+        full = [compact]
+        for body in sections.values():
+            full.append("\n" + body)
+        return "\n".join(full)
 
-        if result.get("symptoms"):
-            parts.append(f"系统识别到：{'、'.join(result['symptoms'])}")
-
-        if result.get("formulas"):
-            parts.append("\n【推荐方剂】")
-            for i, formula in enumerate(result["formulas"][:5], 1):
-                toxic_mark = " ☠️（含毒性药材，须医师指导）" if formula.get("contains_toxic") else ""
-                parts.append(
-                    f"{i}. {formula['name']}（置信度：{formula['score']:.2f}）{toxic_mark}"
-                )
-                if formula.get("composition"):
-                    parts.append(f"   组成：{formula['composition']}")
-                if formula.get("functions"):
-                    parts.append(f"   功效：{formula['functions']}")
-
-        if result.get("herbs"):
-            parts.append("\n【推荐药材】")
-            for i, herb in enumerate(result["herbs"][:10], 1):
-                toxic_tag = " ☠️" if herb.get("is_toxic") else ""
-                parts.append(
-                    f"{i}. {herb['name']}{toxic_tag}（置信度：{herb['score']:.2f}）"
-                )
-                if herb.get("efficacy"):
-                    parts.append(f"   功效：{herb['efficacy'][:80]}")
-                usage = herb.get("usage") or self.get_herb_dosage(herb["name"])
-                if usage:
-                    parts.append(f"   用量：{usage}")
-
-        # 安全硬拦截结果提示：模型命中过毒性药材、但已被移除
-        blocked = result.get("blocked_toxic_herbs") or []
-        if blocked:
-            parts.append("\n【安全拦截】")
-            parts.append(
-                f"⚠️ 模型本可能输出以下毒性/峻烈药材，已按安全策略从推荐结果中移除："
-                f"{'、'.join(blocked)}"
-            )
-            parts.append(
-                "   此类药材必须由执业中医师根据病情、体质与炮制规范决定，"
-                "本系统不予推荐，请勿自行购买或服用。"
-            )
-
-        parts.append("\n【安全提示】")
-        if safety:
-            # 三级提示：配伍禁忌（需拦截）> 毒性药材 > 一般注意事项
-            for w in safety.get("incompatibilities") or []:
-                parts.append(f"⚠️ 配伍禁忌 — {w}")
-            if safety.get("toxic_herbs"):
-                toxic_names = "、".join(safety["toxic_herbs"])
-                parts.append(f"☠️ 含毒性药材：{toxic_names}，须在医师指导下使用")
-            cautions = safety.get("warnings") or []
-            if cautions:
-                parts.append("以下为药材一般注意事项（非配伍禁忌）：")
-                for w in cautions[:5]:
-                    parts.append(f"· {w}")
-            if safety.get("is_safe"):
-                parts.append("✓ 未检测到十八反/十九畏类配伍禁忌，且不含毒性药材")
-        else:
-            parts.append("⚠️ 未能完成安全校验，请务必咨询执业中医师后再使用")
-
-        parts.append("\n【养生建议】")
-        sym_set = set(result.get("symptoms", []) or symptoms)
-        parts.extend(generate_health_tips(sym_set))
-
-        return "\n".join(parts)
-
-    def query(self, query_text: str, symptoms: list[str]) -> dict[str, Any]:
+    def query(
+        self, query_text: str, symptoms: list[str], nlu_mode: str = "nlu"
+    ) -> dict[str, Any]:
         """纯 AI 模式查询（已移除快速模式降级）
 
         Args:
             query_text: 用户输入的查询文本
-            symptoms: 已检测的症状列表
+            symptoms: 已检测的症状列表（可能来自 NLU、关键词降级或为空）
+            nlu_mode: 症状识别方式，"nlu"/"keyword"/"none"（用于回答中如实说明）
 
         Returns:
             包含 AI 推荐结果 + 智能搜索增强的完整回答
@@ -517,6 +756,7 @@ class TCMDesktopService:
         # ========== AI 模型推理（最多重试 2 次） ==========
         answer = None
         knowledge_result = None
+        safety_result = None
 
         for attempt in range(2):
             try:
@@ -543,23 +783,31 @@ class TCMDesktopService:
                     continue
                 raise RuntimeError(f"AI 模型推理失败：{exc}") from exc
 
-        if answer is None:
-            raise RuntimeError("AI 模型未返回结果，请稍后重试。")
-
         # ========== 用智能搜索增强 AI 回答 ==========
-        final_answer = answer
-        if intel_knowledge_text and intel_knowledge_text != "暂无相关知识":
-            # 将智能搜索发现嵌入回答
-            enrichment = f"\n【智能搜索发现】\n{intel_knowledge_text}"
-            # 放在安全提示之前
-            if "【安全提示】" in final_answer:
-                final_answer = final_answer.replace(
-                    "【安全提示】", enrichment + "\n\n【安全提示】"
+        if answer is None:
+            # 三级降级第 3 层：模型链路无有效症状 → 纯智能搜索回答
+            logger.info("推荐模型无有效症状输入，降级为纯智能搜索回答")
+            if not intel_knowledge_text or intel_knowledge_text == "暂无相关知识":
+                raise RuntimeError(
+                    "未能从输入中识别出可分析的症状，请尝试更具体的症状描述"
+                    "（如：失眠、乏力、头晕、咳嗽）。"
                 )
-            else:
-                final_answer += enrichment
+            final_answer = intel_knowledge_text
+            knowledge = {"source": "intelligent_search"}
+        else:
+            final_answer = answer
+            if intel_knowledge_text and intel_knowledge_text != "暂无相关知识":
+                # 将智能搜索发现嵌入回答
+                enrichment = f"\n【智能搜索发现】\n{intel_knowledge_text}"
+                # 放在安全提示之前
+                if "【安全提示】" in final_answer:
+                    final_answer = final_answer.replace(
+                        "【安全提示】", enrichment + "\n\n【安全提示】"
+                    )
+                else:
+                    final_answer += enrichment
 
-        knowledge = knowledge_result or {}
+            knowledge = knowledge_result or {}
         if intel_result.get("recommended_formulas"):
             knowledge["intelligent_search"] = {
                 "symptoms": intel_result.get("symptoms", []),
@@ -571,6 +819,35 @@ class TCMDesktopService:
                 ],
             }
 
+        # ========== RAG 解读 + 知识图谱辨证（增强，失败则跳过） ==========
+        # 这两段为「基于检索证据的文本解读」，刻意不与结构化推荐混排，
+        # 而是作为独立字段 ai_interpretation 返回，供桌面端在「AI 解读」面板展示。
+        interpret_text, kg_text, rx_draft = self._build_enrichment(
+            safe_query, safe_symptoms, intel_result, safety_result
+        )
+        ai_interpretation = "\n\n".join(
+            p for p in (interpret_text, kg_text) if p
+        ).strip()
+
+        # ========== 组装模块化详情（结果区按钮弹窗逐个展示） ==========
+        sections = dict(knowledge.get("answer_sections") or {})
+        if (
+            intel_knowledge_text
+            and intel_knowledge_text != "暂无相关知识"
+            and answer is not None
+        ):
+            sections["智能搜索发现"] = intel_knowledge_text
+        if rx_draft:
+            sections["组方草案"] = rx_draft
+
+        # ========== 如实标注症状识别方式（降级时用户须知悉精度受限） ==========
+        nlu_notice = {
+            "keyword": "【症状识别方式】AI 语义模型本次不可用，已改用关键词匹配识别症状，识别能力有限。\n\n",
+            "none": "【症状识别方式】未能识别出标准症状，以下为基于全文检索的相关知识，不构成症状分析。\n\n",
+        }.get(nlu_mode, "")
+        if nlu_notice:
+            final_answer = nlu_notice + final_answer
+
         # ========== 结果校验（过滤"保证治愈/根治"等绝对化断言 + 典籍溯源 + 合规提示） ==========
         verification = _get_result_verifier().verify(final_answer, knowledge)
         final_answer = verification["answer"]
@@ -580,12 +857,18 @@ class TCMDesktopService:
         history_item = self._append_history(
             safe_query, safe_symptoms, final_answer, "ai"
         )
+        if history_item is not None:
+            history_item["ai_interpretation"] = ai_interpretation
         return {
             "success": True,
             "answer": final_answer,
+            "answer_compact": knowledge.get("answer_compact") or final_answer,
+            "answer_sections": sections,
+            "ai_interpretation": ai_interpretation,
             "knowledge": knowledge,
             "disclaimer": disclaimer,
             "mode": "ai",
+            "nlu_mode": nlu_mode,
             "has_warning": has_warning,
             "history_item": history_item,
         }
@@ -610,7 +893,7 @@ class TCMDesktopService:
         except Exception as exc:
             logger.warning("安全校验异常（已跳过）: %s", exc)
 
-        answer = self._format_recommendation_as_answer(
+        answer, answer_sections = self._build_answer_parts(
             query_text, symptoms, result, safety_result
         )
         knowledge = {
@@ -625,6 +908,8 @@ class TCMDesktopService:
                 for f in result.get("formulas", [])[:5]
             ],
             "source": "deep_learning_model",
+            "answer_compact": answer,
+            "answer_sections": answer_sections,
         }
         return answer, knowledge
 

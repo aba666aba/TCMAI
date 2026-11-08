@@ -424,6 +424,7 @@ class KnowledgeConfig:
         tables = [
             "symptom_aliases", "symptom_formula_map", "tcm_synonyms",
             "formula_aliases", "herb_aliases", "symptom_info", "syndrome_definitions",
+            "patent_aliases", "patent_medicines",
         ]
         stats = {}
         for table in tables:

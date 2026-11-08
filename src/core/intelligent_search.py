@@ -514,7 +514,6 @@ class IntelligentSearch:
         # --- 标注方剂匹配来源 ---
         db_formulas = multi_results.get("formulas", [])
         db_formula_names = {f["name"] for f in db_formulas}
-        {h["name"] for h in multi_results.get("herbs", [])}
 
         # 来自证型推理的方剂（补充到结果中）
         recommended_formulas: list[dict[str, Any]] = []

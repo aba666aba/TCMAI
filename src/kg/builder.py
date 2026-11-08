@@ -89,7 +89,14 @@ class TCMKnowledgeGraph:
 
     def __init__(self, db_path: str | None = None):
         self.graph = nx.MultiDiGraph()
-        self.db_path = db_path or str(_get_project_root() / "data" / "tcm_knowledge.db")
+        if db_path is None:
+            from core.paths import ensure_database
+
+            writable_db = ensure_database()
+            db_path = str(writable_db) if writable_db else str(
+                _get_project_root() / "data" / "tcm_knowledge.db"
+            )
+        self.db_path = db_path
         self._db = sqlite3.connect(self.db_path)
 
         # 计数

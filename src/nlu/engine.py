@@ -85,6 +85,7 @@ class NLUEngine:
         self._tokenizer = None
         self._symptom_list_text = ""
         self._vocab_cache = None
+        self._system_prompt_cache: str | None = None
 
     def _build_symptom_list_text(self) -> str:
         if self._symptom_list_text:
@@ -213,7 +214,6 @@ class NLUEngine:
 
         except Exception as exc:
             logger.error("NLU 模型加载失败: %s", exc)
-            self._pipe = None
             raise
 
     def extract_symptoms(self, text: str) -> list[str]:
@@ -225,8 +225,12 @@ class NLUEngine:
                 logger.error("NLU 模型加载失败，无法提取症状: %s", exc)
                 raise RuntimeError(f"NLU 模型加载失败: {exc}") from exc
 
-        symptom_list = self._build_symptom_list_text()
-        prompt = _SYSTEM_PROMPT.format(症状列表=symptom_list)
+        # system prompt 内容固定（229 症状列表拼接开销大），缓存 format 结果
+        if self._system_prompt_cache is None:
+            self._system_prompt_cache = _SYSTEM_PROMPT.format(
+                症状列表=self._build_symptom_list_text()
+            )
+        prompt = self._system_prompt_cache
         messages = [
             {"role": "system", "content": prompt},
             {"role": "user", "content": f"患者描述：{text}"},
@@ -248,8 +252,7 @@ class NLUEngine:
                 output_ids = self._model.generate(
                     **inputs,
                     max_new_tokens=256,
-                    temperature=0.1,
-                    do_sample=False,
+                    do_sample=False,  # 贪心解码；temperature 等采样参数在 do_sample=False 时不生效
                     pad_token_id=self._tokenizer.pad_token_id,
                     eos_token_id=self._tokenizer.eos_token_id,
                 )

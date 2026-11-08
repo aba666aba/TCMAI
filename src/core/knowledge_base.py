@@ -34,21 +34,16 @@ class KnowledgeBase:
             db_path: 数据库文件路径。为空时按优先级自动查找：
                      环境变量 TCMAI_ROOT > frozen exe 同级 > 源码上级 data/
         """
-        # 数据库路径降级链：环境变量 → 打包exe目录 → 源码目录
+        # 数据库路径：优先使用可写数据目录中的副本（打包环境首次启动自动播种），
+        # 播种失败或无库时回退到应用根目录（只读，兼容旧布局）
         if db_path is None:
-            tcm_root = os.environ.get("TCMAI_ROOT")
-            if tcm_root:
-                db_path = os.path.join(tcm_root, "data", "tcm_knowledge.db")
-            else:
-                import sys
+            from core.paths import ensure_database, get_app_root
 
-                if getattr(sys, "frozen", False):
-                    # PyInstaller 打包后，exe 和 data/ 在同一目录
-                    base_path = Path(sys.executable).parent
-                else:
-                    # 开发环境：向上两级到 TCMAI 根目录
-                    base_path = Path(__file__).resolve().parents[2]
-                db_path = base_path / "data" / "tcm_knowledge.db"
+            writable_db = ensure_database()
+            if writable_db is not None:
+                db_path = writable_db
+            else:
+                db_path = get_app_root() / "data" / "tcm_knowledge.db"
 
         self.db_path = str(db_path)
         self.conn: sqlite3.Connection | None = None

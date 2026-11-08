@@ -833,3 +833,37 @@ def is_toxic_herb(name: str) -> bool:
         return False
     return any(t in name for t in EXTENDED_TOXIC_HERBS)
 
+
+# =====================================================================
+# 配伍禁忌权威药对表（十八反 / 十九畏）—— 推荐 safety 与 AI 组方共用的
+# 单一数据源（原表位于 recommend.py，现提为无 torch 依赖的共享配置）。
+# =====================================================================
+INCOMPATIBLE_PAIRS: tuple[tuple[str, str], ...] = (
+    # 十八反（《儒门事亲》）
+    ("甘草", "甘遂"), ("甘草", "大戟"), ("甘草", "芫花"), ("甘草", "海藻"),
+    ("乌头", "贝母"), ("乌头", "瓜蒌"), ("乌头", "半夏"),
+    ("乌头", "白蔹"), ("乌头", "白及"),
+    ("藜芦", "人参"), ("藜芦", "沙参"), ("藜芦", "丹参"),
+    ("藜芦", "玄参"), ("藜芦", "细辛"), ("藜芦", "芍药"),
+    # 十九畏
+    ("硫黄", "朴硝"), ("水银", "砒霜"), ("狼毒", "密陀僧"),
+    ("巴豆", "牵牛"), ("丁香", "郁金"), ("川乌", "犀角"),
+    ("草乌", "犀角"), ("牙硝", "三棱"), ("官桂", "石脂"),
+    ("人参", "五灵脂"),
+)
+
+
+def pair_conflicts(herb: str, selected: list[str]) -> list[str]:
+    """返回 herb 与 selected 组合命中的禁忌药对另一味药名（含同义包含匹配）。"""
+    hits = []
+    for a, b in INCOMPATIBLE_PAIRS:
+        if herb == a:
+            other = b
+        elif herb == b:
+            other = a
+        else:
+            continue
+        if any((other in o or o in other) and o != herb for o in selected):
+            hits.append(other)
+    return hits
+

@@ -37,7 +37,24 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tcm_recommender.data_pipeline import TCMDataPipeline  # noqa: E402
+from tcm_recommender.extended_config import is_toxic_herb  # noqa: E402
 from tcm_recommender.model import TCMNet, create_model  # noqa: E402
+
+
+def _to_tensor(arr, dtype=None):
+    """numpy→tensor 的 ABI 安全转换（走 frombuffer 原始内存，绕开 numpy 桥接）。
+
+    部分云镜像的 torch 与环境 numpy 编译 ABI 不匹配（from_numpy 抛
+    "expected np.ndarray"），frombuffer 直接消费缓冲区，不经过
+    torch 的 numpy 类型检查，任何环境都可用且比 tolist 回退快数十倍。
+    """
+    if dtype is None:
+        dtype = torch.long if np.asarray(arr).dtype.kind in "iu" else torch.float32
+    np_dtype = {torch.float32: np.float32, torch.long: np.int64,
+                torch.float64: np.float64, torch.int32: np.int32}[dtype]
+    a = np.ascontiguousarray(arr, dtype=np_dtype)
+    t = torch.frombuffer(bytearray(a.tobytes()), dtype=dtype)
+    return t.reshape(a.shape)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -48,6 +65,8 @@ logger = logging.getLogger(__name__)
 MAX_SYMPTOMS = 32
 NATURE_LIST = ["寒", "热", "温", "凉", "平"]
 FLAVOR_LIST = ["酸", "苦", "甘", "辛", "咸"]
+MERIDIAN_LIST = ["心", "肝", "脾", "肺", "肾", "胆", "胃",
+                 "大肠", "小肠", "膀胱", "三焦", "心包"]
 
 
 # 数据集
@@ -83,9 +102,9 @@ class TCMDataset(Dataset):
 
     def __getitem__(self, idx):
         return {
-            "symptom_ids": torch.from_numpy(self.symptom_ids[idx].astype(np.int64)),
-            "symptom_mask": torch.from_numpy(self.symptom_mask[idx].astype(np.float32)),
-            "herb_labels": torch.from_numpy(self.herb_labels[idx].astype(np.float32)),
+            "symptom_ids": _to_tensor(self.symptom_ids[idx].astype(np.int64), torch.long),
+            "symptom_mask": _to_tensor(self.symptom_mask[idx].astype(np.float32), torch.float32),
+            "herb_labels": _to_tensor(self.herb_labels[idx].astype(np.float32), torch.float32),
             "formula_label": int(self.formula_labels[idx]),
             "syndrome_label": int(self.syndrome_labels[idx]),
             "sample_weight": float(self.sample_weights[idx]),
@@ -171,12 +190,37 @@ def build_herb_features(pipeline: TCMDataPipeline) -> dict[str, torch.Tensor]:
         if not found:
             flv_idx[mi - 1] = len(FLAVOR_LIST) + 1  # unknown category
 
-    logger.info("药材特征: chars=%s, categories=%s", num_chars, len(all_categories))
+    # ── v2 多热特征：性/味/归经（一味药"甘、辛"两味同时表达；归经入模） ──
+    nature_mh = torch.zeros(nh, len(NATURE_LIST))
+    flavor_mh = torch.zeros(nh, len(FLAVOR_LIST))
+    meridian_mh = torch.zeros(nh, len(MERIDIAN_LIST))
+    for mi in range(1, nh + 1):
+        herb = pipeline.herbs[pipeline.model_idx_to_herb_db_id[mi]]
+        nat = herb.get("nature", "") or ""
+        flv = herb.get("flavor", "") or ""
+        mer = herb.get("meridian", "") or ""
+        for ni, n_name in enumerate(NATURE_LIST):
+            if n_name in nat:
+                nature_mh[mi - 1, ni] = 1.0
+        for fi, f_name in enumerate(FLAVOR_LIST):
+            if f_name in flv:
+                flavor_mh[mi - 1, fi] = 1.0
+        for ci, m_name in enumerate(MERIDIAN_LIST):
+            if m_name in mer:
+                meridian_mh[mi - 1, ci] = 1.0
+
+    logger.info(
+        "药材特征: chars=%s, categories=%s (v2 多热: 性/味/归经)",
+        num_chars, len(all_categories),
+    )
     return {
         "char_multihot": char_mh,
         "category_idx": cat_idx,
         "nature_idx": nat_idx,
         "flavor_idx": flv_idx,
+        "nature_multihot": nature_mh,
+        "flavor_multihot": flavor_mh,
+        "meridian_multihot": meridian_mh,
         "num_chars": num_chars,
         "num_categories": len(all_categories) + 1,  # +1 for padding
         "num_natures": len(NATURE_LIST) + 2,  # +1 padding +1 unknown
@@ -199,18 +243,27 @@ class Trainer:
         grad_accum: int = 1,
         contrastive_weight: float = 0.2,
         label_smoothing: float = 0.05,
+        toxic_herb_mask: Optional[torch.Tensor] = None,
+        rank_loss_weight: float = 0.2,
     ):
         self.model = model.to(device)
         self.device = device
         self.grad_accum = grad_accum
         self.contrastive_weight = contrastive_weight
         self.label_smoothing = label_smoothing
+        self.rank_loss_weight = rank_loss_weight
+        # 毒性药材掩码 [H]（bool）：训练期对毒性药负样本加权抑制，
+        # 压低其被推荐的概率（与推理期安全硬拦截双保险）
+        self.toxic_mask = (
+            toxic_herb_mask.to(device) if toxic_herb_mask is not None else None
+        )
 
-        # 药材特征预加载到设备
+        # 药材特征预加载到设备（v2：性味/归经 multi-hot）
         self.herb_char = herb_features["char_multihot"].to(device)
         self.herb_cat = herb_features["category_idx"].to(device)
-        self.herb_nat = herb_features["nature_idx"].to(device)
-        self.herb_flv = herb_features["flavor_idx"].to(device)
+        self.herb_nat = herb_features["nature_multihot"].to(device).float()
+        self.herb_flv = herb_features["flavor_multihot"].to(device).float()
+        self.herb_mer = herb_features["meridian_multihot"].to(device).float()
 
         # 损失函数
         self.syn_criterion = nn.CrossEntropyLoss(
@@ -287,6 +340,12 @@ class Trainer:
         weight = torch.ones_like(scores)
         weight[pos_mask] = 1.0
         weight[neg_mask] = weight.new_tensor(neg_weight_val)
+        # 毒性药负样本额外抑制（权重 ≥20），从训练源头降低毒性药被推荐的可能
+        if self.toxic_mask is not None:
+            tm = self.toxic_mask.view(1, -1).expand_as(neg_mask)
+            toxic_neg = neg_mask & tm
+            if toxic_neg.any():
+                weight[toxic_neg] = weight.new_tensor(max(float(neg_weight_val), 20.0))
 
         loss = F.binary_cross_entropy_with_logits(
             scores[active_mask],
@@ -294,6 +353,24 @@ class Trainer:
             weight=weight[active_mask],
         )
         return loss
+
+    def _rank_loss(self, scores: torch.Tensor, labels: torch.Tensor,
+                   margin: float = 0.5) -> torch.Tensor:
+        """pairwise 排序损失：正组均值 vs 最难负样本的 hinge。
+
+        治"分数饱和"（实测 Top-12 全 1.000）：BCE 只压正类趋近 1，
+        ranking 项额外要求正类分数高出最难负类一个 margin，
+        让输出分数重新具备相对排序含义。
+        """
+        pos_mask = labels > 0.5
+        neg_mask = labels < -0.5
+        ok = pos_mask.any(dim=1) & neg_mask.any(dim=1)
+        if ok.sum() == 0:
+            return scores.new_zeros(())
+        pos_mean = (scores * pos_mask).sum(dim=1) / pos_mask.sum(dim=1).clamp(min=1)
+        neg_hard = scores.masked_fill(~neg_mask, -1e4).max(dim=1).values
+        loss = F.relu(margin - pos_mean + neg_hard)
+        return loss[ok].mean()
 
     def train_step(self, batch: dict) -> dict[str, float]:
         self.model.train()
@@ -320,6 +397,7 @@ class Trainer:
                 self.herb_cat,
                 self.herb_nat,
                 self.herb_flv,
+                self.herb_mer,
             )
 
             loss = 0.0
@@ -362,6 +440,12 @@ class Trainer:
             if not torch.isnan(l_cont):
                 loss += l_cont * self.contrastive_weight
                 metrics["cont_loss"] = l_cont.item()
+
+            # 排序损失（治分数饱和：正组均值须高出最难负样本 margin）
+            l_rank = self._rank_loss(herb_scores, herb_lbl)
+            if not torch.isnan(l_rank) and l_rank.item() > 0:
+                loss += l_rank * self.rank_loss_weight
+                metrics["rank_loss"] = l_rank.item()
 
         # 反向传播
         loss = loss / self.grad_accum
@@ -408,6 +492,7 @@ class Trainer:
                 self.herb_cat,
                 self.herb_nat,
                 self.herb_flv,
+                self.herb_mer,
             )
 
             # 证型准确率
@@ -487,6 +572,7 @@ class Trainer:
             n_steps = 0
 
             pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs}")
+            last_batch_idx = None
             for batch_idx, batch in enumerate(pbar):
                 metrics = self.train_step(batch)
                 for k, v in metrics.items():
@@ -503,9 +589,11 @@ class Trainer:
                         if k in ("total_loss", "syn_loss")
                     }
                 )
+                last_batch_idx = batch_idx
 
             # 处理最后的不完整梯度累积
-            if (batch_idx + 1) % self.grad_accum != 0:
+            # 空训练集时 last_batch_idx 为 None，跳过以避免 NameError
+            if last_batch_idx is not None and (last_batch_idx + 1) % self.grad_accum != 0:
                 self.optimizer_step()
 
             # 验证
@@ -550,7 +638,7 @@ class Trainer:
                 "config": {
                     "d_model": self.model.d_model,
                     "num_layers": len(list(self.model.symptom_encoder.layers)),
-                    "version": "v2",
+                    "version": "v3-compositional",
                 },
             },
             path,
@@ -585,6 +673,12 @@ def main():
         help="模型维度 (512 for 8M params, 384 for ~5M)",
     )
     parser.add_argument("--num-layers", type=int, default=4)
+    parser.add_argument(
+        "--rank-loss-weight",
+        type=float,
+        default=0.2,
+        help="pairwise 排序损失权重（治分数饱和）",
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -643,40 +737,76 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
-        num_workers=0,
+        num_workers=4,
         pin_memory=True,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=4,
         pin_memory=True,
     )
     logger.info("训练集: %s | 验证集: %s", n_train, n_val)
 
-    # 2. 特征（优先从 npz 加载缓存，无需重复连接数据库）
+    # 2. 特征（优先从 npz 加载缓存，无需重复连接数据库；缺 v2 multi-hot 时回退重建）
     herb_feat_data = data.get("herb_features")
-    if herb_feat_data is not None:
+    hf_has_v2 = (
+        herb_feat_data is not None
+        and "nature_multihot" in (herb_feat_data.item() or {})
+    )
+    if herb_feat_data is not None and hf_has_v2:
         logger.info("从 npz 加载缓存的药材特征...")
+        _hf = herb_feat_data.item()
         herb_feat = {
-            "char_multihot": torch.from_numpy(herb_feat_data.item()["char_multihot"]),
-            "category_idx": torch.from_numpy(herb_feat_data.item()["category_idx"]),
-            "nature_idx": torch.from_numpy(herb_feat_data.item()["nature_idx"]),
-            "flavor_idx": torch.from_numpy(herb_feat_data.item()["flavor_idx"]),
-            "num_chars": int(herb_feat_data.item()["num_chars"]),
-            "num_categories": int(herb_feat_data.item()["num_categories"]),
-            "num_natures": int(herb_feat_data.item()["num_natures"]),
-            "num_flavors": int(herb_feat_data.item()["num_flavors"]),
+            "char_multihot": _to_tensor(_hf["char_multihot"], torch.float32),
+            "category_idx": _to_tensor(_hf["category_idx"], torch.long),
+            "nature_multihot": _to_tensor(_hf["nature_multihot"], torch.float32),
+            "flavor_multihot": _to_tensor(_hf["flavor_multihot"], torch.float32),
+            "meridian_multihot": _to_tensor(_hf["meridian_multihot"], torch.float32),
+            "num_chars": int(_hf["num_chars"]),
+            "num_categories": int(_hf["num_categories"]),
+            "num_natures": int(_hf["num_natures"]),
+            "num_flavors": int(_hf["num_flavors"]),
         }
     else:
-        logger.info(
-            "构建药材特征（npz 中无缓存，建议用 data_pipeline 重新生成以加速训练）..."
-        )
+        if herb_feat_data is not None:
+            logger.warning(
+                "npz 药材特征缺 v2 multi-hot（归经/多味），改用当前数据库重建..."
+            )
+        else:
+            logger.info(
+                "构建药材特征（npz 中无缓存，建议用 data_pipeline 重新生成以加速训练）..."
+            )
         pipeline = TCMDataPipeline(args.db)
         pipeline.load_all()
         herb_feat = build_herb_features(pipeline)
         pipeline.close()
+
+    # 2.5 一致性守卫 + 组成矩阵 + 毒性掩码（组合式方剂表征，始终以当前库为准）
+    logger.info("解析方剂组成（组合式方剂表征）...")
+    pipe = TCMDataPipeline(args.db)
+    pipe.load_all()
+    if (pipe.num_symptoms, pipe.num_herbs, pipe.num_formulas, pipe.num_syndromes) != (
+        n_symptoms, n_herbs, n_formulas, n_syndromes
+    ):
+        pipe.close()
+        raise SystemExit(
+            "训练数据 data/train_data.npz 与当前数据库实体数不一致，直接训练会得到与库错位的模型。\n"
+            f"  npz(sym={n_symptoms},herb={n_herbs},form={n_formulas},syn={n_syndromes})\n"
+            f"  db(sym={pipe.num_symptoms},herb={pipe.num_herbs},form={pipe.num_formulas},syn={pipe.num_syndromes})\n"
+            "请删除 data/train_data.npz 后重新运行训练（将按当前库自动重新生成数据）。"
+        )
+    formula_comp = pipe.build_formula_composition()
+    herb_names_for_mask = [
+        pipe.herbs[pipe.model_idx_to_herb_db_id[i]]["name"]
+        for i in range(1, pipe.num_herbs + 1)
+    ]
+    pipe.close()
+    toxic_mask = torch.tensor(
+        [is_toxic_herb(n) for n in herb_names_for_mask], dtype=torch.bool
+    )
+    logger.info("毒性药材掩码: %d/%d 味", int(toxic_mask.sum()), len(toxic_mask))
 
     # 3. 模型
     logger.info("创建模型...")
@@ -691,6 +821,7 @@ def main():
         nhead=8,
         num_layers=args.num_layers,
         dropout=0.1,
+        formula_composition=_to_tensor(formula_comp, torch.float32),
     )
 
     # 4. 训练
@@ -701,6 +832,8 @@ def main():
         lr=args.lr,
         grad_accum=args.grad_accum,
         contrastive_weight=args.contrastive_weight,
+        toxic_herb_mask=toxic_mask,
+        rank_loss_weight=args.rank_loss_weight,
     )
     trainer.train(
         train_loader, val_loader, epochs=args.epochs, save_prefix="best_model"

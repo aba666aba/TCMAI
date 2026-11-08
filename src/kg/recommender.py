@@ -80,6 +80,8 @@ class KGEnhancedRecommender:
 
         # 修复症状显示（从解析结果取）
         fused["symptoms"] = valid_symptoms
+        # 证型分析透出（供 AI 组方引擎取治法/描述）
+        fused["syndrome_analysis"] = kg_result.get("syndrome_analysis") or {}
 
         # 步骤5: 构建推理路径
         fused["reasoning_paths"] = self._build_paths(valid_symptoms, kg_result)
@@ -120,7 +122,6 @@ class KGEnhancedRecommender:
         # 收集证型路径上的推荐药材/方剂
         path_herbs = {}
         path_formulas = {}
-        len(syn_analysis.get("matched_syndromes", []))
         for syn in syn_analysis.get("matched_syndromes", []):
             syn_name = syn["name"]
             match_ratio = syn["matched_symptom_count"] / max(len(symptoms), 1)
@@ -170,7 +171,6 @@ class KGEnhancedRecommender:
             "formulas": direct_formulas,
         }
 
-        # import json; print(json.dumps(result, ensure_ascii=False, indent=2)[:500])
         return result
 
     # 融合
@@ -341,6 +341,20 @@ class KGEnhancedRecommender:
 
     # KG 洞察
 
+    def _profile(self, name: str) -> dict | None:
+        """药材画像（带实例级记忆化）。
+
+        一次 recommend 内 _kg_insights 与 _kg_safety_check 会对同一批药材各查一遍，
+        且原 _kg_insights 在 O(N²) 内层循环重复查询同一味药的画像；
+        统一走此缓存后每味药每次推荐只查一次 KG。
+        """
+        cache = getattr(self, "_profile_cache", None)
+        if cache is None:
+            cache = self._profile_cache = {}
+        if name not in cache:
+            cache[name] = self.kg.herb_profile(name)
+        return cache[name]
+
     def _kg_insights(self, herbs: list[dict], formulas: list[dict]) -> dict:
         """从 KG 提取额外洞察"""
         insights = {}
@@ -348,7 +362,7 @@ class KGEnhancedRecommender:
         # 毒性标记
         toxic_herbs = []
         for h in herbs:
-            profile = self.kg.herb_profile(h["name"])
+            profile = self._profile(h["name"])
             if isinstance(profile, dict) and profile.get("toxic"):
                 toxic_herbs.append(h["name"])
         if toxic_herbs:
@@ -356,14 +370,18 @@ class KGEnhancedRecommender:
                 f"注意：{'、'.join(toxic_herbs)} 有毒性，请在医师指导下使用"
             )
 
-        # 相反相畏
+        # 相反相畏（h1 画像只查一次，内层仅做集合成员判断）
         incompatible_pairs = []
         for i, h1 in enumerate(herbs):
+            p1 = self._profile(h1["name"])
+            if not isinstance(p1, dict):
+                continue
+            incompat = p1.get("incompatible_with") or []
+            if not incompat:
+                continue
             for h2 in herbs[i + 1 :]:
-                profile = self.kg.herb_profile(h1["name"])
-                if isinstance(profile, dict):
-                    if h2["name"] in profile.get("incompatible_with", []):
-                        incompatible_pairs.append((h1["name"], h2["name"]))
+                if h2["name"] in incompat:
+                    incompatible_pairs.append((h1["name"], h2["name"]))
         if incompatible_pairs:
             insights["incompatible_warning"] = [
                 f"{a} 与 {b} 相反相畏" for a, b in incompatible_pairs
@@ -375,7 +393,7 @@ class KGEnhancedRecommender:
         """KG 安全检查"""
         warnings = []
         for h in herb_names:
-            profile = self.kg.herb_profile(h)
+            profile = self._profile(h)
             if isinstance(profile, dict):
                 if profile.get("toxic"):
                     warnings.append(f"{h}: 有毒药材，注意用量")

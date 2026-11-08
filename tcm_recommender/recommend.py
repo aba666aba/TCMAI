@@ -20,6 +20,7 @@
 import argparse
 import json
 import logging
+import math
 import re
 import sys
 from pathlib import Path
@@ -38,6 +39,7 @@ from tcm_recommender.data_pipeline import TCMDataPipeline
 from tcm_recommender.extended_config import (
     EXTENDED_SYMPTOM_LIST,
     EXTENDED_SYNDROME_DEFINITIONS,
+    INCOMPATIBLE_PAIRS,
     SYMPTOM_ALIAS_MAP,
     is_toxic_herb,
 )
@@ -49,6 +51,55 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def _sigmoid(x: float) -> float:
+    """logits→概率的纯 Python 实现，等价 torch.sigmoid(torch.tensor(x)) 但零张量开销。"""
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
+
+
+def _adapt_state_dict_for_drift(state: dict, ref: dict) -> list:
+    """知识库扩容导致的词表尺寸漂移自适应（兼容加载）。
+
+    推荐器按**当前数据库**构建模型（num_formulas/num_symptoms 等），
+    而 checkpoint 是历史快照。当知识库新增实体（如方剂 712→719）时，
+    嵌入矩阵形状不匹配会让 strict load_state_dict 直接报错。
+
+    处理：对 dim0 变化、dim1 一致的二维权重（embedding/分类头）做兼容转换：
+      - 复制重叠行（旧实体 idx 与库内顺序一致，表征原样保留）
+      - 新增行用已训练行（除 padding 行 0 外）的均值初始化 —— 未训练、
+        打分无区分度，但保证模型可加载、旧实体不受影响
+    返回被适配的参数名列表；形状不兼容（如 d_model 变化）时保留原值，
+    交由 load_state_dict 显式报错（那种情况必须重训）。
+    """
+    adapted = []
+    for key, val in ref.items():
+        old = state.get(key)
+        if old is None or tuple(old.shape) == tuple(val.shape):
+            continue
+        if old.dim() != 2 or val.dim() != 2 or old.shape[1] != val.shape[1]:
+            logger.warning(
+                "权重尺寸不匹配且无法自适应（需重训）: %s %s -> %s",
+                key, tuple(old.shape), tuple(val.shape),
+            )
+            continue
+        new = val.new_zeros(*val.shape)
+        n = min(old.shape[0], val.shape[0])
+        new[:n] = old[:n]
+        if val.shape[0] > n and n > 1:
+            mean_vec = old[1:n].mean(dim=0)
+            new[n:] = mean_vec.unsqueeze(0).expand(val.shape[0] - n, -1)
+        state[key] = new
+        adapted.append(key)
+        logger.warning(
+            "词表漂移自适应: %s %s -> %s（新增 %d 行未训练）",
+            key, tuple(old.shape), tuple(val.shape), val.shape[0] - n,
+        )
+    return adapted
 
 
 class TCMRecommender:
@@ -91,7 +142,18 @@ class TCMRecommender:
             for i in range(1, self._pipeline.num_formulas + 1)
         ]
 
-        # 创建模型
+        # 架构检测：组合式方剂表征（新训练必含）；组成矩阵始终以当前库为准
+        sd = dict(checkpoint["model_state_dict"])
+        use_comp = any(k.startswith("comp_encoder") for k in sd)
+        formula_comp = torch.from_numpy(
+            self._pipeline.build_formula_composition()
+        ) if use_comp else None
+        if not use_comp:
+            logger.warning(
+                "checkpoint 缺组合式方剂编码器（旧格式模型），方剂表征将缺失——"
+                "请用最新代码重训: python -m tcm_recommender.train --db data/tcm_knowledge.db"
+            )
+
         self.model = create_model(
             num_symptoms=len(self._symptom_list),
             num_herbs=len(self._herb_name_list),
@@ -103,8 +165,14 @@ class TCMRecommender:
             nhead=8,
             num_layers=cfg.get("num_layers", 4),
             dropout=0.1,
+            formula_composition=formula_comp,
         )
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+        # 词表漂移自适应：知识库在训练后新增/删减实体时兼容加载（否则 strict 加载直接报错）
+        sd.pop("formula_composition", None)  # 组成矩阵始终以当前库为准
+        _adapt_state_dict_for_drift(sd, self.model.state_dict())
+        if self.model.comp_encoder is not None:
+            sd["formula_composition"] = self.model.formula_composition
+        self.model.load_state_dict(sd)
         self.model.to(device)
         self.model.eval()
         logger.info("模型加载完成")
@@ -112,8 +180,20 @@ class TCMRecommender:
         # 症状名称→ID 映射
         self.symptom_to_id = {s: i + 1 for i, s in enumerate(self._symptom_list)}
 
-        # 缓存药材特征
-        self._cached_herb_features = herb_feat
+        # 缓存药材特征（一次性搬到目标设备，避免每次推荐重复 .to(device) 拷贝；
+        # char_multihot 是 [num_herbs, num_chars] 大矩阵，CUDA 下逐次搬运代价可观）
+        self._herb_feat = herb_feat
+        self._herb_feat_device = {
+            k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+            for k, v in herb_feat.items()
+        }
+
+        # 禁忌文本预缓存：check_safety 逐味点查 DB 改为 O(1) 内存查表
+        # （pipeline.load_all 的 _load_herbs 已含 contraindications 字段）
+        self._herb_contra_cache = {
+            h.get("name", ""): (h.get("contraindications") or "")
+            for h in self._pipeline.herbs.values()
+        }
 
         logger.info("推荐器初始化完成")
 
@@ -164,14 +244,20 @@ class TCMRecommender:
         mask = torch.ones_like(symptom_tensor, dtype=torch.float32)
         # print(f"[DEBUG] input shape={symptom_tensor.shape}, device={self.device}")
 
+        # v2 特征张量：性味/归经 multi-hot（本地 torch 环境正常时 from_numpy 可用）
+        nat_feat = self._herb_feat_device["nature_multihot"]
+        flv_feat = self._herb_feat_device["flavor_multihot"]
+        mer_feat = self._herb_feat_device["meridian_multihot"]
+
         with torch.no_grad():
             result = self.model.predict(
                 symptom_tensor,
                 mask,
-                self._herb_feat["char_multihot"].to(self.device),
-                self._herb_feat["category_idx"].to(self.device),
-                self._herb_feat["nature_idx"].to(self.device),
-                self._herb_feat["flavor_idx"].to(self.device),
+                self._herb_feat_device["char_multihot"],
+                self._herb_feat_device["category_idx"],
+                nat_feat,
+                flv_feat,
+                mer_feat,
                 top_k=max(top_k_herb, top_k_formula),
             )
 
@@ -186,7 +272,7 @@ class TCMRecommender:
             if list_idx < 0 or list_idx >= len(self._herb_name_list):
                 continue
             name = self._herb_name_list[list_idx]
-            prob = float(torch.sigmoid(torch.tensor(score)))  # logits→概率
+            prob = _sigmoid(score)  # logits→概率（纯数学，避免逐分数创建临时张量）
             if name not in seen_names or prob > seen_names[name]["score"]:
                 seen_names[name] = {
                     "id": int(herb_idx),
@@ -219,7 +305,7 @@ class TCMRecommender:
             if formula_idx == 0:
                 continue  # 跳过背景类
 
-            prob = float(torch.sigmoid(torch.tensor(score)))
+            prob = _sigmoid(score)
             # 内部索引：模型 idx 1..N → formula_name_list[idx-1]
             list_idx = formula_idx - 1
             if list_idx < 0 or list_idx >= len(self._formula_name_list):
@@ -275,25 +361,9 @@ class TCMRecommender:
         }
 
     # ---------------------------------------------------------------
-    # 配伍禁忌判定
-    # 数据库里 2961 味药材中 2111 味带禁忌文本，且大量为「畏XX」类文献表述
-    # （如「黄芪：畏防风」），逐句关键词匹配会把普通药材全判成禁忌。
-    # 因此采用**权威药对表 + 双向配对**：只有当推荐组合中同时出现禁忌药对的
-    # 两味药，且药对中的另一味在本味药的禁忌文本中被提及（或明确写着「不宜与…同用」）
-    # 时，才判定为真正的配伍禁忌。这是十八反/十九畏的可靠判定方式。
-    _INCOMPATIBLE_PAIRS = (
-        # 十八反（《儒门事亲》）
-        ("甘草", "甘遂"), ("甘草", "大戟"), ("甘草", "芫花"), ("甘草", "海藻"),
-        ("乌头", "贝母"), ("乌头", "瓜蒌"), ("乌头", "半夏"),
-        ("乌头", "白蔹"), ("乌头", "白及"),
-        ("藜芦", "人参"), ("藜芦", "沙参"), ("藜芦", "丹参"),
-        ("藜芦", "玄参"), ("藜芦", "细辛"), ("藜芦", "芍药"),
-        # 十九畏
-        ("硫黄", "朴硝"), ("水银", "砒霜"), ("狼毒", "密陀僧"),
-        ("巴豆", "牵牛"), ("丁香", "郁金"), ("川乌", "犀角"),
-        ("草乌", "犀角"), ("牙硝", "三棱"), ("官桂", "石脂"),
-        ("人参", "五灵脂"),
-    )
+    # 配伍禁忌判定（权威药对表已提至 extended_config.INCOMPATIBLE_PAIRS，
+    # 供推荐 safety 与 AI 组方引擎共用同一份规则；详见该处注释）
+    _INCOMPATIBLE_PAIRS = INCOMPATIBLE_PAIRS
     # 明确禁止同用的句式
     _EXPLICIT_BAN = re.compile(r"(不宜|不可|不能|禁止|忌)\s*与?.{0,12}(同用|合用|配伍)")
 
@@ -320,11 +390,6 @@ class TCMRecommender:
             toxic_herbs      : list[str]  命中毒性清单的药材
             is_safe          : bool       无配伍禁忌且无毒 → True
         """
-        import sqlite3
-
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-
         warnings = []
         incompatibilities = []
         seen = set()
@@ -333,11 +398,7 @@ class TCMRecommender:
             if h in seen:
                 continue
             seen.add(h)
-            cur.execute(
-                "SELECT contraindications FROM herbs WHERE name = ? LIMIT 1", (h,)
-            )
-            row = cur.fetchone()
-            text = row[0] if (row and row[0]) else ""
+            text = self._herb_contra_cache.get(h, "")
             if text:
                 warnings.append(f"{h}: {text[:100]}")
 
@@ -355,8 +416,6 @@ class TCMRecommender:
                     for o in names
                 ):
                     incompatibilities.append(f"{h}: {sentence[:100]}")
-
-        conn.close()
 
         # 去重：同一药对可能双向命中（A+B 与 B+A），按下标归一化后只保留一条
         deduped = []

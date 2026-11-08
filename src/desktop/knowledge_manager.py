@@ -67,6 +67,24 @@ class KnowledgeManagerView(ctk.CTkFrame):
             "headers": ("别名", "标准药材名"),
             "description": "药材的常见别名",
         },
+        "patent_aliases": {
+            "label": "中成药别名",
+            "columns": ("alias", "standard"),
+            "headers": ("别名", "标准中成药名"),
+            "description": "中成药的同药异名（如 板蓝根冲剂→板蓝根颗粒）",
+        },
+        "patent_medicines": {
+            "label": "中成药库",
+            "columns": (
+                "id", "name", "category", "composition", "functions",
+                "indications", "usage_dosage", "contraindications", "source",
+            ),
+            "headers": (
+                "ID", "药名", "分类", "组成", "功用",
+                "主治", "用法用量", "禁忌", "来源",
+            ),
+            "description": "全部中成药条目（219 种，42 类）",
+        },
     }
 
     def __init__(self, master, kb=None, **kwargs):

@@ -49,8 +49,10 @@ _log_format = logging.Formatter(
 )
 _console_handler = logging.StreamHandler(sys.stdout)
 _console_handler.setFormatter(_log_format)
-_log_dir = ROOT / "data" / "logs"
-_log_dir.mkdir(parents=True, exist_ok=True)
+# 日志写入可写数据目录（打包环境为 %LOCALAPPDATA%/TCMAI/data/logs）
+from core.paths import get_log_dir
+
+_log_dir = get_log_dir()
 _file_handler = logging.handlers.RotatingFileHandler(
     _log_dir / "tcmai.log",
     maxBytes=5 * 1024 * 1024,

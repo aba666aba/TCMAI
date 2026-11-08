@@ -20,6 +20,7 @@
 from typing import Optional
 
 import logging
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -406,6 +407,99 @@ class TCMDataPipeline:
             self.formulas[r["id"]] = dict(r)
         self.num_formulas = len(self.formulas)
         logger.info("  [OK] 方剂: %s", self.num_formulas)
+
+    # 组成解析用的炮制前缀（从长到短，避免「酒炙」被「酒」截断）
+    _PROC_PREFIXES = (
+        "酒炙", "蜜炙", "麸炒", "酒洗", "酒蒸", "醋炙", "盐炙", "姜炙", "滑石粉",
+        "煅", "炙", "炒", "焦", "麸", "蜜", "盐", "醋", "姜", "矾", "煨", "制",
+    )
+    # 组成文本里吸附在药名后的剂量尾巴（"黄芩三两""半夏半升"→"黄芩""半夏"）。
+    # 要求数字段后必须跟单位字，避免误伤药名本身（"三七"尾部"七"无单位不剥）。
+    _DOSAGE_TAIL = re.compile(
+        r"[一二三四五六七八九十百千零两半\d]{1,3}"
+        r"(?:钱|两|分|厘|克|升|合|斗|石|枚|颗|个|枝|条|根|寸|尺|把|字|铢|粒|只|张|节|朵|挺|片)\s*$"
+    )
+
+    def build_formula_composition(self):
+        """解析方剂组成文本 → [num_formulas, num_herbs] 组成矩阵。
+
+        匹配策略（从宽到严逐级回退）：
+          1. 去括号注释（如「当归(酒洗)」→「当归」）后精确匹配药材名；
+          2. 查 herb_aliases 别名表；
+          3. 剥离炮制前缀（炙/酒/炒/煅/制…）后重试；
+          4. 剥离「炭」后缀重试。
+        未匹配成分记日志忽略（不中断）；矩阵以 1.0 标记组成关系。
+        供组合式方剂表征（CompositionFormulaEncoder）使用。
+        """
+        alias = {}
+        try:
+            for r in self.db.execute("SELECT alias, standard FROM herb_aliases"):
+                alias[r["alias"]] = r["standard"]
+        except sqlite3.OperationalError:
+            pass  # 旧库无别名表
+
+        name_to_idx = {}
+        for idx in range(1, self.num_herbs + 1):
+            db_id = self.model_idx_to_herb_db_id[idx]
+            name_to_idx[self.herbs[db_id]["name"]] = idx
+
+        def _resolve(token: str):
+            t = re.sub(r"[（(].*?[)）]", "", token).strip()
+            if not t:
+                return None
+            s = t
+            for _ in range(4):  # 逐层剥离剂量尾巴/炮制前缀，每层都先尝试匹配
+                if s in name_to_idx:
+                    return name_to_idx[s]
+                std = alias.get(s)
+                if std and std in name_to_idx:
+                    return name_to_idx[std]
+                progressed = False
+                m = self._DOSAGE_TAIL.search(s)
+                if m:  # 剥吸附在药名后的剂量（"黄芩三两"→"黄芩"）
+                    cand = s[: m.start()].strip()
+                    if len(cand) >= 2 and cand != s:
+                        s = cand
+                        progressed = True
+                if not progressed:
+                    for p in self._PROC_PREFIXES:
+                        if s.startswith(p):
+                            s2 = s[len(p):]
+                            if s2 and s2 != s:
+                                s = s2
+                                progressed = True
+                            break
+                if not progressed:
+                    break
+            if s in name_to_idx:
+                return name_to_idx[s]
+            std = alias.get(s)
+            if std and std in name_to_idx:
+                return name_to_idx[std]
+            if s.endswith("炭") and s[:-1] in name_to_idx:
+                return name_to_idx[s[:-1]]
+            return None
+
+        comp = np.zeros((self.num_formulas, self.num_herbs), dtype=np.float32)
+        matched = tokens = 0
+        for idx in range(1, self.num_formulas + 1):
+            db_id = self.model_idx_to_formula_db_id[idx]
+            text = self.formulas[db_id].get("composition") or ""
+            for token in re.split(r"[、，,;；\s]+", text):
+                token = token.strip()
+                if not token:
+                    continue
+                tokens += 1
+                hidx = _resolve(token)
+                if hidx is not None:
+                    comp[idx - 1, hidx - 1] = 1.0
+                    matched += 1
+        coverage = matched / max(tokens, 1)
+        logger.info(
+            "  [OK] 方剂组成解析: %d/%d 成分匹配 (%.1f%%)",
+            matched, tokens, coverage * 100,
+        )
+        return comp
 
     def _load_symptoms(self):
         # 统一使用 extended_config（同包，无需 try-import fallback）
@@ -1375,7 +1469,7 @@ class TCMDataPipeline:
             )
             cat_idx[mi - 1] = cat_to_idx.get(cat, 0)
 
-        # 药性索引
+        # 药性索引（v2 架构额外输出 multi-hot：一味药可多性多味）
         nat_idx = np.zeros(nh, dtype=np.int32)
         for mi in range(1, nh + 1):
             nat = self.herbs[self.model_idx_to_herb_db_id[mi]].get("nature", "") or ""
@@ -1388,7 +1482,7 @@ class TCMDataPipeline:
             if not found:
                 nat_idx[mi - 1] = len(NATURE_LIST) + 1
 
-        # 药味索引
+        # 药味索引（v1 用：取第一个匹配）
         flv_idx = np.zeros(nh, dtype=np.int32)
         for mi in range(1, nh + 1):
             flv = self.herbs[self.model_idx_to_herb_db_id[mi]].get("flavor", "") or ""
@@ -1401,12 +1495,36 @@ class TCMDataPipeline:
             if not found:
                 flv_idx[mi - 1] = len(FLAVOR_LIST) + 1
 
+        # v2 多热：性/味/归经（一味药"甘、辛"两味同时表达；归经支撑引经语义）
+        MERIDIAN_LIST = ["心", "肝", "脾", "肺", "肾", "胆", "胃",
+                         "大肠", "小肠", "膀胱", "三焦", "心包"]
+        nature_mh = np.zeros((nh, len(NATURE_LIST)), dtype=np.float32)
+        flavor_mh = np.zeros((nh, len(FLAVOR_LIST)), dtype=np.float32)
+        meridian_mh = np.zeros((nh, len(MERIDIAN_LIST)), dtype=np.float32)
+        for mi in range(1, nh + 1):
+            herb = self.herbs[self.model_idx_to_herb_db_id[mi]]
+            nat = herb.get("nature", "") or ""
+            flv = herb.get("flavor", "") or ""
+            mer = herb.get("meridian", "") or ""
+            for ni, n_name in enumerate(NATURE_LIST):
+                if n_name in nat:
+                    nature_mh[mi - 1, ni] = 1.0
+            for fi, f_name in enumerate(FLAVOR_LIST):
+                if f_name in flv:
+                    flavor_mh[mi - 1, fi] = 1.0
+            for ci, m_name in enumerate(MERIDIAN_LIST):
+                if m_name in mer:
+                    meridian_mh[mi - 1, ci] = 1.0
+
         logger.info("药材特征: chars=%s, categories=%s", num_chars, len(all_categories))
         return {
             "char_multihot": char_mh,
             "category_idx": cat_idx,
             "nature_idx": nat_idx,
             "flavor_idx": flv_idx,
+            "nature_multihot": nature_mh,
+            "flavor_multihot": flavor_mh,
+            "meridian_multihot": meridian_mh,
             "num_chars": num_chars,
             "num_categories": len(all_categories) + 1,
             "num_natures": len(NATURE_LIST) + 2,
