@@ -30,16 +30,34 @@ logs/
 data/font_test.txt
 data/kg_test_full.txt
 
+# ---- 大数据文件与中间产物（可重建，不入库）----
+data/*.bak_*
+data/train_data.npz
+data/rag_corpus.jsonl
+data/exports/
+tcm_recommender/*.bak_*
+
+# ---- 打包与本地产物 ----
+build_launcher/
+*.exe
+.workbuddy/
+
 # ---- 用户运行数据（含症状等健康信息，严禁入库）----
 data/history.json
 data/history.json.corrupt.json
 data/logs/
 data/ablation_nlu_quant.json
+# 调试截图含屏幕内容（聊天记录、其他窗口），严禁入库
+data/debug_*.png
+debug_*.png
+*.screenshot.png
 
 # ---- 凭据与本地配置（严禁入库）----
 # 连接信息与口令一律放本地 config.json，模板见 config.example.json。
 /config.json
 config.local.json
+*.local.json
+scripts/ssh_config.local.json
 .env
 .env.*
 *.key
