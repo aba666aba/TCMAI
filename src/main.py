@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 TCMAI_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, TCMAI_ROOT)  # 顶层包（tcm_recommender 等）需要项目根在搜索路径
 sys.path.insert(0, os.path.join(TCMAI_ROOT, "src"))
 os.environ["TCMAI_ROOT"] = TCMAI_ROOT
 
@@ -32,8 +33,9 @@ _console_handler = logging.StreamHandler(sys.stdout)
 _console_handler.setFormatter(_log_format)
 
 # file (rotating: 5MB x 3 backups)
-_log_dir = Path(TCMAI_ROOT) / "data" / "logs"
-_log_dir.mkdir(parents=True, exist_ok=True)
+from core.paths import get_log_dir
+
+_log_dir = get_log_dir()
 _file_handler = logging.handlers.RotatingFileHandler(
     _log_dir / "tcmai.log",
     maxBytes=5 * 1024 * 1024,

@@ -52,9 +52,6 @@ class DesktopApp:
         self.selected_history_id: int | None = None
         self.query_in_flight = False
 
-        from core.tcm_config import UI_QUICK_SYMPTOMS
-
-        self.symptom_options = list(UI_QUICK_SYMPTOMS)[:5]
         self._configure_root()
         self._build_layout()
         self._load_history()
@@ -94,32 +91,29 @@ class DesktopApp:
             text="中医药智能问答系统",
             font=self.FONT_TITLE,
             text_color="#ffffff",
-        ).pack(anchor="w", padx=20, pady=(8, 0))
+        ).pack(anchor="w", padx=20, pady=(6, 0))
         ctk.CTkLabel(
             hero,
-            text="基于深度学习的中医药知识推荐 · 支持症状辨证与方剂推荐",
+            text="症状辨证 · 方剂推荐 · AI 组方参考",
             font=self.FONT_HERO_SUB,
             text_color=("#c8ddd2", "#8ab09a"),
-        ).pack(anchor="w", padx=20, pady=(4, 16))
+        ).pack(anchor="w", padx=20, pady=(2, 10))
 
         # ── 标签页 ──
         self._notebook = ctk.CTkTabview(container, corner_radius=6)
         self._notebook.pack(fill="both", expand=True, pady=(14, 0))
 
         self._notebook.add("首页")
-        self._notebook.add("知识图谱")
         self._notebook.add("知识管理")
         self._notebook.add("历史记录")
         self._notebook.add("关于")
 
         self.home_tab = self._notebook.tab("首页")
-        self.kg_tab = self._notebook.tab("知识图谱")
         self.km_tab = self._notebook.tab("知识管理")
         self.history_tab = self._notebook.tab("历史记录")
         self.about_tab = self._notebook.tab("关于")
 
         self._build_home_tab()
-        self._build_kg_tab()
         self._build_km_tab()
         self._build_history_tab()
         self._build_about_tab()
@@ -127,7 +121,9 @@ class DesktopApp:
     # 首页
     def _build_home_tab(self):
         # FIXME: 低分辨率下标签页显示不全，需要响应式布局
-        container = ctk.CTkScrollableFrame(self.home_tab, fg_color="transparent")
+        # 首页不用滚动容器：固定顶部（搜索区）+ 可扩展结果区，
+        # 避免整页滚动条 + 结果框内滚动条双滚动
+        container = ctk.CTkFrame(self.home_tab, fg_color="transparent")
         container.pack(fill="both", expand=True)
 
         # ── 搜索卡片 ──
@@ -159,15 +155,7 @@ class DesktopApp:
             "<Escape>", lambda e: self._clear_query() or "break"
         )
 
-        self.clear_button = ctk.CTkButton(
-            input_row,
-            text="清空",
-            width=80,
-            font=self.FONT_SMALL,
-            command=self._clear_query,
-        )
-        self.clear_button.pack(side="right")
-
+        # pack(side="right") 依次从右往左：搜索（主操作）→ 清空 → 知识图谱
         self.submit_button = ctk.CTkButton(
             input_row,
             text="搜索",
@@ -177,32 +165,43 @@ class DesktopApp:
         )
         self.submit_button.pack(side="right", padx=(6, 0))
 
-        # ── 快捷标签 ──
-        tags_row = ctk.CTkFrame(search_area, fg_color="transparent")
-        tags_row.pack(fill="x", padx=16, pady=(6, 10))
+        self.clear_button = ctk.CTkButton(
+            input_row,
+            text="清空",
+            width=64,
+            fg_color="gray35",
+            hover_color="gray25",
+            font=self.FONT_SMALL,
+            command=self._clear_query,
+        )
+        self.clear_button.pack(side="right", padx=(6, 0))
+
+        # ── 知识图谱按钮（唯一入口：弹窗只画查询关联子图） ──
+        self.kg_button = ctk.CTkButton(
+            input_row,
+            text="知识图谱",
+            width=86,
+            font=self.FONT_SMALL,
+            fg_color=("#e9f2ed", "#2a3d32"),
+            text_color=("#256a4b", "#6fbe92"),
+            hover_color=("#256a4b", "#1d573c"),
+            command=self._open_kg_popup,
+        )
+        self.kg_button.pack(side="right", padx=(6, 0))
+
+        # ── 免责声明（常驻搜索框下方小字，最显眼位置） ──
         ctk.CTkLabel(
-            tags_row,
-            text="快捷:",
-            font=self.FONT_XS,
-            text_color=("gray50", "gray60"),
-        ).pack(side="left", padx=(0, 4))
-        for symptom in self.symptom_options:
-            btn = ctk.CTkButton(
-                tags_row,
-                text=symptom,
-                font=self.FONT_XS,
-                width=60,
-                height=26,
-                fg_color=("#e9f2ed", "#2a3d32"),
-                text_color=("#256a4b", "#6fbe92"),
-                hover_color=("#256a4b", "#1d573c"),
-                command=lambda v=symptom: self._append_symptom(v),
-            )
-            btn.pack(side="left", padx=2)
+            search_area,
+            text="本系统仅提供中医药知识科普与参考，不构成医疗诊断或治疗建议；如有健康问题请及时就医。",
+            font=("Microsoft YaHei UI", 12),
+            text_color=("#8a6a2a", "#b99553"),
+            justify="left",
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=(6, 0))
 
         # ── 状态 + 进度 ──
         status_line = ctk.CTkFrame(search_area, fg_color="transparent")
-        status_line.pack(fill="x", padx=16, pady=(0, 10))
+        status_line.pack(fill="x", padx=16, pady=(8, 10))
         self.status_var = ctk.StringVar(value="输入症状，搜索中医药知识")
         ctk.CTkLabel(
             status_line,
@@ -210,15 +209,20 @@ class DesktopApp:
             font=self.FONT_SMALL,
             text_color=("#256a4b", "#5ca882"),
         ).pack(side="left")
+        # 进度条：determinate + 定时器单向推进（indeterminate 会左右来回晃）
         self.progress = ctk.CTkProgressBar(
             status_line,
-            width=140,
-            mode="indeterminate",
+            width=150,
+            height=6,
+            corner_radius=3,
+            mode="determinate",
         )
         self.progress.pack(side="right")
         self.progress.set(0)
+        self._progress_job = None
+        self._progress_value = 0.0
 
-        # ── 子标签页：推荐结果 + 知识图谱 ──
+        # ── 子标签页：推荐结果 + AI 解读 ──
         self._home_notebook = ctk.CTkTabview(container, corner_radius=6)
         self._home_notebook.pack(fill="both", expand=True, pady=(4, 0))
         # 缩小子标签页字体
@@ -227,7 +231,7 @@ class DesktopApp:
         )
 
         self._home_notebook.add("推荐结果")
-        self._home_notebook.add("知识图谱")
+        self._home_notebook.add("AI 解读")
 
         # ── 推荐结果 ──
         result_tab = self._home_notebook.tab("推荐结果")
@@ -247,103 +251,46 @@ class DesktopApp:
         self.answer_text = ctk.CTkTextbox(
             top_panel,
             wrap="word",
-            font=self.FONT,
+            font=("Microsoft YaHei UI", 13),
             border_width=0,
             activate_scrollbars=True,
         )
         self.answer_text.pack(fill="both", expand=True, padx=6, pady=(0, 6))
         self.answer_text.configure(state="disabled")
 
-        # ── 知识图谱子标签 ──
-        kg_tab_inner = self._home_notebook.tab("知识图谱")
-        self._home_kg_frame = ctk.CTkFrame(kg_tab_inner, fg_color="transparent")
-        self._home_kg_frame.pack(fill="both", expand=True)
-
-        self._home_kg_view = None
-        if HAS_KG:
-            try:
-                from desktop.kg_view import KnowledgeGraphView
-
-                self._home_kg_view = KnowledgeGraphView(
-                    self._home_kg_frame, standalone=False
-                )
-                self._home_kg_view.pack(fill="both", expand=True)
-                self._home_kg_view._show_placeholder()
-            except Exception as exc:
-                import traceback
-
-                traceback.print_exc()
-                ctk.CTkLabel(
-                    self._home_kg_frame,
-                    text=f"知识图谱加载失败: {exc}",
-                    text_color="#e74c3c",
-                ).pack(expand=True)
-
-        # ── 免责声明 ──
-        disclaimer_frame = ctk.CTkFrame(
-            container,
-            fg_color=("#fef6e9", "#2a2520"),
-            border_width=1,
-            border_color=("#f0dca0", "#4a3f2a"),
-            corner_radius=6,
-        )
-        disclaimer_frame.pack(fill="x", pady=(4, 10))
+        # ── AI 解读子标签 ──
+        ai_tab = self._home_notebook.tab("AI 解读")
+        ai_panel = ctk.CTkFrame(ai_tab, corner_radius=8)
+        ai_panel.pack(fill="both", expand=True, padx=4, pady=4)
+        ctk.CTkFrame(
+            ai_panel, fg_color=("#256a4b", "#2d7a4f"), height=2, corner_radius=0
+        ).pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(
-            disclaimer_frame,
-            text="⚕ 免责声明",
-            font=("Microsoft YaHei UI", 11, "bold"),
-            text_color=("#7a5a16", "#c8a050"),
-        ).pack(anchor="w", padx=14, pady=(6, 1))
-        self.disclaimer_var = ctk.StringVar(
-            value="本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。如有健康问题，请咨询专业医疗机构或执业医师。"
+            ai_panel,
+            text="AI 解读（基于检索证据合成，仅供参考）",
+            font=self.FONT_SECTION,
+            text_color=("#256a4b", "#5ca882"),
+        ).pack(anchor="w", padx=6)
+        self.ai_interpret_text = ctk.CTkTextbox(
+            ai_panel,
+            wrap="word",
+            font=self.FONT,
+            border_width=0,
+            activate_scrollbars=True,
         )
-        ctk.CTkLabel(
-            disclaimer_frame,
-            textvariable=self.disclaimer_var,
-            justify="left",
-            font=self.FONT_XS,
-            text_color=("#7a5a16", "#c8a050"),
-        ).pack(anchor="w", padx=14, pady=(0, 6))
+        self.ai_interpret_text.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        self.ai_interpret_text.configure(state="disabled")
 
-    # 知识图谱标签页
-    def _build_kg_tab(self):
-        if not HAS_KG:
-            ctk.CTkLabel(
-                self.kg_tab,
-                text="知识图谱模块不可用",
-                text_color=("gray50", "gray60"),
-                font=self.FONT,
-            ).pack(expand=True)
-            return
+        # ── 模块化详情按钮行（查询后动态填充；点击弹窗查看对应模块细节） ──
+        # 显式给 height：CTkFrame 默认请求 200，空容器会把结果框挤成一条缝
+        self._detail_buttons_frame = ctk.CTkFrame(
+            top_panel, fg_color="transparent", height=34
+        )
+        self._detail_buttons_frame.pack(fill="x", padx=6, pady=(2, 0))
+        self._detail_sections: dict[str, str] = {}
+        self._rebuild_detail_buttons()  # 初始显示占位提示，避免空白占位
 
-        try:
-            from desktop.kg_view import KnowledgeGraphView
-
-            self._kg_tab_view = KnowledgeGraphView(self.kg_tab, standalone=True)
-            self._kg_tab_view.pack(fill="both", expand=True)
-            self.root.after(300, self._delayed_kg_overview)
-        except Exception as exc:
-            import traceback
-
-            traceback.print_exc()
-            ctk.CTkLabel(
-                self.kg_tab,
-                text=f"知识图谱加载失败: {exc}",
-                text_color="#e74c3c",
-                font=self.FONT,
-            ).pack(expand=True)
-
-    def _delayed_kg_overview(self):
-        try:
-            if hasattr(self, "_kg_tab_view") and self._kg_tab_view is not None:
-                self._kg_tab_view._show_overview_graph()
-        except Exception as exc:
-            logger.exception("知识图谱概览加载失败")
-            ctk.CTkLabel(
-                self.kg_tab,
-                text=f"知识图谱概览生成失败: {exc}",
-                text_color="#e74c3c",
-            ).pack(expand=True)
+    # 知识图谱标签页已移除：首页「🗺 查看知识图谱」按钮 → 弹窗（查询关联子图）为唯一入口
 
     # 知识管理标签页
     def _build_km_tab(self):
@@ -528,7 +475,7 @@ class DesktopApp:
                 "6. 历史记录管理 — 查看、搜索、导出和清理历史问诊记录",
             ),
             (
-                "⚕ 使用提醒",
+                "使用提醒",
                 "本系统仅提供中医药知识参考，不构成医疗诊断或治疗建议。\n"
                 "系统生成的方剂仅供参考，实际用药请以执业医师诊断为准。\n"
                 "如有持续不适，请及时咨询专业医疗机构或执业医师。",
@@ -564,13 +511,6 @@ class DesktopApp:
         widget.delete("1.0", "end")
         widget.insert("1.0", value.strip() if value else "")
         widget.configure(state="disabled")
-
-    def _append_symptom(self, symptom: str):
-        current = self.query_input.get("1.0", "end").strip()
-        updated = f"{current}，{symptom}" if current else symptom
-        self.query_input.delete("1.0", "end")
-        self.query_input.insert("1.0", updated)
-        self.query_input.focus_set()
 
     def _clear_query(self):
         self.query_input.delete("1.0", "end")
@@ -609,58 +549,92 @@ class DesktopApp:
             self.status_var.set(f"⏳ AI 模型加载中…（已等待 {elapsed:.0f} 秒）")
         self.root.after(1000, self._poll_nlu_status)
 
+    # ── 单向进度条：0→1 循环推进，替代左右来回摆动的 indeterminate ──
+    def _start_progress(self):
+        self._stop_progress()
+        self._progress_value = 0.0
+        self.progress.set(0)
+        self._tick_progress()
+
+    def _tick_progress(self):
+        self._progress_value = (self._progress_value + 0.025) % 1.0
+        try:
+            self.progress.set(self._progress_value)
+        except Exception:  # 窗口已销毁
+            return
+        self._progress_job = self.root.after(50, self._tick_progress)
+
+    def _stop_progress(self):
+        if self._progress_job is not None:
+            try:
+                self.root.after_cancel(self._progress_job)
+            except Exception:
+                pass
+            self._progress_job = None
+        try:
+            self.progress.set(0)
+        except Exception:
+            pass
+
     # 查询逻辑
     def _submit_query(self):
         from desktop.service import is_nlu_loading, is_nlu_ready, get_nlu_status
 
-        query = self.query_input.get("1.0", "end").strip()
+        query = self.query_input.get("1.0", "end-1c").strip()
         if self.query_in_flight:
-            messagebox.showinfo("提示", "上一条查询仍在处理中，请稍候。")
+            self.status_var.set("⏳ 上一条查询仍在处理中，请稍候…")
             return
         if not query:
-            messagebox.showwarning("提示", "请输入您的问题或症状。")
+            self.status_var.set("⚠ 请输入您的问题或症状")
             return
         if len(query) > 1000:
-            messagebox.showwarning("提示", "输入内容过长，请控制在 1000 字以内。")
+            self.status_var.set("⚠ 输入内容过长，请控制在 1000 字以内")
             return
         if sum(1 for char in query if not char.isspace()) < 2:
-            messagebox.showwarning("提示", "输入内容过短，请补充更完整的问题描述。")
+            self.status_var.set("⚠ 输入内容过短，请补充更完整的问题描述")
             return
 
-        # 模型状态检查
+        # 模型状态检查：加载中阻断；加载失败不阻断（查询会自动走关键词降级链）
         if not is_nlu_ready():
             _, _, error = get_nlu_status()
-            if error:
-                messagebox.showerror(
-                    "模型加载失败",
-                    f"AI 模型未能成功加载，无法查询。\n\n错误信息：{error}\n\n请检查模型文件是否完整。",
-                )
-                return
             if is_nlu_loading():
-                messagebox.showinfo(
-                    "模型加载中",
-                    "AI 模型正在后台加载，请稍候再试。\n\n加载完成后状态栏会显示「AI 模型已就绪」。",
-                )
+                self.status_var.set("⏳ AI 模型正在后台加载，就绪后自动允许查询…")
                 return
-            messagebox.showinfo("提示", "AI 模型尚未开始加载，请稍候。")
-            return
+            if error:
+                logger.warning("AI 模型加载失败(%s)，本次查询将使用关键词匹配降级", error)
+                self.status_var.set("⚠ AI 模型不可用，本次将使用关键词匹配降级")
 
         self.query_in_flight = True
+        self._query_start = __import__("time").time()
         self.submit_button.configure(state="disabled")
-        self.progress.start()
-        self.status_var.set("正在分析您的问题，请稍候...")
+        self._start_progress()
+        self.status_var.set("正在分析您的问题，请稍候…")
         self._set_text(self.answer_text, "")
+        # AI 解读同步清空并给占位提示（避免上一轮内容残留误导）
+        self._set_text(
+            self.ai_interpret_text, "⏳ 正在分析症状，AI 解读与组方草案生成中…"
+        )
+        self._tick_query_timer()
 
         thread = threading.Thread(target=self._run_query, args=(query,), daemon=True)
         thread.start()
 
+    def _tick_query_timer(self):
+        """查询等待计时：状态栏动态显示已等待秒数。"""
+        if not self.query_in_flight:
+            return
+        elapsed = __import__("time").time() - getattr(self, "_query_start", 0)
+        self.status_var.set(f"正在分析您的问题…（已等待 {elapsed:.0f} 秒）")
+        self._query_timer_id = self.root.after(500, self._tick_query_timer)
+
     def _run_query(self, query: str):
         try:
-            from desktop.service import detect_symptoms_nlu
+            from desktop.service import extract_symptoms_with_fallback
 
-            detected = detect_symptoms_nlu(query)
-            logger.info("检测到症状: %s", detected)
-            result = self.service.query(query, detected)
+            # 三级降级链：NLU → 关键词匹配 → 纯智能搜索，永不因 NLU 失败而失败
+            detected, nlu_mode = extract_symptoms_with_fallback(query)
+            logger.info("症状提取(mode=%s): %s", nlu_mode, detected)
+            result = self.service.query(query, detected, nlu_mode=nlu_mode)
             self.result_queue.put(("success", result))
         except ValueError as exc:
             logger.warning("输入校验失败: %s", exc)
@@ -677,14 +651,29 @@ class DesktopApp:
         try:
             while True:
                 status, payload = self.result_queue.get_nowait()
-                self._finish_query(status, payload)
+                try:
+                    self._finish_query(status, payload)
+                except Exception:
+                    # 单次渲染失败不能拖死轮询，否则后续查询全部无响应
+                    logger.exception("渲染查询结果失败")
+                    self.query_in_flight = False
+                    self.submit_button.configure(state="normal")
+                    self.status_var.set("⚠ 结果渲染失败，请重试")
         except queue.Empty:
             pass
-        self.root.after(120, self._poll_queue)
+        try:
+            self.root.after(120, self._poll_queue)
+        except Exception:  # 窗口已销毁
+            pass
 
     def _finish_query(self, status: str, payload: Any):
-        self.progress.stop()
+        self._stop_progress()
         self.query_in_flight = False
+        if hasattr(self, "_query_timer_id"):
+            try:
+                self.root.after_cancel(self._query_timer_id)
+            except Exception:
+                pass
         self.submit_button.configure(state="normal")
         if status == "error":
             err_msg = str(payload)
@@ -703,42 +692,116 @@ class DesktopApp:
 
         data: dict[str, Any] = payload
         answer = data.get("answer", "")
+        ai_text = data.get("ai_interpretation", "")
 
-        self.status_var.set("✅ AI 模型回答完成")
-        self.disclaimer_var.set(
-            data.get("disclaimer")
-            or "本系统仅提供中医药知识科普和参考信息，不构成医疗诊断或治疗建议。"
+        nlu_mode = data.get("nlu_mode", "nlu")
+        if nlu_mode == "keyword":
+            status_text = "✓ 回答完成（关键词匹配降级，AI 模型不可用）"
+        elif nlu_mode == "none":
+            status_text = "✓ 回答完成（全文检索降级）"
+        else:
+            status_text = "✓ AI 模型回答完成"
+        if ai_text.strip():
+            # 原先是一条横跨整行的提示按钮，改为状态栏一句话
+            status_text += " · AI 解读已生成，可点上方「AI 解读」标签查看"
+        self.status_var.set(status_text)
+
+        self._set_text(self.answer_text, data.get("answer_compact") or answer)
+        self._set_text(
+            self.ai_interpret_text,
+            ai_text
+            or "（本次未生成 AI 解读：输入症状信息不足，或知识库缺少相关依据）",
         )
-        self._set_text(self.answer_text, answer)
+
         self._load_history()
 
         # 切换到推荐结果标签页
         if hasattr(self, "_home_notebook"):
             self._home_notebook.set("推荐结果")
 
-        # 搜索后更新知识图谱
-        if self._home_kg_view is not None:
-            try:
-                knowledge = data.get("knowledge", {})
-                symptoms = knowledge.get("symptoms", [])
-                syndrome_info = knowledge.get("syndrome", {})
-                syndrome_name = (
-                    syndrome_info.get("name")
-                    if isinstance(syndrome_info, dict)
-                    else None
-                )
-                herb_names = [h["name"] for h in knowledge.get("herbs", [])]
-                formula_names = [f["name"] for f in knowledge.get("formulas", [])]
+        # ── 模块化详情：填充按钮行（点击弹窗查看细节） ──
+        self._detail_sections = dict(data.get("answer_sections") or {})
+        self._last_knowledge = data.get("knowledge", {})
+        self._rebuild_detail_buttons()
 
-                self._home_kg_view.show_query_result(
-                    symptoms=symptoms,
-                    syndrome_name=syndrome_name,
-                    herbs=herb_names,
-                    formulas=formula_names,
-                )
-            except Exception as exc:
-                logger.exception("首页知识图谱展示失败")
-                self.status_var.set(f"⚠ 知识图谱加载失败: {exc}")
+    # ── 模块化详情按钮与弹窗 ──
+
+    def _rebuild_detail_buttons(self):
+        """按本次查询的可用模块重建详情按钮行。"""
+        for w in self._detail_buttons_frame.winfo_children():
+            w.destroy()
+
+        def _add(title, text=None, command=None):
+            ctk.CTkButton(
+                self._detail_buttons_frame,
+                text=title,
+                font=self.FONT_XS,
+                height=28,
+                fg_color=("#e9f2ed", "#2a3d32"),
+                text_color=("#256a4b", "#6fbe92"),
+                hover_color=("#d8ecdf", "#355c44"),
+                command=(command or (lambda t=title, x=text: self._show_section_popup(t, x))),
+            ).pack(side="left", padx=(0, 6))
+
+        for title, text in self._detail_sections.items():
+            if text and text.strip():
+                _add(title, text)
+
+        if not self._detail_sections:
+            hint = ctk.CTkLabel(
+                self._detail_buttons_frame,
+                text="详情模块将在查询后生成（症状分析 / 安全配伍 / 智能搜索 / 组方草案）",
+                font=self.FONT_XS,
+                text_color=("gray50", "gray60"),
+            )
+            hint.pack(side="left")
+
+    def _show_section_popup(self, title: str, text: str):
+        """模块详情弹窗：大窗展示完整内容，不受主界面拥挤影响。"""
+        win = ctk.CTkToplevel(self.root)  # DesktopApp 非 widget，须传 root
+        win.title(f"详情 · {title}")
+        win.geometry("640x520")
+        try:
+            win.transient(self.root)
+        except Exception:
+            pass
+        win.attributes("-topmost", True)
+        win.after(180, lambda: win.attributes("-topmost", False))
+        win.lift()
+        win.focus_force()
+
+        header = ctk.CTkFrame(win, fg_color=("#f3f7f5", "#22352b"))
+        header.pack(fill="x", padx=10, pady=(10, 0))
+        ctk.CTkLabel(
+            header,
+            text=title,
+            font=("Microsoft YaHei UI", 15, "bold"),
+            anchor="w",
+        ).pack(fill="x", padx=12, pady=8)
+
+        body = ctk.CTkTextbox(win, wrap="word", font=("Microsoft YaHei UI", 12))
+        body.pack(fill="both", expand=True, padx=10, pady=8)
+        body.insert("1.0", text)
+        body.configure(state="disabled")
+
+        ctk.CTkButton(
+            win, text="关闭", width=80,
+            fg_color="gray30", hover_color="gray20",
+            command=win.destroy,
+        ).pack(pady=(0, 10))
+
+    def _open_kg_popup(self):
+        """知识图谱弹窗：只展示与本次查询症状相关的关联子图。"""
+        try:
+            from desktop.kg_view import open_kg_result_popup
+
+            # 注意：DesktopApp 不是 tkinter widget，必须传 self.root
+            open_kg_result_popup(
+                self.root, getattr(self, "_last_knowledge", None)
+            )
+        except Exception as exc:
+            logger.exception("知识图谱弹窗打开失败")
+            messagebox.showinfo("知识图谱", f"知识图谱暂不可用：{exc}")
 
     # 历史记录管理
     def _load_history(self):
@@ -795,6 +858,9 @@ class DesktopApp:
             f"问题：\n{record.get('query', '')}\n\n"
             f"回答：\n{record.get('answer', '')}"
         )
+        ai = record.get("ai_interpretation")
+        if ai:
+            detail += f"\n\nAI 解读：\n{ai}"
         self._set_text(self.history_detail, detail)
 
     def _delete_selected_history(self):
@@ -848,11 +914,15 @@ class DesktopApp:
             if path.suffix.lower() == ".txt":
                 lines: list[str] = []
                 for item in records:
-                    lines.append(
+                    ai = item.get("ai_interpretation")
+                    block = (
                         f"时间：{item.get('timestamp', '')}\n"
                         f"问题：{item.get('query', '')}\n"
-                        f"回答：{item.get('answer', '')}\n" + "-" * 50
+                        f"回答：{item.get('answer', '')}"
                     )
+                    if ai:
+                        block += f"\n\nAI 解读：\n{ai}"
+                    lines.append(block + "\n" + "-" * 50)
                 path.write_text("\n".join(lines), encoding="utf-8")
             else:
                 path.write_text(
@@ -863,6 +933,7 @@ class DesktopApp:
             messagebox.showerror("导出失败", str(exc))
 
     def _on_close(self):
+        self._stop_progress()
         self.service.close()
         self.root.destroy()
 
