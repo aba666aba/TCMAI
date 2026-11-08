@@ -742,7 +742,7 @@ class TCMDesktopService:
             raise RuntimeError(
                 "AI 模型不可用，无法生成推荐。\n"
                 "\n"
-                "最常见原因：本仓库的模型权重体积过大（~127MB），未纳入 git，\n"
+                "最常见原因：本仓库的模型权重体积过大（~134MB），未纳入 git，\n"
                 "直接 clone 后仓库里没有该文件。请先执行一次下载脚本：\n"
                 "    pip install modelscope\n"
                 "    python scripts/download_weights.py\n"

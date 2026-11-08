@@ -134,7 +134,7 @@ def main() -> int:
         if SRC_LICENSE.exists():
             shutil.copy2(SRC_LICENSE, stage / "LICENSE")
 
-        log("上传中（127 MB，请耐心等待）…")
+        log("上传中（134 MB，请耐心等待）…")
         # 用 upload_folder（SDK 官方推荐，支持断点续传/并行/重试）。
         # 不要用 push_model：它已被标记 deprecated，且走 git 流程，在已存在
         # master 分支的模型库上必然失败（fatal: a branch named 'master' already exists）

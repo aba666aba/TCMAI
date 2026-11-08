@@ -39,7 +39,7 @@ NLU 症状抽取由 Qwen2.5-0.5B-Instruct 承担（公开模型，不在本库�
 
 | 文件 | 说明 |
 |------|------|
-| `best_model.pth` | PyTorch 检查点（`torch.save` 字典），约 127 MB |
+| `best_model.pth` | PyTorch 检查点（`torch.save` 字典），约 134 MB |
 
 检查点内部结构：
 

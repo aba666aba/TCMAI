@@ -206,7 +206,7 @@ TCMAI/
 >
 > | 文件 | 体积 | 性质 |
 > |------|------|------|
-> | `tcm_recommender/best_model.pth` | ~127 MB | 本项目自行训练的推荐权重（TCMNet 11.08M 参数） |
+> | `tcm_recommender/best_model.pth` | ~134 MB | 本项目自行训练的推荐权重（TCMNet 11.08M 参数） |
 > | `models/nlu/qwen/model.safetensors` | ~942 MB | Qwen2.5-0.5B-Instruct 底座模型（公开模型，可重新下载） |
 
 ---
@@ -659,12 +659,12 @@ python scripts/download_weights.py
 
 | 下载项 | 来源 | 落盘位置 | 体积 |
 |--------|------|----------|------|
-| 推荐模型权重 | [`aba666aba/TCMAI-tcm-recommender`](https://www.modelscope.cn/models/aba666aba/TCMAI-tcm-recommender) | `tcm_recommender/best_model.pth` | ~127 MB |
+| 推荐模型权重 | [`aba666aba/TCMAI-tcm-recommender`](https://www.modelscope.cn/models/aba666aba/TCMAI-tcm-recommender) | `tcm_recommender/best_model.pth` | ~134 MB |
 | NLU 底座模型 | ModelScope 公开模型 `Qwen/Qwen2.5-0.5B-Instruct` | `models/nlu/qwen/` | ~942 MB |
 
 权重地址：[modelscope.cn/models/aba666aba/TCMAI-tcm-recommender](https://www.modelscope.cn/models/aba666aba/TCMAI-tcm-recommender)
 （直链 `…/resolve/master/best_model.pth`）。已校验：远端文件 SHA256 与本地原件一致，
-`1d8414c676144652e1d3ce21f18ede039f56e01c135428a545739b3ca17da98f`（133,079,050 字节）。
+`ad323b79f572d546639acd719248bcaf5624e5bbf01a2657f4d5747d9fa2aba5`（140,085,975 字节，2026-11-08 重训版）。
 
 常用参数：
 

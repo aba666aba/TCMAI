@@ -5,7 +5,7 @@
 
 """推荐器冒烟测试：确认真实权重能被加载并产出结构正确的推荐。
 
-需要 tcm_recommender/best_model.pth（~127MB，不入 git）。
+需要 tcm_recommender/best_model.pth（~134MB，不入 git）。
 缺失时整体 skip，而不是让测试失败——裸 clone 未执行下载脚本属预期状态。
 """
 

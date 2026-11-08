@@ -5,7 +5,7 @@
 
 """桌面服务层冒烟测试：query() 的返回契约。
 
-需要模型权重（~127MB，不入 git）。缺失时 skip——裸 clone 未下载权重属预期状态。
+需要模型权重（~134MB，不入 git）。缺失时 skip——裸 clone 未下载权重属预期状态。
 """
 
 from pathlib import Path

@@ -18,7 +18,7 @@
 仓库里缺少的两类文件，本脚本负责补齐：
 
   1. ``tcm_recommender/best_model.pth``
-     本项目自行训练的推荐模型权重（TCMNet，11.08M 参数，~127 MB）。
+     本项目自行训练的推荐模型权重（TCMNet，11.08M 参数，~134 MB）。
      它不在 git 仓库中（被 .gitignore 排除），托管在 ModelScope 模型库。
 
   2. ``models/nlu/qwen/``
@@ -58,7 +58,7 @@ CKPT_REPO = os.environ.get("TCMAI_CKPT_REPO", "aba666aba/TCMAI-tcm-recommender")
 CKPT_FILE = os.environ.get("TCMAI_CKPT_FILE", "best_model.pth")
 CKPT_SHA256 = os.environ.get(
     "TCMAI_CKPT_SHA256",
-    "1d8414c676144652e1d3ce21f18ede039f56e01c135428a545739b3ca17da98f",
+    "ad323b79f572d546639acd719248bcaf5624e5bbf01a2657f4d5747d9fa2aba5",
 )
 # 权重至少应有这么大，小于此值说明是 LFS 指针或下载被截断
 CKPT_MIN_BYTES = 100 * 1024 * 1024
